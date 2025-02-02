@@ -99,3 +99,35 @@ class FundamentalData:
         }
         
         return result 
+
+@dataclass 
+class TradeMetrics:
+    total_return: float
+    annualized_return: float
+    total_trades_executed: int
+    avg_return_per_trade: float
+
+@dataclass
+class Trade:
+    entry_date: datetime
+    entry_price: float
+    exit_date: datetime
+    exit_price: float
+    type: str
+    pnl: float
+    return_pct: float
+    size: int = 100
+
+@dataclass
+class BacktestResult:
+    trades: List[Trade]
+    strategy_returns: TradeMetrics
+    buy_and_hold: Dict[str, float]
+    total_trades: int
+
+@dataclass 
+class TradingSignal:
+    signal: str
+    confidence: float
+    details: str
+    metrics: Dict[str, float] 

@@ -1,17 +1,49 @@
 import argparse
 from datetime import datetime, timedelta
+import json
+import os
 from market_data.market_data import MarketData, FundamentalsError
 from market_data.market_data_storage import MarketDataStorage, CacheWriteError
 from strategies.strategy import Strategy
 import sys
 from tabulate import tabulate
 from market_data.market_data import MarketData
-from typing import Dict
+from typing import Dict, List
+from recommendations.recommendation_engine import RecommendationEngine
+
+DEFAULT_SYMBOLS_FILE = "src/data/default_symbols.json"
+
+def ensure_data_dir():
+    """Ensure the data directory exists and create default symbols file if needed"""
+    os.makedirs(os.path.dirname(DEFAULT_SYMBOLS_FILE), exist_ok=True)
+    
+    # Create default symbols file if it doesn't exist
+    if not os.path.exists(DEFAULT_SYMBOLS_FILE):
+        default_symbols = [
+            "AAPL",
+            "MSFT",
+            "GOOGL",
+            "AMZN",
+            "NVDA",
+            "HALO",
+            "CPRX",
+            "CORT",
+            "EXEL",
+            "LGND"
+        ]
+        with open(DEFAULT_SYMBOLS_FILE, 'w') as f:
+            json.dump(default_symbols, f, indent=4)
 
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Stock Market Data and Analysis')
-    parser.add_argument('--symbol', type=str, required=True, help='Stock symbol(s) (e.g., AAPL or AAPL MSFT)')
+    
+    # Allow loading symbols from file or command line
+    symbol_group = parser.add_mutually_exclusive_group(required=True)
+    symbol_group.add_argument('--symbol', type=str, help='Stock symbol(s) (e.g., AAPL or AAPL MSFT)')
+    symbol_group.add_argument('--source', type=str, help=f'JSON file containing symbols (default: {DEFAULT_SYMBOLS_FILE})',
+                            default=DEFAULT_SYMBOLS_FILE)
+    
     parser.add_argument('--start', type=str, help='Start date (YYYY-MM-DD)', 
                        default=(datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d'))
     parser.add_argument('--end', type=str, help='End date (YYYY-MM-DD)', 
@@ -171,12 +203,36 @@ def format_grouped_table(all_results: Dict[str, Dict[str, Dict]], symbol: str) -
     
     return f"\n{symbol} Results:\n" + tabulate(rows, headers=headers, tablefmt="grid")
 
+def load_symbols(source_file: str) -> List[str]:
+    """Load symbols from JSON file"""
+    ensure_data_dir()
+    
+    if not os.path.exists(source_file):
+        raise FileNotFoundError(f"Symbols file not found: {source_file}")
+        
+    with open(source_file, 'r') as f:
+        try:
+            data = json.load(f)
+            if not isinstance(data, list):
+                raise ValueError("Symbols file must contain a list of symbols")
+            return data
+        except json.JSONDecodeError:
+            raise ValueError(f"Invalid JSON in symbols file: {source_file}")
+
 def main():
     args = parse_args()
     debug = args.debug
     
-    # Parse symbols
-    symbols = args.symbol.split()
+    # Get symbols either from command line or file
+    if args.symbol:
+        symbols = args.symbol.split()
+    else:
+        try:
+            symbols = load_symbols(args.source)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Error loading symbols: {str(e)}")
+            return 1
+    
     if args.verbose:
         print(f"\nProcessing {len(symbols)} symbol(s)...")
     
