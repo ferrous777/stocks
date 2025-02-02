@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from .strategy import Strategy, SignalType
 import numpy as np
+from market_data.data_types import BacktestResult, TradeMetrics, Trade
 
 class MACDStrategy(Strategy):
     def __init__(self):
@@ -127,76 +128,100 @@ class MACDStrategy(Strategy):
         
         return results
     
-    def backtest(self, start_date: datetime, end_date: datetime) -> Dict[str, List[Dict[str, any]]]:
+    def backtest(self, start_date: datetime, end_date: datetime) -> Dict[str, BacktestResult]:
+        """Run strategy backtest"""
         results = {}
         
         for symbol in self.symbols:
-            historical, _ = self.get_data(symbol)
-            trades = []
+            historical = self.data[symbol]
             
+            # Get data points in date range
             data_points = [
                 point for point in historical.data_points
                 if start_date <= datetime.strptime(point.date, '%Y-%m-%d') <= end_date
             ]
             
-            if len(data_points) < self.slow_period:
-                results[symbol] = trades
+            if len(data_points) < self.slow_period + self.signal_period:
+                results[symbol] = BacktestResult(
+                    trades=[],
+                    strategy_returns=TradeMetrics(
+                        total_return=0.0,
+                        annualized_return=0.0,
+                        total_trades_executed=0,
+                        avg_return_per_trade=0.0
+                    ),
+                    buy_and_hold=self.calculate_buy_and_hold(symbol, start_date, end_date),
+                    total_trades=0
+                )
                 continue
             
-            close_prices = [point.close for point in data_points]
-            dates = [datetime.strptime(point.date, '%Y-%m-%d') for point in data_points]
+            trades: List[Trade] = []
+            position = None
             
-            macd, signal, histogram = self._calculate_macd(close_prices)
+            # Calculate MACD for the entire period
+            closes = [p.close for p in data_points]
+            macd_line, signal_line, histogram = self._calculate_macd(closes)
             
+            # Process each day
             for i in range(self.slow_period + self.signal_period, len(data_points)):
+                point = data_points[i]
+                date = datetime.strptime(point.date, '%Y-%m-%d')
+                
                 current_hist = histogram[i]
                 prev_hist = histogram[i-1]
-                current_macd = macd[i]
                 
-                bullish_div, bearish_div = self._check_divergence(
-                    close_prices[i-10:i+1],
-                    macd[i-10:i+1]
-                )
-                
-                signal_type: SignalType = "hold"
-                confidence = 0.0
-                details = []
-                
-                if current_hist > 0 and prev_hist < 0:
-                    signal_type = "long"
-                    confidence = min(abs(current_hist / current_macd), 1.0)
-                    details.append("MACD crossed above signal line")
-                    if bullish_div:
-                        confidence = min(confidence * 1.5, 1.0)
-                        details.append("with bullish divergence")
-                elif current_hist < 0 and prev_hist > 0:
-                    signal_type = "short"
-                    confidence = min(abs(current_hist / current_macd), 1.0)
-                    details.append("MACD crossed below signal line")
-                    if bearish_div:
-                        confidence = min(confidence * 1.5, 1.0)
-                        details.append("with bearish divergence")
-                elif (current_hist > 0 and current_hist < prev_hist) or \
-                     (current_hist < 0 and current_hist > prev_hist):
-                    signal_type = "exit"
-                    confidence = min(abs(current_hist / current_macd) * 0.5, 1.0)
-                    details.append("MACD momentum weakening")
-                
-                if signal_type != "hold":
-                    trades.append({
-                        "date": dates[i],
-                        "signal": signal_type,
-                        "confidence": confidence,
-                        "metrics": {
-                            "macd": macd[i],
-                            "signal": signal[i],
-                            "histogram": histogram[i],
-                            "close": close_prices[i]
-                        },
-                        "details": " ".join(details)
-                    })
+                # Generate signals
+                if prev_hist < 0 and current_hist > 0 and position is None:  # Bullish crossover
+                    position = {
+                        'type': 'long',
+                        'entry_date': date,
+                        'entry_price': point.close,
+                        'size': 100
+                    }
+                elif prev_hist > 0 and current_hist < 0 and position is not None:  # Bearish crossover
+                    trades.append(Trade(
+                        entry_date=position['entry_date'],
+                        entry_price=position['entry_price'],
+                        exit_date=date,
+                        exit_price=point.close,
+                        type=position['type'],
+                        pnl=(point.close - position['entry_price']) * position['size'],
+                        return_pct=(point.close / position['entry_price']) - 1,
+                        size=position['size']
+                    ))
+                    position = None
             
-            results[symbol] = trades
+            # Close any open position at the end
+            if position is not None:
+                last_point = data_points[-1]
+                trades.append(Trade(
+                    entry_date=position['entry_date'],
+                    entry_price=position['entry_price'],
+                    exit_date=datetime.strptime(last_point.date, '%Y-%m-%d'),
+                    exit_price=last_point.close,
+                    type=position['type'],
+                    pnl=(last_point.close - position['entry_price']) * position['size'],
+                    return_pct=(last_point.close / position['entry_price']) - 1,
+                    size=position['size']
+                ))
+            
+            # Calculate returns
+            total_return = sum(t.return_pct for t in trades)
+            trading_days = (end_date - start_date).days
+            annualized_return = ((1 + total_return) ** (365/trading_days)) - 1 if trading_days > 0 else 0
+            avg_return = total_return / len(trades) if trades else 0
+            
+            results[symbol] = BacktestResult(
+                trades=trades,
+                strategy_returns=TradeMetrics(
+                    total_return=total_return,
+                    annualized_return=annualized_return,
+                    total_trades_executed=len(trades),
+                    avg_return_per_trade=avg_return
+                ),
+                buy_and_hold=self.calculate_buy_and_hold(symbol, start_date, end_date),
+                total_trades=len(trades)
+            )
         
         return results
     

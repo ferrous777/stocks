@@ -2,12 +2,13 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from .strategy import Strategy, SignalType
 import numpy as np
+from market_data.data_types import BacktestResult, TradeMetrics, Trade
 
 class EnsembleStrategy(Strategy):
     def __init__(self, strategies: List[Strategy]):
         super().__init__(
-            name="Adaptive Ensemble Strategy",
-            description="Dynamically weighted combination of multiple strategies"
+            name="Ensemble Strategy",
+            description="Combines signals from multiple strategies"
         )
         self.strategies = strategies
         self.min_confidence_threshold = 0.3
@@ -195,7 +196,8 @@ class EnsembleStrategy(Strategy):
         
         return results
     
-    def backtest(self, start_date: datetime, end_date: datetime) -> Dict[str, List[Dict[str, any]]]:
+    def backtest(self, start_date: datetime, end_date: datetime) -> Dict[str, BacktestResult]:
+        """Run strategy backtest"""
         results = {}
         
         # Get backtest results from all strategies
@@ -203,61 +205,36 @@ class EnsembleStrategy(Strategy):
         for strategy in self.strategies:
             strategy_results[strategy.name] = strategy.backtest(start_date, end_date)
         
+        # Process each symbol
         for symbol in self.symbols:
-            trades = []
-            # Create a timeline of all signals
-            signal_timeline = {}
+            all_trades: List[Trade] = []
             
-            # Collect all signals from all strategies
-            for strategy_name, strategy_trades in strategy_results.items():
-                if symbol in strategy_trades:
-                    for trade in strategy_trades[symbol]:
-                        date = trade['date']
-                        if date not in signal_timeline:
-                            signal_timeline[date] = []
-                        signal_timeline[date].append({
-                            "strategy_name": strategy_name,
-                            "signal": trade["signal"],
-                            "confidence": trade["confidence"],
-                            "metrics": trade["metrics"],
-                            "details": trade["details"]
-                        })
+            # Combine trades from all strategies
+            for strategy_name, symbol_results in strategy_results.items():
+                if symbol in symbol_results:
+                    result = symbol_results[symbol]
+                    all_trades.extend(result.trades)
             
-            # Process signals chronologically
-            for date in sorted(signal_timeline.keys()):
-                signal, confidence, details = self._combine_signals(signal_timeline[date])
-                
-                if signal != "hold":
-                    # Combine metrics from all strategies
-                    combined_metrics = {}
-                    
-                    # Ensure we have the close price for strategy returns calculation
-                    close_price = None
-                    for s in signal_timeline[date]:
-                        metrics = s['metrics']
-                        if 'close' in metrics:
-                            close_price = metrics['close']
-                            break
-                    
-                    # Add metrics from all strategies
-                    for s in signal_timeline[date]:
-                        strategy_name = s['strategy_name']
-                        for metric_name, value in s['metrics'].items():
-                            combined_metrics[f"{strategy_name}_{metric_name}"] = value
-                    
-                    # Ensure close price is directly accessible
-                    if close_price is not None:
-                        combined_metrics['close'] = close_price
-                    
-                    trades.append({
-                        "date": date,
-                        "signal": signal,
-                        "confidence": confidence,
-                        "metrics": combined_metrics,
-                        "details": "\n".join(details)
-                    })
+            # Sort trades by date
+            all_trades.sort(key=lambda x: x.entry_date)
             
-            results[symbol] = trades
+            # Calculate combined returns
+            total_return = sum(t.return_pct for t in all_trades)
+            trading_days = (end_date - start_date).days
+            annualized_return = ((1 + total_return) ** (365/trading_days)) - 1 if trading_days > 0 else 0
+            avg_return = total_return / len(all_trades) if all_trades else 0
+            
+            results[symbol] = BacktestResult(
+                trades=all_trades,
+                strategy_returns=TradeMetrics(
+                    total_return=total_return,
+                    annualized_return=annualized_return,
+                    total_trades_executed=len(all_trades),
+                    avg_return_per_trade=avg_return
+                ),
+                buy_and_hold=self.calculate_buy_and_hold(symbol, start_date, end_date),
+                total_trades=len(all_trades)
+            )
         
         return results
     

@@ -5,6 +5,7 @@ import os
 from market_data.market_data import MarketData, FundamentalsError
 from market_data.market_data_storage import MarketDataStorage, CacheWriteError
 from strategies.strategy import Strategy
+from market_data.data_types import BacktestResult, TradeMetrics, Trade
 import sys
 from tabulate import tabulate
 from market_data.market_data import MarketData
@@ -219,6 +220,132 @@ def load_symbols(source_file: str) -> List[str]:
         except json.JSONDecodeError:
             raise ValueError(f"Invalid JSON in symbols file: {source_file}")
 
+def format_analysis_table(results: Dict[str, Dict], strategy_name: str) -> str:
+    """Format analysis results as a table, grouped by strategy"""
+    headers = [
+        "Symbol",
+        "Signal",
+        "Confidence",
+        "Details"
+    ]
+    
+    rows = []
+    for symbol, analysis in results.items():
+        rows.append([
+            symbol,
+            analysis['signal'],
+            f"{analysis['confidence']:.1%}",
+            analysis['details']
+        ])
+    
+    return f"\n{strategy_name} Analysis:\n" + tabulate(rows, headers=headers, tablefmt="grid")
+
+def format_grouped_analysis_table(all_results: Dict[str, Dict[str, Dict]], symbol: str) -> str:
+    """Format analysis results as a table, grouped by symbol"""
+    headers = [
+        "Strategy",
+        "Signal",
+        "Confidence",
+        "Details"
+    ]
+    
+    rows = []
+    for strategy_name, results in all_results.items():
+        if symbol not in results:
+            continue
+            
+        analysis = results[symbol]
+        rows.append([
+            strategy_name,
+            analysis['signal'],
+            f"{analysis['confidence']:.1%}",
+            analysis['details']
+        ])
+    
+    if not rows:
+        return f"\n{symbol} Analysis:\nNo analysis results available"
+    
+    return f"\n{symbol} Analysis:\n" + tabulate(rows, headers=headers, tablefmt="grid")
+
+def convert_backtest_result(result: BacktestResult) -> Dict:
+    """Convert BacktestResult object to dictionary format"""
+    return {
+        'strategy_returns': {
+            'total_return': result.strategy_returns.total_return,
+            'annualized_return': result.strategy_returns.annualized_return,
+            'total_trades_executed': result.strategy_returns.total_trades_executed,
+            'avg_return_per_trade': result.strategy_returns.avg_return_per_trade
+        },
+        'buy_and_hold': result.buy_and_hold,
+        'total_trades': result.total_trades
+    }
+
+def process_group(group_name: str, symbols_data: Dict[str, Dict], args: argparse.Namespace, 
+                 market: MarketData, strategies: List[Strategy], engine: RecommendationEngine):
+    """Process a group of symbols"""
+    print(f"\nProcessing {group_name} ({len(symbols_data)} symbols):")
+    
+    # Store results for all strategies
+    analysis_results = {}
+    backtest_results = {}
+    
+    # Run each strategy
+    for strategy in strategies:
+        if args.verbose:
+            print(f"\nRunning {strategy.name}...")
+        
+        # Add data to strategy
+        for symbol, data in symbols_data.items():
+            strategy.add_data(symbol, data['historical'], data.get('fundamental'))
+        
+        # Run analysis if requested
+        if args.analyze:
+            analysis_results[strategy.name] = strategy.analyze()
+            
+        # Run backtest if requested
+        if args.backtest:
+            raw_results = strategy.backtest(
+                start_date=datetime.strptime(args.start, '%Y-%m-%d'),
+                end_date=datetime.strptime(args.end, '%Y-%m-%d')
+            )
+            # Convert BacktestResult objects to dictionaries
+            backtest_results[strategy.name] = {
+                symbol: convert_backtest_result(result)
+                for symbol, result in raw_results.items()
+            }
+    
+    # Display results
+    if args.analyze:
+        if args.grouped:
+            for symbol in symbols_data.keys():
+                print(format_grouped_analysis_table(analysis_results, symbol))
+        else:
+            for strategy_name, results in analysis_results.items():
+                print(format_analysis_table(results, strategy_name))
+    
+    if args.backtest:
+        if args.grouped:
+            for symbol in symbols_data.keys():
+                print(format_grouped_table(backtest_results, symbol))
+        else:
+            for strategy_name, results in backtest_results.items():
+                print(format_backtest_table(results, strategy_name))
+    
+    # Generate recommendations if we have both analysis and backtest results
+    if args.analyze and args.backtest:
+        recommendations = engine.generate_recommendations(
+            symbols_data.keys(),
+            analysis_results,
+            backtest_results
+        )
+        print("\nRecommendations:")
+        for symbol, rec in recommendations.items():
+            print(f"\n{symbol}:")
+            print(f"Action: {rec.action}")
+            print(f"Confidence: {rec.confidence:.1%}")
+            print(f"Supporting Strategies: {', '.join(rec.supporting_strategies)}")
+            print(f"Details: {rec.details}")
+
 def main():
     args = parse_args()
     debug = args.debug
@@ -260,92 +387,28 @@ def main():
     if args.verbose:
         print(f"\nRunning {len(strategies)} strategies:")
     
-    # Store all results
-    all_results = {}
+    # Initialize recommendation engine if needed
+    engine = None
+    if args.analyze and args.backtest:
+        engine = RecommendationEngine()
     
-    # Run strategies
-    for strategy in strategies:
-        if args.verbose:
-            print(f"\nExecuting {strategy.name}...")
-        
-        # Add data to strategy
-        for symbol in symbols:
-            strategy.add_data(symbol, historical_data[symbol], fundamental_data.get(symbol))
-        
-        # Run analysis if requested
-        if args.analyze and args.verbose:
-            analysis = strategy.analyze()
-            for symbol, result in analysis.items():
-                print(f"\n{symbol}:")
-                print(f"Signal: {result['signal']}")
-                print(f"Confidence: {result['confidence']:.2%}")
-                print(f"Details: {result['details']}")
-        
-        # Run backtest if requested
-        if args.backtest:
-            results = strategy.backtest(
-                datetime.strptime(args.start, '%Y-%m-%d'),
-                datetime.strptime(args.end, '%Y-%m-%d')
-            )
-            
-            summaries = {}
-            for symbol, trades in results.items():
-                summary = strategy.calculate_backtest_summary(
-                    trades, 
-                    symbol,
-                    datetime.strptime(args.start, '%Y-%m-%d'),
-                    datetime.strptime(args.end, '%Y-%m-%d')
-                )
-                summaries[symbol] = summary
-            
-            all_results[strategy.name] = summaries
+    # Process all symbols
+    symbols_data = {}
+    for symbol in symbols:
+        historical, fundamental = market.get_data(
+            symbol=symbol,
+            start_date=datetime.strptime(args.start, '%Y-%m-%d'),
+            end_date=datetime.strptime(args.end, '%Y-%m-%d'),
+            include_fundamentals=args.fundamentals,
+            force_refresh=args.force
+        )
+        symbols_data[symbol] = {
+            'historical': historical,
+            'fundamental': fundamental
+        }
     
-    # Output all results after strategies have completed
-    if args.backtest:
-        if args.verbose:
-            print("\nStrategy Backtest Results:")
-            
-        if args.grouped:
-            for symbol in symbols:
-                print(format_grouped_table(all_results, symbol))
-        else:
-            for strategy_name, summaries in all_results.items():
-                print(format_backtest_table(summaries, strategy_name))
-        
-        # Show detailed metrics if available and verbose
-        if args.verbose:
-            for strategy_name, summaries in all_results.items():
-                for symbol, summary in summaries.items():
-                    if summary['metrics']:
-                        print(f"\n{strategy_name} - {symbol} Strategy Metrics:")
-                        for metric, value in summary['metrics'].items():
-                            if isinstance(value, float):
-                                print(f"  {metric}: {value:.4f}")
-                            else:
-                                print(f"  {metric}: {value}")
-        
-        # Show detailed signals if requested and verbose
-        if args.signals and args.verbose:
-            print("\nDetailed Signal History:")
-            for strategy_name, summaries in all_results.items():
-                for symbol, trades in results.items():
-                    if not trades:
-                        print(f"\n{strategy_name} - {symbol}: No signals generated")
-                        continue
-                    
-                    print(f"\n{strategy_name} - {symbol} - showing last {min(5, len(trades))} of {len(trades)} signals:")
-                    for trade in trades[-5:]:
-                        print(f"\nDate: {trade['date'].strftime('%Y-%m-%d')}")
-                        print(f"Signal: {trade['signal']}")
-                        print(f"Confidence: {trade['confidence']:.2%}")
-                        if 'metrics' in trade:
-                            print("Metrics:")
-                            for metric, value in trade['metrics'].items():
-                                if isinstance(value, float):
-                                    print(f"  {metric}: {value:.4f}")
-                                else:
-                                    print(f"  {metric}: {value}")
-                        print(f"Details: {trade['details']}")
+    # Process the group
+    process_group("All Symbols", symbols_data, args, market, strategies, engine)
     
     return 0
 

@@ -11,25 +11,28 @@ class Strategy(ABC):
     def __init__(self, name: str, description: str):
         self.name = name
         self.description = description
-        self._historical_data: Dict[str, HistoricalData] = {}
-        self._fundamental_data: Dict[str, FundamentalData] = {}
+        self._symbols: List[str] = []
+        self.data: Dict[str, HistoricalData] = {}
+        self.fundamentals: Dict[str, FundamentalData] = {}
     
     def add_data(self, symbol: str, historical: HistoricalData, fundamental: Optional[FundamentalData] = None):
         """Add market data for a symbol"""
-        self._historical_data[symbol] = historical
+        if symbol not in self._symbols:
+            self._symbols.append(symbol)
+        self.data[symbol] = historical
         if fundamental:
-            self._fundamental_data[symbol] = fundamental
+            self.fundamentals[symbol] = fundamental
     
     @property
     def symbols(self) -> List[str]:
         """Get available symbols"""
-        return list(self._historical_data.keys())
+        return self._symbols
     
     def get_data(self, symbol: str) -> Tuple[HistoricalData, Optional[FundamentalData]]:
         """Get data for a symbol"""
-        if symbol not in self._historical_data:
+        if symbol not in self.data:
             raise KeyError(f"No data available for symbol {symbol}")
-        return self._historical_data[symbol], self._fundamental_data.get(symbol)
+        return self.data[symbol], self.fundamentals.get(symbol)
     
     def calculate_buy_and_hold(self, symbol: str, start_date: datetime, end_date: datetime) -> Dict[str, float]:
         """Calculate buy and hold performance metrics"""
