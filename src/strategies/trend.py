@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from .strategy import Strategy, SignalType
 import numpy as np
-from market_data.data_types import BacktestResult, TradeMetrics, Trade
+from market_data.data_types import BacktestResult, TradeMetrics, Trade, HistoricalData
 
 class TrendFollowingStrategy(Strategy):
     def __init__(self):
@@ -19,6 +19,66 @@ class TrendFollowingStrategy(Strategy):
     
     def requires_fundamentals(self) -> bool:
         return False
+    
+    def get_min_required_points(self) -> int:
+        return max(self.trend_period, self.atr_period)
+    
+    def generate_signals(self, data_points: List[HistoricalData], index: int) -> Tuple[SignalType, float, str]:
+        """Generate trading signals based on trend analysis"""
+        if index < self.get_min_required_points():
+            return "hold", 0.0, "Insufficient data"
+        
+        # Calculate indicators
+        current_slice = slice(max(0, index-self.trend_period), index+1)
+        highs = [p.high for p in data_points[current_slice]]
+        lows = [p.low for p in data_points[current_slice]]
+        closes = [p.close for p in data_points[current_slice]]
+        
+        atr = self._calculate_atr(highs, lows, closes, self.atr_period)[-1]
+        trend_strength, uptrend = self._calculate_trend_strength(closes, self.trend_period)
+        support, resistance = self._calculate_support_resistance(highs, lows, self.trend_period)
+        
+        current_close = closes[-1]
+        
+        # Strong trend conditions
+        strong_trend = trend_strength > self.min_trend_strength * 1.2
+        # Volume confirmation
+        volume_increase = False
+        if index >= 5:
+            recent_volume = [p.volume for p in data_points[index-5:index]]
+            current_volume = data_points[index].volume
+            volume_increase = current_volume > sum(recent_volume) / len(recent_volume) * 1.5
+        
+        # Generate entry signals
+        if ((current_close > resistance + (atr * self.breakout_threshold) and trend_strength > self.min_trend_strength) or \
+           (strong_trend and uptrend)) and volume_increase:
+            confidence = min(trend_strength * 1.5, 1.0)
+            details = f"Bullish breakout with {trend_strength:.1%} trend strength"
+            return "long", confidence, details
+            
+        elif ((current_close < support - (atr * self.breakout_threshold) and trend_strength > self.min_trend_strength) or \
+             (strong_trend and not uptrend)) and volume_increase:
+            confidence = min((1 - trend_strength) * 1.5, 1.0)
+            details = f"Bearish breakdown with {1-trend_strength:.1%} counter-trend strength"
+            return "short", confidence, details
+        
+        # Generate exit signals
+        if trend_strength < self.min_trend_strength * 0.7:
+            confidence = 0.5
+            details = f"Trend weakening ({trend_strength:.1%} strength)"
+            return "exit", confidence, details
+        
+        if uptrend and current_close < support - (atr * self.breakout_threshold):
+            confidence = 0.8
+            details = "Price broke below support"
+            return "exit", confidence, details
+            
+        if not uptrend and current_close > resistance + (atr * self.breakout_threshold):
+            confidence = 0.8
+            details = "Price broke above resistance"
+            return "exit", confidence, details
+        
+        return "hold", 0.0, "No significant signals"
     
     def _calculate_atr(self, highs: List[float], lows: List[float], 
                       closes: List[float], period: int) -> List[float]:

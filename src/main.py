@@ -37,14 +37,9 @@ def ensure_data_dir():
 
 def parse_args():
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='Stock Market Data and Analysis')
-    
-    # Allow loading symbols from file or command line
-    symbol_group = parser.add_mutually_exclusive_group(required=True)
-    symbol_group.add_argument('--symbol', type=str, help='Stock symbol(s) (e.g., AAPL or AAPL MSFT)')
-    symbol_group.add_argument('--source', type=str, help=f'JSON file containing symbols (default: {DEFAULT_SYMBOLS_FILE})',
-                            default=DEFAULT_SYMBOLS_FILE)
-    
+    parser = argparse.ArgumentParser(description='Stock Market Analysis Tool')
+    parser.add_argument('--source', type=str, help='JSON file with symbols to analyze')
+    parser.add_argument('--symbol', type=str, help='Individual stock symbol(s) (e.g., AAPL or AAPL MSFT)')
     parser.add_argument('--start', type=str, help='Start date (YYYY-MM-DD)', 
                        default=(datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d'))
     parser.add_argument('--end', type=str, help='End date (YYYY-MM-DD)', 

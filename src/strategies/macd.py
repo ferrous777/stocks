@@ -1,65 +1,115 @@
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from .strategy import Strategy, SignalType
 import numpy as np
-from market_data.data_types import BacktestResult, TradeMetrics, Trade
+from market_data.data_types import BacktestResult, TradeMetrics, Trade, HistoricalData
 
 class MACDStrategy(Strategy):
     def __init__(self):
         super().__init__(
             name="MACD Strategy",
-            description="Uses MACD crossovers and divergences"
+            description="Moving Average Convergence Divergence strategy"
         )
         self.fast_period = 12
         self.slow_period = 26
         self.signal_period = 9
-        self.min_divergence = 0.02  # 2% minimum price divergence
+        self.min_required = max(self.slow_period, self.fast_period) + self.signal_period
+        self.min_divergence = 0.02
     
     def requires_fundamentals(self) -> bool:
         return False
     
-    def _calculate_macd(self, close_prices: List[float]) -> tuple[List[float], List[float], List[float]]:
-        """Calculate MACD, Signal, and Histogram values"""
-        prices = np.array(close_prices)
+    def get_min_required_points(self) -> int:
+        return self.min_required
+    
+    def generate_signals(self, data_points: List[HistoricalData], index: int) -> Tuple[SignalType, float, str]:
+        """Generate trading signals based on MACD crossovers"""
+        if index < self.min_required:
+            return "hold", 0.0, "Insufficient data"
         
-        fast_ema = self._calculate_ema(prices, self.fast_period)
-        slow_ema = self._calculate_ema(prices, self.slow_period)
+        # Calculate MACD line and signal line
+        closes = [p.close for p in data_points[max(0, index-self.min_required):index+1]]
+        macd_line = self._calculate_macd_line(closes)
+        signal_line = self._calculate_signal_line(macd_line)
         
-        macd_line = fast_ema - slow_ema
-        signal_line = self._calculate_ema(macd_line, self.signal_period)
-        histogram = macd_line - signal_line
+        if len(signal_line) < 2:
+            return "hold", 0.0, "Insufficient data for signal line"
         
-        return macd_line.tolist(), signal_line.tolist(), histogram.tolist()
+        current_macd = macd_line[-1]
+        current_signal = signal_line[-1]
+        prev_macd = macd_line[-2]
+        prev_signal = signal_line[-2]
+        
+        # Calculate histogram for signal strength
+        histogram = current_macd - current_signal
+        prev_histogram = prev_macd - prev_signal
+        
+        # Generate signals based on crossovers
+        if current_macd > current_signal and prev_macd <= prev_signal:
+            # Bullish crossover
+            confidence = min(abs(histogram) * 2, 1.0)
+            details = f"Bullish MACD crossover (MACD: {current_macd:.3f}, Signal: {current_signal:.3f})"
+            return "long", confidence, details
+            
+        elif current_macd < current_signal and prev_macd >= prev_signal:
+            # Bearish crossover
+            confidence = min(abs(histogram) * 2, 1.0)
+            details = f"Bearish MACD crossover (MACD: {current_macd:.3f}, Signal: {current_signal:.3f})"
+            return "short", confidence, details
+        
+        # Generate exit signals
+        if (histogram > 0 and histogram < prev_histogram) or \
+           (histogram < 0 and histogram > prev_histogram):
+            confidence = min(abs(histogram), 1.0)
+            details = f"MACD momentum weakening (Histogram: {histogram:.3f})"
+            return "exit", confidence, details
+        
+        return "hold", 0.0, "No significant MACD signals"
+    
+    def _calculate_macd_line(self, prices: List[float]) -> List[float]:
+        """Calculate MACD line (difference between fast and slow EMAs)"""
+        if len(prices) < self.slow_period:
+            return []
+        
+        fast_ema = self._calculate_ema(np.array(prices), self.fast_period)
+        slow_ema = self._calculate_ema(np.array(prices), self.slow_period)
+        
+        # MACD is the difference between fast and slow EMAs
+        return list(fast_ema - slow_ema)
+    
+    def _calculate_signal_line(self, macd_line: List[float]) -> List[float]:
+        """Calculate signal line (EMA of MACD line)"""
+        return self._calculate_ema(np.array(macd_line), self.signal_period).tolist()
     
     def _calculate_ema(self, prices: np.ndarray, period: int) -> np.ndarray:
         """Calculate Exponential Moving Average"""
-        multiplier = 2 / (period + 1)
-        ema = np.zeros_like(prices)
-        ema[period-1] = np.mean(prices[:period])
+        if len(prices) < period:
+            return np.array([])
         
-        for i in range(period, len(prices)):
-            ema[i] = (prices[i] - ema[i-1]) * multiplier + ema[i-1]
+        multiplier = 2 / (period + 1)
+        ema = np.array([np.mean(prices[:period])])  # First EMA is SMA
+        
+        for price in prices[period:]:
+            ema = np.append(ema, (price - ema[-1]) * multiplier + ema[-1])
         
         return ema
     
-    def _check_divergence(self, prices: List[float], macd_values: List[float], 
-                         window: int = 5) -> tuple[bool, bool]:
-        """Check for bullish/bearish divergences"""
-        if len(prices) < window or len(macd_values) < window:
-            return False, False
+    def _calculate_strategy_metrics(self, trades: List[Dict[str, any]]) -> Dict[str, any]:
+        """Calculate strategy-specific metrics for backtest summary"""
+        if not trades:
+            return {}
         
-        price_min = min(prices[-window:])
-        price_max = max(prices[-window:])
-        macd_min = min(macd_values[-window:])
-        macd_max = max(macd_values[-window:])
+        # Calculate signal distribution
+        total_signals = len(trades)
+        long_ratio = sum(1 for t in trades if t['signal'] == 'long') / total_signals
+        short_ratio = sum(1 for t in trades if t['signal'] == 'short') / total_signals
+        exit_ratio = sum(1 for t in trades if t['signal'] == 'exit') / total_signals
         
-        price_change = (price_max - price_min) / price_min
-        macd_change = macd_max - macd_min
-        
-        bullish = (price_change < 0 and macd_change > 0 and abs(price_change) > self.min_divergence)
-        bearish = (price_change > 0 and macd_change < 0 and abs(price_change) > self.min_divergence)
-        
-        return bullish, bearish
+        return {
+            "long_signal_ratio": long_ratio,
+            "short_signal_ratio": short_ratio,
+            "exit_signal_ratio": exit_ratio
+        }
     
     def analyze(self, date: Optional[datetime] = None) -> Dict[str, Dict[str, any]]:
         results = {}
@@ -225,23 +275,59 @@ class MACDStrategy(Strategy):
         
         return results
     
-    def _calculate_strategy_metrics(self, trades: List[Dict[str, any]]) -> Dict[str, any]:
-        if not trades:
-            return {}
+    def _calculate_macd(self, close_prices: List[float]) -> tuple[List[float], List[float], List[float]]:
+        """Calculate MACD, Signal, and Histogram values"""
+        prices = np.array(close_prices)
         
-        macd_values = [abs(t['metrics']['macd']) for t in trades]
-        hist_values = [abs(t['metrics']['histogram']) for t in trades]
+        # Calculate EMAs with proper padding
+        fast_ema = np.zeros(len(prices))
+        slow_ema = np.zeros(len(prices))
         
-        total_signals = len(trades)
-        long_ratio = sum(1 for t in trades if t['signal'] == 'long') / total_signals
-        short_ratio = sum(1 for t in trades if t['signal'] == 'short') / total_signals
-        exit_ratio = sum(1 for t in trades if t['signal'] == 'exit') / total_signals
+        # Calculate initial EMAs
+        fast_ema[:self.fast_period] = np.mean(prices[:self.fast_period])
+        slow_ema[:self.slow_period] = np.mean(prices[:self.slow_period])
         
-        return {
-            "avg_macd": sum(macd_values) / len(macd_values),
-            "avg_histogram": sum(hist_values) / len(hist_values),
-            "max_histogram": max(hist_values),
-            "long_signal_ratio": long_ratio,
-            "short_signal_ratio": short_ratio,
-            "exit_signal_ratio": exit_ratio
-        } 
+        # Calculate remaining EMA values
+        multiplier_fast = 2 / (self.fast_period + 1)
+        multiplier_slow = 2 / (self.slow_period + 1)
+        
+        for i in range(self.fast_period, len(prices)):
+            fast_ema[i] = (prices[i] - fast_ema[i-1]) * multiplier_fast + fast_ema[i-1]
+        
+        for i in range(self.slow_period, len(prices)):
+            slow_ema[i] = (prices[i] - slow_ema[i-1]) * multiplier_slow + slow_ema[i-1]
+        
+        # Calculate MACD line
+        macd_line = fast_ema - slow_ema
+        
+        # Calculate Signal line
+        signal_line = np.zeros(len(macd_line))
+        signal_line[:self.signal_period] = np.mean(macd_line[:self.signal_period])
+        multiplier_signal = 2 / (self.signal_period + 1)
+        
+        for i in range(self.signal_period, len(macd_line)):
+            signal_line[i] = (macd_line[i] - signal_line[i-1]) * multiplier_signal + signal_line[i-1]
+        
+        # Calculate histogram
+        histogram = macd_line - signal_line
+        
+        return macd_line.tolist(), signal_line.tolist(), histogram.tolist()
+    
+    def _check_divergence(self, prices: List[float], macd_values: List[float], 
+                         window: int = 5) -> tuple[bool, bool]:
+        """Check for bullish/bearish divergences"""
+        if len(prices) < window or len(macd_values) < window:
+            return False, False
+        
+        price_min = min(prices[-window:])
+        price_max = max(prices[-window:])
+        macd_min = min(macd_values[-window:])
+        macd_max = max(macd_values[-window:])
+        
+        price_change = (price_max - price_min) / price_min
+        macd_change = macd_max - macd_min
+        
+        bullish = (price_change < 0 and macd_change > 0 and abs(price_change) > self.min_divergence)
+        bearish = (price_change > 0 and macd_change < 0 and abs(price_change) > self.min_divergence)
+        
+        return bullish, bearish 

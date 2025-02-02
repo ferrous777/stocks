@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from .strategy import Strategy, SignalType
 import numpy as np
-from market_data.data_types import BacktestResult, TradeMetrics, Trade
+from market_data.data_types import BacktestResult, TradeMetrics, Trade, HistoricalData
 
 class EnsembleStrategy(Strategy):
     def __init__(self, strategies: List[Strategy]):
@@ -19,6 +19,9 @@ class EnsembleStrategy(Strategy):
     
     def requires_fundamentals(self) -> bool:
         return any(s.requires_fundamentals() for s in self.strategies)
+    
+    def get_min_required_points(self) -> int:
+        return max(s.get_min_required_points() for s in self.strategies)
     
     def add_data(self, symbol: str, historical, fundamental=None):
         """Add data to all underlying strategies"""
@@ -103,77 +106,112 @@ class EnsembleStrategy(Strategy):
                 self.strategy_weights[strategy_name] = current_weight + \
                     self.learning_rate * (target_weight - current_weight)
     
-    def _combine_signals(self, signals: List[Dict[str, any]]) -> tuple[SignalType, float, List[str]]:
-        """Combine multiple strategy signals using dynamic weights"""
-        if not signals:
-            return "hold", 0.0, []
+    def generate_signals(self, data_points: List[HistoricalData], index: int) -> Tuple[SignalType, float, str]:
+        """Generate trading signals by combining signals from all strategies"""
+        if index < self.get_min_required_points():
+            return "hold", 0.0, "Insufficient data"
         
-        signal_weights = {
-            "long": 0.0,
-            "short": 0.0,
-            "exit": 0.0,
-            "hold": 0.0
-        }
+        # Collect signals from all strategies
+        strategy_signals = []
+        for strategy in self.strategies:
+            signal, confidence, details = strategy.generate_signals(data_points, index)
+            if signal != "hold":
+                strategy_signals.append({
+                    "strategy_name": strategy.name,
+                    "signal": signal,
+                    "confidence": confidence * self.strategy_weights[strategy.name],  # Apply strategy weight
+                    "details": details
+                })
         
-        total_weight = 0
+        if not strategy_signals:
+            return "hold", 0.0, "No signals from component strategies"
+        
+        # Count weighted signals
+        signal_counts = {"long": 0.0, "short": 0.0, "exit": 0.0}
+        total_confidence = 0.0
         details = []
         
-        # Combine signals using strategy weights
-        for signal in signals:
-            if signal['confidence'] >= self.min_confidence_threshold:
-                strategy_weight = self.strategy_weights[signal['strategy_name']]
-                weighted_confidence = signal['confidence'] * strategy_weight
-                signal_weights[signal['signal']] += weighted_confidence
-                total_weight += weighted_confidence
-                details.append(
-                    f"{signal['strategy_name']} ({strategy_weight:.2f}): "
-                    f"{signal['signal']} ({signal['confidence']:.1%})"
-                )
+        for s in strategy_signals:
+            signal_counts[s["signal"]] += s["confidence"]
+            total_confidence += s["confidence"]
+            details.append(f"{s['strategy_name']}: {s['details']}")
         
-        if total_weight == 0:
-            return "hold", 0.0, ["No significant signals"]
+        # Determine ensemble signal
+        if total_confidence == 0:
+            return "hold", 0.0, "No confident signals"
         
-        # Normalize weights
-        for signal_type in signal_weights:
-            signal_weights[signal_type] /= total_weight
+        # Normalize signal counts
+        for signal_type in signal_counts:
+            signal_counts[signal_type] /= total_confidence
         
-        # Determine final signal
-        max_weight = max(signal_weights.values())
-        final_signals = [s for s, w in signal_weights.items() if w == max_weight]
+        # Find dominant signal
+        dominant_signal = max(signal_counts.items(), key=lambda x: x[1])
+        if dominant_signal[1] > self.min_confidence_threshold:
+            confidence = dominant_signal[1]
+            signal = dominant_signal[0]
+            return signal, confidence, "\n".join(details)
         
-        if len(final_signals) > 1:
-            if "exit" in final_signals:
-                final_signal = "exit"
-            else:
-                final_signal = "hold"
-        else:
-            final_signal = final_signals[0]
-        
-        return final_signal, max_weight, details
+        return "hold", 0.0, "No clear consensus"
     
     def analyze(self, date: Optional[datetime] = None) -> Dict[str, Dict[str, any]]:
         results = {}
         
         for symbol in self.symbols:
-            # Update strategy weights based on recent performance
-            self._evaluate_strategy_performance(symbol, date if date else datetime.now())
-            self._update_weights()
+            historical, _ = self.get_data(symbol)
             
-            # Collect and combine signals as before
+            # Collect and combine signals from all strategies
             strategy_signals = []
             for strategy in self.strategies:
                 analysis = strategy.analyze(date)
                 if symbol in analysis:
                     signal_data = analysis[symbol]
-                    strategy_signals.append({
-                        "strategy_name": strategy.name,
-                        "signal": signal_data["signal"],
-                        "confidence": signal_data["confidence"],
-                        "metrics": signal_data["metrics"],
-                        "details": signal_data["details"]
-                    })
+                    if signal_data["signal"] != "hold":  # Only include non-hold signals
+                        strategy_signals.append({
+                            "strategy_name": strategy.name,
+                            "signal": signal_data["signal"],
+                            "confidence": signal_data["confidence"] * self.strategy_weights[strategy.name],
+                            "metrics": signal_data["metrics"],
+                            "details": signal_data["details"]
+                        })
             
-            signal, confidence, details = self._combine_signals(strategy_signals)
+            if not strategy_signals:
+                results[symbol] = {
+                    "signal": "hold",
+                    "confidence": 0.0,
+                    "metrics": {
+                        f"{s.name}_weight": self.strategy_weights[s.name]
+                        for s in self.strategies
+                    },
+                    "details": "No active signals from component strategies"
+                }
+                continue
+            
+            # Count weighted signals
+            signal_counts = {"long": 0.0, "short": 0.0, "exit": 0.0}
+            total_confidence = 0.0
+            details = []
+            
+            for s in strategy_signals:
+                signal_counts[s["signal"]] += s["confidence"]
+                total_confidence += s["confidence"]
+                details.append(f"{s['strategy_name']}: {s['details']}")
+            
+            # Determine ensemble signal
+            if total_confidence == 0:
+                results[symbol] = {
+                    "signal": "hold",
+                    "confidence": 0.0,
+                    "metrics": {},
+                    "details": "No confident signals"
+                }
+                continue
+            
+            # Normalize signal counts
+            for signal_type in signal_counts:
+                signal_counts[signal_type] /= total_confidence if total_confidence > 0 else 1.0
+            
+            # Find dominant signal
+            dominant_signal = max(signal_counts.items(), key=lambda x: x[1])
             
             # Add weight information to metrics
             combined_metrics = {
@@ -188,8 +226,8 @@ class EnsembleStrategy(Strategy):
                     combined_metrics[f"{strategy_name}_{metric_name}"] = value
             
             results[symbol] = {
-                "signal": signal,
-                "confidence": confidence,
+                "signal": dominant_signal[0] if dominant_signal[1] > self.min_confidence_threshold else "hold",
+                "confidence": dominant_signal[1],
                 "metrics": combined_metrics,
                 "details": "\n".join(details)
             }
@@ -239,6 +277,7 @@ class EnsembleStrategy(Strategy):
         return results
     
     def _calculate_strategy_metrics(self, trades: List[Dict[str, any]]) -> Dict[str, any]:
+        """Calculate strategy-specific metrics for backtest summary"""
         if not trades:
             return {}
         
@@ -249,20 +288,15 @@ class EnsembleStrategy(Strategy):
             "exit": sum(1 for t in trades if t['signal'] == 'exit')
         }
         
-        avg_confidence = sum(t['confidence'] for t in trades) / total_signals
-        max_confidence = max(t['confidence'] for t in trades)
-        
         # Calculate agreement metrics
         strategy_agreement = sum(
             1 for t in trades 
             if len([d for d in t['details'].split('\n') if 'Strategy' in d]) > 1
-        ) / total_signals
+        ) / total_signals if total_signals > 0 else 0
         
         return {
-            "long_signal_ratio": signal_counts['long'] / total_signals,
-            "short_signal_ratio": signal_counts['short'] / total_signals,
-            "exit_signal_ratio": signal_counts['exit'] / total_signals,
-            "avg_confidence": avg_confidence,
-            "max_confidence": max_confidence,
+            "long_signal_ratio": signal_counts['long'] / total_signals if total_signals > 0 else 0,
+            "short_signal_ratio": signal_counts['short'] / total_signals if total_signals > 0 else 0,
+            "exit_signal_ratio": signal_counts['exit'] / total_signals if total_signals > 0 else 0,
             "strategy_agreement_ratio": strategy_agreement
         } 

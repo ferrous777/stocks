@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from .strategy import Strategy, SignalType
-from market_data.data_types import BacktestResult, TradeMetrics, Trade
+from market_data.data_types import BacktestResult, TradeMetrics, Trade, HistoricalData
 
 class MovingAverageStrategy(Strategy):
     def __init__(self):
@@ -14,6 +14,54 @@ class MovingAverageStrategy(Strategy):
     
     def requires_fundamentals(self) -> bool:
         return False
+    
+    def get_min_required_points(self) -> int:
+        return self.long_period
+    
+    def generate_signals(self, data_points: List[HistoricalData], index: int) -> Tuple[SignalType, float, str]:
+        """Generate trading signals based on moving average crossovers"""
+        if index < self.long_period:
+            return "hold", 0.0, "Insufficient data"
+        
+        # Calculate moving averages
+        closes = [p.close for p in data_points[max(0, index-self.long_period):index+1]]
+        short_ma = sum(closes[-self.short_period:]) / self.short_period
+        long_ma = sum(closes[-self.long_period:]) / self.long_period
+        
+        # Get previous day's values for crossover detection
+        prev_closes = [p.close for p in data_points[max(0, index-self.long_period-1):index]]
+        prev_short_ma = sum(prev_closes[-self.short_period:]) / self.short_period
+        prev_long_ma = sum(prev_closes[-self.long_period:]) / self.long_period
+        
+        # Calculate spread and previous spread
+        spread = (short_ma - long_ma) / long_ma
+        prev_spread = (prev_short_ma - prev_long_ma) / prev_long_ma
+        
+        # Generate signals
+        if spread > 0 and prev_spread <= 0:
+            confidence = min(abs(spread) * 100, 1.0)
+            details = f"Golden Cross: SMA 50 ({short_ma:.2f}) crossed above SMA 200 ({long_ma:.2f})"
+            return "long", confidence, details
+        elif spread < 0 and prev_spread >= 0:
+            confidence = min(abs(spread) * 100, 1.0)
+            details = f"Death Cross: SMA 50 ({short_ma:.2f}) crossed below SMA 200 ({long_ma:.2f})"
+            return "short", confidence, details
+        elif spread > 0:
+            confidence = min(abs(spread) * 50, 1.0)
+            details = f"Bullish trend: SMA 50 ({short_ma:.2f}) above SMA 200 ({long_ma:.2f})"
+            return "long", confidence, details
+        elif spread < 0:
+            confidence = min(abs(spread) * 50, 1.0)
+            details = f"Bearish trend: SMA 50 ({short_ma:.2f}) below SMA 200 ({long_ma:.2f})"
+            return "short", confidence, details
+        
+        # Generate exit signals
+        if (prev_spread > spread > 0) or (prev_spread < spread < 0):
+            confidence = min(abs(spread) * 25, 1.0)
+            details = f"Trend weakening: spread changed from {prev_spread:.2%} to {spread:.2%}"
+            return "exit", confidence, details
+        
+        return "hold", 0.0, "No significant signals"
     
     def analyze(self, date: Optional[datetime] = None) -> Dict[str, Dict[str, any]]:
         results = {}
@@ -75,103 +123,6 @@ class MovingAverageStrategy(Strategy):
                 },
                 "details": details
             }
-        
-        return results
-    
-    def backtest(self, start_date: datetime, end_date: datetime) -> Dict[str, BacktestResult]:
-        """Run strategy backtest"""
-        results = {}
-        
-        for symbol in self.symbols:
-            historical = self.data[symbol]
-            
-            # Get data points in date range
-            data_points = [
-                point for point in historical.data_points
-                if start_date <= datetime.strptime(point.date, '%Y-%m-%d') <= end_date
-            ]
-            
-            if len(data_points) < self.long_period:
-                results[symbol] = BacktestResult(
-                    trades=[],
-                    strategy_returns=TradeMetrics(
-                        total_return=0.0,
-                        annualized_return=0.0,
-                        total_trades_executed=0,
-                        avg_return_per_trade=0.0
-                    ),
-                    buy_and_hold=self.calculate_buy_and_hold(symbol, start_date, end_date),
-                    total_trades=0
-                )
-                continue
-            
-            trades: List[Trade] = []
-            position = None
-            
-            # Calculate moving averages for the entire period
-            closes = [p.close for p in data_points]
-            short_ma = self._calculate_ma(closes, self.short_period)
-            long_ma = self._calculate_ma(closes, self.long_period)
-            
-            # Process each day
-            for i in range(self.long_period, len(data_points)):
-                point = data_points[i]
-                date = datetime.strptime(point.date, '%Y-%m-%d')
-                
-                # Check for crossovers
-                if short_ma[i] > long_ma[i] and short_ma[i-1] <= long_ma[i-1] and position is None:
-                    # Golden cross - buy signal
-                    position = {
-                        'type': 'long',
-                        'entry_date': date,
-                        'entry_price': point.close,
-                        'size': 100
-                    }
-                elif short_ma[i] < long_ma[i] and short_ma[i-1] >= long_ma[i-1] and position is not None:
-                    # Death cross - sell signal
-                    trades.append(Trade(
-                        entry_date=position['entry_date'],
-                        entry_price=position['entry_price'],
-                        exit_date=date,
-                        exit_price=point.close,
-                        type=position['type'],
-                        pnl=(point.close - position['entry_price']) * position['size'],
-                        return_pct=(point.close / position['entry_price']) - 1,
-                        size=position['size']
-                    ))
-                    position = None
-            
-            # Close any open position at the end
-            if position is not None:
-                last_point = data_points[-1]
-                trades.append(Trade(
-                    entry_date=position['entry_date'],
-                    entry_price=position['entry_price'],
-                    exit_date=datetime.strptime(last_point.date, '%Y-%m-%d'),
-                    exit_price=last_point.close,
-                    type=position['type'],
-                    pnl=(last_point.close - position['entry_price']) * position['size'],
-                    return_pct=(last_point.close / position['entry_price']) - 1,
-                    size=position['size']
-                ))
-            
-            # Calculate returns
-            total_return = sum(t.return_pct for t in trades)
-            trading_days = (end_date - start_date).days
-            annualized_return = ((1 + total_return) ** (365/trading_days)) - 1 if trading_days > 0 else 0
-            avg_return = total_return / len(trades) if trades else 0
-            
-            results[symbol] = BacktestResult(
-                trades=trades,
-                strategy_returns=TradeMetrics(
-                    total_return=total_return,
-                    annualized_return=annualized_return,
-                    total_trades_executed=len(trades),
-                    avg_return_per_trade=avg_return
-                ),
-                buy_and_hold=self.calculate_buy_and_hold(symbol, start_date, end_date),
-                total_trades=len(trades)
-            )
         
         return results
     
