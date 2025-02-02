@@ -118,13 +118,15 @@ def load_strategies() -> list[Strategy]:
     from strategies.volume_price import VolumePriceStrategy
     from strategies.macd import MACDStrategy
     from strategies.trend import TrendFollowingStrategy
+    from strategies.bollinger import BollingerBandsStrategy
     from strategies.ensemble import EnsembleStrategy
     
     base_strategies = [
         MovingAverageStrategy(),
         VolumePriceStrategy(),
         MACDStrategy(),
-        TrendFollowingStrategy()
+        TrendFollowingStrategy(),
+        BollingerBandsStrategy()
     ]
     
     # Add ensemble strategy that combines all others
