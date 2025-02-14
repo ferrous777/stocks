@@ -53,6 +53,7 @@ def parse_args():
     parser.add_argument('--signals', action='store_true', help='Show detailed signal history')
     parser.add_argument('--verbose', action='store_true', help='Show detailed output')
     parser.add_argument('--grouped', action='store_true', help='Group results by symbol instead of strategy')
+    parser.add_argument('--recommendations', action='store_true', help='Get latest trading recommendations')
     return parser.parse_args()
 
 def debug_print(msg: str, debug: bool = False):
@@ -264,6 +265,38 @@ def format_grouped_analysis_table(all_results: Dict[str, Dict[str, Dict]], symbo
     
     return f"\n{symbol} Analysis:\n" + tabulate(rows, headers=headers, tablefmt="grid")
 
+def format_recommendations_table(recommendations: Dict[str, Dict]) -> str:
+    """Format recommendations as a table"""
+    headers = [
+        "Symbol",
+        "Action",
+        "Type",
+        "Confidence",
+        "Entry Price",
+        "Stop Loss",
+        "Take Profit",
+        "Position Size",
+        "Order Type",
+        "Risk/Reward"
+    ]
+    
+    rows = []
+    for symbol, rec in recommendations.items():
+        rows.append([
+            symbol,
+            rec['action'],
+            rec['type'],
+            f"{rec['confidence']:.1%}",
+            f"${rec['entry_price']:.2f}",
+            f"${rec['stop_loss']:.2f}",
+            f"${rec['take_profit']:.2f}",
+            rec['position_size'],
+            rec['order_type'],
+            f"{rec['risk_reward']:.1f}"
+        ])
+    
+    return "\nTrading Recommendations:\n" + tabulate(rows, headers=headers, tablefmt="grid")
+
 def convert_backtest_result(result: BacktestResult) -> Dict:
     """Convert BacktestResult object to dictionary format"""
     return {
@@ -296,11 +329,11 @@ def process_group(group_name: str, symbols_data: Dict[str, Dict], args: argparse
             strategy.add_data(symbol, data['historical'], data.get('fundamental'))
         
         # Run analysis if requested
-        if args.analyze:
+        if args.analyze or args.recommendations:
             analysis_results[strategy.name] = strategy.analyze()
             
         # Run backtest if requested
-        if args.backtest:
+        if args.backtest or args.recommendations:
             raw_results = strategy.backtest(
                 start_date=datetime.strptime(args.start, '%Y-%m-%d'),
                 end_date=datetime.strptime(args.end, '%Y-%m-%d')
@@ -328,20 +361,14 @@ def process_group(group_name: str, symbols_data: Dict[str, Dict], args: argparse
             for strategy_name, results in backtest_results.items():
                 print(format_backtest_table(results, strategy_name))
     
-    # Generate recommendations if we have both analysis and backtest results
-    if args.analyze and args.backtest:
+    # Generate and display recommendations if requested
+    if args.recommendations:
         recommendations = engine.generate_recommendations(
             symbols_data.keys(),
             analysis_results,
             backtest_results
         )
-        print("\nRecommendations:")
-        for symbol, rec in recommendations.items():
-            print(f"\n{symbol}:")
-            print(f"Action: {rec.action}")
-            print(f"Confidence: {rec.confidence:.1%}")
-            print(f"Supporting Strategies: {', '.join(rec.supporting_strategies)}")
-            print(f"Details: {rec.details}")
+        print(format_recommendations_table(recommendations))
 
 def main():
     args = parse_args()
@@ -386,7 +413,7 @@ def main():
     
     # Initialize recommendation engine if needed
     engine = None
-    if args.analyze and args.backtest:
+    if args.analyze and args.backtest or args.recommendations:
         engine = RecommendationEngine()
     
     # Process all symbols
