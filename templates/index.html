@@ -3,212 +3,51 @@
 {% block title %}Stock Analysis Dashboard{% endblock %}
 
 {% block content %}
-<!-- Dashboard Header -->
-<div class="mb-8">
-    <div class="bg-white rounded-xl shadow-lg hover-lift transition-transform duration-300">
-        <div class="bg-gradient-secondary text-white p-6 rounded-t-xl">
-            <h4 class="text-2xl font-semibold mb-0 flex items-center">
-                <i class="fas fa-chart-line mr-3"></i>
-                Stock Analysis Dashboard
-            </h4>
-        </div>
-        <div class="p-6">
-            <p class="text-xl text-gray-600 mb-6">Welcome to your comprehensive stock analysis platform. View backtest results, trading recommendations, and performance metrics for your portfolio.</p>
-            
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div class="bg-gradient-purple text-white rounded-xl p-6 text-center hover-lift transition-transform duration-300">
-                    <div class="text-3xl font-bold">{{ symbols|length }}</div>
-                    <div class="text-sm opacity-90">Tracked Symbols</div>
-                </div>
-                <div class="bg-gradient-purple text-white rounded-xl p-6 text-center hover-lift transition-transform duration-300">
-                    <div class="text-3xl font-bold">{{ dates|length }}</div>
-                    <div class="text-sm opacity-90">Analysis Dates</div>
-                </div>
-                <div class="bg-gradient-purple text-white rounded-xl p-6 text-center hover-lift transition-transform duration-300">
-                    <div class="text-3xl font-bold">5</div>
-                    <div class="text-sm opacity-90">Strategies</div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Filters and Actions -->
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-    <!-- Quick Filters -->
-    <div class="bg-white rounded-xl shadow-lg hover-lift transition-transform duration-300">
-        <div class="bg-gradient-secondary text-white p-4 rounded-t-xl">
-            <h5 class="text-lg font-semibold mb-0 flex items-center">
-                <i class="fas fa-filter mr-2"></i>
-                Quick Filters
-            </h5>
-        </div>
-        <div class="p-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                <div>
-                    <label for="dateFilter" class="block text-sm font-medium text-gray-700 mb-2">Analysis Date</label>
-                    <select id="dateFilter" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        <option value="">All Dates</option>
-                        {% for date in dates %}
-                        <option value="{{ date }}">{{ date }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div>
-                    <label for="symbolFilter" class="block text-sm font-medium text-gray-700 mb-2">Symbol Filter</label>
-                    <input type="text" id="symbolFilter" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Filter symbols...">
-                </div>
-            </div>
-            <div class="flex flex-wrap gap-2">
-                <button class="bg-gradient-secondary text-white px-4 py-2 rounded-full hover:shadow-lg transition-all duration-300 flex items-center" onclick="applyFilters()">
-                    <i class="fas fa-search mr-2"></i>Apply Filters
-                </button>
-                <button class="bg-gray-500 text-white px-4 py-2 rounded-full hover:shadow-lg transition-all duration-300 flex items-center" onclick="clearFilters()">
-                    <i class="fas fa-times mr-2"></i>Clear
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Quick Actions -->
-    <div class="bg-white rounded-xl shadow-lg hover-lift transition-transform duration-300">
-        <div class="bg-gradient-secondary text-white p-4 rounded-t-xl">
-            <h5 class="text-lg font-semibold mb-0 flex items-center">
-                <i class="fas fa-info-circle mr-2"></i>
-                Quick Actions
-            </h5>
-        </div>
-        <div class="p-6">
-            <div class="grid grid-cols-2 gap-2">
-                <a href="/compare" class="bg-gradient-secondary text-white px-3 py-2 rounded-lg hover:shadow-lg transition-all duration-300 text-center text-sm flex items-center justify-center">
-                    <i class="fas fa-balance-scale mr-1"></i>Compare
-                </a>
-                <button class="bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-all duration-300 text-sm flex items-center justify-center" onclick="loadLatestResults()">
-                    <i class="fas fa-sync mr-1"></i>Latest
-                </button>
-                <button class="bg-green-100 text-green-700 px-3 py-2 rounded-lg hover:bg-green-200 transition-all duration-300 text-sm flex items-center justify-center" onclick="showTopPerformers()">
-                    <i class="fas fa-trophy mr-1"></i>Top
-                </button>
-                <button class="bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-all duration-300 text-sm flex items-center justify-center" onclick="toggleFundsView()">
-                    <i class="fas fa-chart-pie mr-1"></i>Funds
-                </button>
-                <button class="bg-yellow-100 text-yellow-700 px-3 py-2 rounded-lg hover:bg-yellow-200 transition-all duration-300 text-sm flex items-center justify-center" onclick="toggleMutualFundsView()">
-                    <i class="fas fa-university mr-1"></i>MF
-                </button>
-                <button class="bg-red-100 text-red-700 px-3 py-2 rounded-lg hover:bg-red-200 transition-all duration-300 text-sm flex items-center justify-center" onclick="debugMutualFunds()">
-                    <i class="fas fa-bug mr-1"></i>Debug
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Ticker Management Widget -->
-<div class="mb-8">
-    <div class="bg-gradient-light-blue border-2 border-blue-100 rounded-xl shadow-lg p-6">
-        <div class="bg-gradient-teal text-white p-4 rounded-xl mb-6">
-            <h5 class="text-lg font-semibold mb-0 flex items-center justify-between">
-                <span class="flex items-center">
-                    <i class="fas fa-cog mr-2"></i>
-                    Ticker Management
-                </span>
-                <span class="bg-white bg-opacity-20 px-3 py-1 rounded-full text-sm" id="tickerCount">{{ symbols|length }} Tracked</span>
-            </h5>
-        </div>
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <!-- Add Ticker Section -->
-            <div>
-                <div class="flex items-center text-blue-600 font-semibold mb-4 pb-2 border-b-2 border-blue-100">
-                    <i class="fas fa-plus-circle text-green-500 mr-2"></i>
-                    Add New Ticker
-                </div>
-                <div class="flex mb-4 shadow-lg rounded-lg overflow-hidden">
-                    <input type="text" id="newTickerInput" class="flex-1 px-4 py-3 border-0 focus:ring-2 focus:ring-blue-500 font-medium" 
-                           placeholder="Enter ticker symbol (e.g., AAPL)" 
-                           onkeypress="handleAddTickerKeypress(event)">
-                    <button class="bg-green-500 text-white px-6 py-3 hover:bg-green-600 transition-colors flex items-center" onclick="addTicker()">
-                        <i class="fas fa-plus mr-2"></i>Add
-                    </button>
-                </div>
-                <div class="mb-4">
-                    <label class="block font-semibold text-gray-700 mb-3">Quick Add Popular Stocks:</label>
-                    <div class="space-y-2">
-                        <button class="w-full bg-white border border-gray-200 text-left px-4 py-2 rounded-lg hover:bg-blue-50 hover-slide transition-all duration-300 flex items-center" onclick="addPopularTicker('NFLX')">
-                            <i class="fas fa-video text-red-500 mr-3"></i>NFLX - Netflix
-                        </button>
-                        <button class="w-full bg-white border border-gray-200 text-left px-4 py-2 rounded-lg hover:bg-blue-50 hover-slide transition-all duration-300 flex items-center" onclick="addPopularTicker('PYPL')">
-                            <i class="fas fa-credit-card text-blue-500 mr-3"></i>PYPL - PayPal
-                        </button>
-                        <button class="w-full bg-white border border-gray-200 text-left px-4 py-2 rounded-lg hover:bg-blue-50 hover-slide transition-all duration-300 flex items-center" onclick="addPopularTicker('SHOP')">
-                            <i class="fas fa-shopping-cart text-green-500 mr-3"></i>SHOP - Shopify
-                        </button>
-                    </div>
-                </div>
-            </div>
-                    
-                    <!-- Remove Ticker Section -->
-            <!-- Remove Ticker Section -->
-            <div>
-                <div class="flex items-center text-blue-600 font-semibold mb-4 pb-2 border-b-2 border-blue-100">
-                    <i class="fas fa-minus-circle text-red-500 mr-2"></i>
-                    Remove Ticker
-                </div>
-                <div class="flex mb-4 shadow-lg rounded-lg overflow-hidden">
-                    <select id="removeTickerSelect" class="flex-1 px-4 py-3 border-0 focus:ring-2 focus:ring-blue-500 font-medium">
-                        <option value="">Select ticker to remove...</option>
-                        {% for symbol in symbols %}
-                        <option value="{{ symbol }}">{{ symbol }}</option>
-                        {% endfor %}
-                    </select>
-                    <button class="bg-red-500 text-white px-6 py-3 hover:bg-red-600 transition-colors flex items-center" onclick="removeTicker()">
-                        <i class="fas fa-trash mr-2"></i>Remove
-                    </button>
-                </div>
-                
-                <!-- Current Tickers List -->
-                <div class="mb-4">
-                    <label class="block font-semibold text-gray-700 mb-3">Current Tickers:</label>
-                    <div id="tickersList" class="max-h-32 overflow-y-auto custom-scrollbar bg-white rounded-lg p-3 border border-gray-200">
-                        {% for symbol in symbols %}
-                        <span class="inline-block bg-gradient-purple text-white px-3 py-1 m-1 rounded-full text-sm cursor-pointer hover-scale transition-transform duration-200 relative" 
-                              title="Click to remove" onclick="quickRemoveTicker('{{ symbol }}')">
-                            {{ symbol }} <i class="fas fa-times ml-1 opacity-70 hover:opacity-100 transition-opacity"></i>
-                        </span>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
+<!-- Compact Dashboard Header -->
+<div class="bg-white rounded-lg shadow-md border border-gray-200 p-3 mb-4">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+        <!-- Stats -->
+        <div class="flex items-center gap-4 text-sm">
+            <span class="font-bold text-gray-800">{{ symbols|length }} symbols</span>
+            <span class="text-gray-400">|</span>
+            <span class="text-gray-600">5 strategies</span>
+            <span class="text-gray-400">|</span>
+            <span class="text-gray-500">Updated: <span id="lastUpdateDisplay" class="font-medium">—</span></span>
         </div>
         
-        <!-- Status Messages -->
-        <div id="tickerManagementStatus" class="hidden rounded-lg border-0 shadow-lg mt-4 p-3 font-medium" role="alert">
-            <i class="fas fa-info-circle mr-2"></i>
-            <span id="statusMessage"></span>
+        <!-- Scheduler -->
+        <div class="flex items-center gap-3">
+            <span id="schedulerMessage" class="text-xs text-gray-500">Ready</span>
+            <button id="runSchedulerBtn" 
+                    class="bg-blue-500 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-600 transition-colors flex items-center"
+                    onclick="runScheduler()">
+                <i class="fas fa-sync-alt mr-1.5" id="schedulerBtnIcon"></i>
+                <span id="schedulerBtnText">Update</span>
+            </button>
         </div>
-        
-        <!-- Bulk Actions -->
-        <div class="mt-6">
-            <div class="flex items-center text-blue-600 font-semibold mb-4 pb-2 border-b-2 border-blue-100">
-                <i class="fas fa-layer-group mr-2"></i>
-                Bulk Actions
+    </div>
+    
+    <!-- Progress Bar (hidden by default) -->
+    <div id="schedulerProgressContainer" class="mt-2 hidden">
+        <div class="flex items-center gap-2 text-xs text-gray-500">
+            <span id="schedulerProgressLabel">Processing...</span>
+            <div class="flex-1 bg-gray-200 rounded-full h-1.5">
+                <div id="schedulerProgressBar" class="bg-blue-500 h-1.5 rounded-full transition-all" style="width: 0%"></div>
             </div>
-            <div class="flex flex-wrap gap-2">
-                <button class="bg-green-100 text-green-700 px-4 py-2 rounded-full text-sm hover:bg-green-200 transition-colors flex items-center" onclick="addTechStocks()">
-                    <i class="fas fa-microchip mr-1"></i>Add Tech Stocks
-                </button>
-                <button class="bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-sm hover:bg-blue-200 transition-colors flex items-center" onclick="addBankStocks()">
-                    <i class="fas fa-university mr-1"></i>Add Bank Stocks
-                </button>
-                <button class="bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-sm hover:bg-blue-200 transition-colors flex items-center" onclick="addETFs()">
-                    <i class="fas fa-chart-pie mr-1"></i>Add Popular ETFs
-                </button>
-                <button class="bg-yellow-100 text-yellow-700 px-4 py-2 rounded-full text-sm hover:bg-yellow-200 transition-colors flex items-center" onclick="exportTickerList()">
-                    <i class="fas fa-download mr-1"></i>Export List
-                </button>
-            </div>
+            <span><span id="schedulerSymbolCount">0</span>/<span id="schedulerTotalSymbols">0</span></span>
+            <span id="schedulerProgressPercent">0%</span>
         </div>
     </div>
 </div>
+
+<!-- Hidden date filter for JavaScript compatibility -->
+<select id="dateFilter" class="hidden">
+    <option value="">All Dates</option>
+    {% for date in dates %}
+    <option value="{{ date }}">{{ date }}</option>
+    {% endfor %}
+</select>
+<input type="hidden" id="symbolFilter" value="">
 
 <!-- Fund Reinvestment Section -->
 <div class="mb-8 hidden" id="fundsSection">
@@ -266,13 +105,12 @@
                 <table id="symbolsTable" class="w-full">
                     <thead>
                         <tr class="bg-gradient-primary text-white">
-                            <th class="px-4 py-3 text-left font-semibold">Symbol</th>
-                            <th class="px-4 py-3 text-left font-semibold">Date</th>
-                            <th class="px-4 py-3 text-left font-semibold">Entry Price</th>
-                            <th class="px-4 py-3 text-left font-semibold">Stop Loss</th>
-                            <th class="px-4 py-3 text-left font-semibold">Take Profit</th>
-                            <th class="px-4 py-3 text-left font-semibold">Recommendation</th>
-                            <th class="px-4 py-3 text-left font-semibold">Actions</th>
+                            <th class="px-3 py-3 text-left font-semibold">Symbol</th>
+                            <th class="px-3 py-3 text-left font-semibold">Price</th>
+                            <th class="px-3 py-3 text-left font-semibold hidden sm:table-cell">Targets</th>
+                            <th class="px-3 py-3 text-left font-semibold">Signal</th>
+                            <th class="px-3 py-3 text-left font-semibold hidden md:table-cell">Timing</th>
+                            <th class="px-3 py-3 text-left font-semibold">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="symbolsTableBody" class="divide-y divide-gray-200">
@@ -304,29 +142,23 @@
             <small class="opacity-80">Key metrics and reinvestment strategies for mutual funds</small>
         </div>
         <div class="p-6">
-            <!-- Debug Status Panel -->
-            <div id="debugStatus" class="bg-gray-100 border border-gray-300 p-3 rounded-lg mb-4">
-                <strong>Debug Status:</strong> <span id="debugText">Initializing...</span>
-            </div>
-            
             <div class="overflow-x-auto">
                 <table id="mutualFundsTable" class="w-full">
                     <thead>
                         <tr class="bg-gradient-primary text-white">
-                            <th class="px-4 py-3 text-left font-semibold">Fund</th>
-                            <th class="px-4 py-3 text-left font-semibold">Current Price</th>
-                            <th class="px-4 py-3 text-left font-semibold">3-Month Target Zone</th>
-                            <th class="px-4 py-3 text-left font-semibold">Optimal Buy Range</th>
-                            <th class="px-4 py-3 text-left font-semibold">Risk Level</th>
-                            <th class="px-4 py-3 text-left font-semibold">Reinvestment Strategy</th>
-                            <th class="px-4 py-3 text-left font-semibold">Actions</th>
+                            <th class="px-3 py-3 text-left font-semibold">Fund</th>
+                            <th class="px-3 py-3 text-left font-semibold">Price</th>
+                            <th class="px-3 py-3 text-left font-semibold hidden sm:table-cell">Strategy</th>
+                            <th class="px-3 py-3 text-left font-semibold">Signal</th>
+                            <th class="px-3 py-3 text-left font-semibold hidden md:table-cell">Timing</th>
+                            <th class="px-3 py-3 text-left font-semibold">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="mutualFundsTableBody" class="divide-y divide-gray-200">
                         <tr>
-                            <td colspan="7" class="text-center text-blue-600 py-8">
+                            <td colspan="6" class="text-center text-blue-600 py-8">
                                 <i class="fas fa-info-circle mr-2"></i>
-                                Mutual funds data loading on page startup...
+                                Loading mutual funds...
                             </td>
                         </tr>
                     </tbody>
@@ -367,14 +199,24 @@ let currentFilter = {
     symbol: ''
 };
 
-// Fund/ETF symbols that should show reinvestment timing instead of trading signals
-// Only including symbols that we know have data available
-const FUND_SYMBOLS = ['KMKNX', 'FDEGX', 'QQQ', 'VUG', 'IWF', 'SPYG', 'VGT', 'FDN', 'VEA', 'VWO', 'FEZ', 'EWJ', 'MCHI', 'INDA', 'EWZ'];
+// Fund/ETF symbols from config (sectors: ETF, Mutual Fund)
+const FUND_SYMBOLS = JSON.parse('{{ fund_symbols | tojson | safe }}');
 
 let showingFundsView = false;
 
 // Load initial data
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, starting data load...');
+    console.log('allSymbols:', allSymbols);
+    console.log('allDates:', allDates);
+    
+    // Update last updated display
+    if (allDates.length > 0) {
+        const lastDate = allDates[0]; // Most recent date
+        const formatted = lastDate.replace(/(\d{4})(\d{2})(\d{2})/, '$2/$3');
+        document.getElementById('lastUpdateDisplay').textContent = formatted;
+    }
+    
     loadSymbols();
     loadMutualFundsData();
 });
@@ -383,6 +225,13 @@ function loadSymbols() {
     const tableBody = document.getElementById('symbolsTableBody');
     const loadingIndicator = document.getElementById('loadingIndicator');
     const noDataMessage = document.getElementById('noDataMessage');
+    
+    console.log('loadSymbols called');
+    console.log('Table elements found:', {
+        tableBody: !!tableBody,
+        loadingIndicator: !!loadingIndicator,
+        noDataMessage: !!noDataMessage
+    });
     
     // Show loading state
     tableBody.innerHTML = '';
@@ -399,7 +248,11 @@ function loadSymbols() {
     
     const selectedDate = currentFilter.date || (allDates.length > 0 ? allDates[0] : '');
     
+    console.log('Filtered symbols:', filteredSymbols.length);
+    console.log('Selected date:', selectedDate);
+    
     if (!selectedDate) {
+        console.log('No selected date available');
         loadingIndicator.style.display = 'none';
         noDataMessage.innerHTML = '<i class="fas fa-exclamation-triangle me-2"></i>No analysis dates available';
         noDataMessage.style.display = 'block';
@@ -407,8 +260,10 @@ function loadSymbols() {
     }
     
     // Load data for each symbol
+    console.log('Starting to load data for', filteredSymbols.length, 'symbols');
     Promise.all(filteredSymbols.map(symbol => loadSymbolData(symbol, selectedDate)))
         .then(results => {
+            console.log('Data loading completed, results:', results.length);
             loadingIndicator.style.display = 'none';
             renderSymbolsTable(results.filter(r => r !== null));
         })
@@ -422,46 +277,26 @@ function loadSymbols() {
 
 async function loadSymbolData(symbol, date) {
     try {
-        // Try to get recommendations first (they're more important)
+        // Get recommendations
         let recommendations = null;
         try {
             const recResponse = await fetch(`/api/recommendations/${symbol}/${date}`);
             if (recResponse.ok) {
                 recommendations = await recResponse.json();
-            } else if (date === '20250524') {
-                // Try fallback dates if primary date doesn't work
-                const fallbackDates = ['20250416', '20250412'];
-                for (const fallbackDate of fallbackDates) {
-                    const fallbackResponse = await fetch(`/api/recommendations/${symbol}/${fallbackDate}`);
-                    if (fallbackResponse.ok) {
-                        recommendations = await fallbackResponse.json();
-                        break;
-                    }
-                }
             }
         } catch (e) {
-            console.log(`No recommendations for ${symbol}`);
+            console.log(`No recommendations for ${symbol} on ${date}`);
         }
         
-        // Try to get backtest data
+        // Get backtest data
         let backtestData = null;
         try {
             const response = await fetch(`/api/backtest/${symbol}/${date}`);
             if (response.ok) {
                 backtestData = await response.json();
-            } else if (date === '20250524') {
-                // Try fallback dates for backtest
-                const fallbackDates = ['20250416', '20250412'];
-                for (const fallbackDate of fallbackDates) {
-                    const fallbackResponse = await fetch(`/api/backtest/${symbol}/${fallbackDate}`);
-                    if (fallbackResponse.ok) {
-                        backtestData = await fallbackResponse.json();
-                        break;
-                    }
-                }
             }
         } catch (e) {
-            console.log(`No backtest for ${symbol}`);
+            console.log(`No backtest for ${symbol} on ${date}`);
         }
         
         // If we have either recommendations or backtest data, return the result
@@ -496,36 +331,31 @@ function renderSymbolsTable(symbolsData) {
     const rows = symbolsData.map(data => {
         const recommendationInfo = getRecommendationSummary(data.recommendations);
         const tradingInfo = getTradingInfo(data.recommendations);
+        const timingInfo = getTimingInfo(data.recommendations);
         
         return `
-            <tr class="hover:bg-blue-50 cursor-pointer transition-colors">
-                <td class="px-4 py-3">
+            <tr class="hover:bg-blue-50 transition-colors">
+                <td class="px-3 py-3">
                     <strong class="text-blue-600 font-semibold">${data.symbol}</strong>
                 </td>
-                <td class="px-4 py-3">
-                    <small class="text-gray-500">${formatDate(data.date)}</small>
-                </td>
-                <td class="px-4 py-3">
+                <td class="px-3 py-3">
                     ${tradingInfo.entryPrice}
                 </td>
-                <td class="px-4 py-3">
-                    ${tradingInfo.stopLoss}
+                <td class="px-3 py-3 hidden sm:table-cell">
+                    <span class="text-red-600">SL: ${tradingInfo.stopLossShort}</span>
+                    <span class="mx-1 text-gray-400">|</span>
+                    <span class="text-green-600">TP: ${tradingInfo.takeProfitShort}</span>
                 </td>
-                <td class="px-4 py-3">
-                    ${tradingInfo.takeProfit}
-                </td>
-                <td class="px-4 py-3">
+                <td class="px-3 py-3">
                     ${recommendationInfo.html}
                 </td>
-                <td class="px-4 py-3">
-                    <div class="flex gap-1">
-                        <a href="/ticker/${data.symbol}" class="bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200 transition-colors text-sm flex items-center" title="View Detailed Analysis">
-                            <i class="fas fa-chart-line mr-1"></i>Details
-                        </a>
-                        <button class="bg-gray-100 text-gray-700 px-2 py-1 rounded hover:bg-gray-200 transition-colors text-sm" onclick="addToComparison('${data.symbol}')" title="Add to Comparison">
-                            <i class="fas fa-plus"></i>
-                        </button>
-                    </div>
+                <td class="px-3 py-3 hidden md:table-cell">
+                    ${timingInfo.html}
+                </td>
+                <td class="px-3 py-3">
+                    <a href="/ticker/${data.symbol}" class="bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200 transition-colors text-sm inline-flex items-center" title="View Details">
+                        <i class="fas fa-chart-line sm:mr-1"></i><span class="hidden sm:inline">Details</span>
+                    </a>
                 </td>
             </tr>
         `;
@@ -602,6 +432,44 @@ function getActionIcon(action) {
     return icons[action] || '<i class="fas fa-circle text-muted me-1"></i>';
 }
 
+function getTimingInfo(recommendations) {
+    if (!recommendations || !recommendations.recommendations) {
+        return { html: '<span class="text-gray-400">—</span>' };
+    }
+    
+    const rec = recommendations.recommendations;
+    const timeEstimate = rec.time_estimate;
+    
+    if (!timeEstimate) {
+        return { html: '<span class="text-gray-400">—</span>' };
+    }
+    
+    const days = Math.round(timeEstimate.days_to_target);
+    const rangeLow = Math.round(timeEstimate.range_low);
+    const rangeHigh = Math.round(timeEstimate.range_high);
+    const confidence = Math.round(timeEstimate.confidence * 100);
+    const horizon = timeEstimate.time_horizon || 'MEDIUM';
+    
+    // Color based on time horizon
+    const horizonColors = {
+        'SHORT': 'bg-green-100 text-green-700',
+        'MEDIUM': 'bg-blue-100 text-blue-700',
+        'LONG': 'bg-purple-100 text-purple-700'
+    };
+    const color = horizonColors[horizon] || 'bg-gray-100 text-gray-700';
+    
+    return {
+        html: `
+            <div class="text-sm" title="${rangeLow}-${rangeHigh} days (${confidence}% confidence)">
+                <span class="px-2 py-0.5 rounded ${color}">~${days}d</span>
+            </div>
+        `,
+        days: days,
+        range: `${rangeLow}-${rangeHigh}`,
+        confidence: confidence
+    };
+}
+
 function formatDate(dateString) {
     const date = new Date(dateString.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'));
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -612,7 +480,9 @@ function getTradingInfo(recommendations) {
         return {
             entryPrice: '<span class="text-gray-500 text-sm">—</span>',
             stopLoss: '<span class="text-gray-500 text-sm">—</span>',
-            takeProfit: '<span class="text-gray-500 text-sm">—</span>'
+            takeProfit: '<span class="text-gray-500 text-sm">—</span>',
+            stopLossShort: '—',
+            takeProfitShort: '—'
         };
     }
     
@@ -627,7 +497,9 @@ function getTradingInfo(recommendations) {
             '<span class="text-gray-500 text-sm">—</span>',
         takeProfit: rec.take_profit ? 
             `<span class="text-gray-900 font-medium">$${rec.take_profit.toFixed(2)}</span>` : 
-            '<span class="text-gray-500 text-sm">—</span>'
+            '<span class="text-gray-500 text-sm">—</span>',
+        stopLossShort: rec.stop_loss ? `$${rec.stop_loss.toFixed(0)}` : '—',
+        takeProfitShort: rec.take_profit ? `$${rec.take_profit.toFixed(0)}` : '—'
     };
 }
 
@@ -834,10 +706,8 @@ function renderFundsTable(fundsData) {
 function getReinvestmentInfo(recommendations) {
     if (!recommendations || !recommendations.recommendations) {
         return {
-            targetZone: '<span class="text-muted"><i class="fas fa-minus me-1"></i>No data</span>',
-            buyRange: '<span class="text-muted"><i class="fas fa-minus me-1"></i>No data</span>',
-            riskLevel: '<span class="text-gray-600 bg-gray-100 px-2 py-1 rounded text-sm">Unknown</span>',
-            strategy: '<span class="text-muted">Hold current position</span>'
+            signal: '<span class="text-gray-400">—</span>',
+            strategyShort: '<span class="text-gray-400 text-sm">No data</span>'
         };
     }
     
@@ -845,36 +715,19 @@ function getReinvestmentInfo(recommendations) {
     const action = rec.action;
     
     if (action === 'BUY' || action === 'STRONG_BUY') {
-        const entryPrice = rec.entry_price;
-        const stopLoss = rec.stop_loss;
-        const targetLow = entryPrice * 0.95; // 5% below entry for accumulation
-        const targetHigh = entryPrice * 1.02; // 2% above entry for fair value
-        
         return {
-            targetZone: `<div class="text-center">
-                <span class="text-gray-900 font-medium">$${targetLow.toFixed(2)} - $${targetHigh.toFixed(2)}</span>
-                <br><small class="text-green-600">Accumulation Zone</small>
-            </div>`,
-            buyRange: `<div class="text-center">
-                <span class="text-gray-900 font-medium">$${entryPrice.toFixed(2)}</span>
-                <br><small class="text-gray-500">Primary entry</small>
-            </div>`,
-            riskLevel: '<span class="text-green-600 bg-green-50 px-2 py-1 rounded text-sm">Low</span>',
-            strategy: '<div class="text-center"><i class="fas fa-plus-circle text-green-600 mr-1"></i>Dollar-cost average<br><small class="text-gray-500">Weekly/Monthly buys</small></div>'
+            signal: '<span class="bg-green-100 text-green-700 px-2 py-1 rounded-full text-sm font-medium"><i class="fas fa-arrow-up mr-1"></i>BUY</span>',
+            strategyShort: '<span class="text-green-600 text-sm"><i class="fas fa-plus-circle mr-1"></i>Accumulate</span>'
         };
     } else if (action === 'SELL' || action === 'STRONG_SELL') {
         return {
-            targetZone: '<span class="text-yellow-600 bg-yellow-50 px-2 py-1 rounded text-sm">Wait for dip</span>',
-            buyRange: '<span class="text-gray-500">Not recommended</span>',
-            riskLevel: '<span class="text-yellow-600 bg-yellow-50 px-2 py-1 rounded text-sm">Medium</span>',
-            strategy: '<div class="text-center"><i class="fas fa-pause text-yellow-600 mr-1"></i>Pause investing<br><small class="text-gray-500">Wait for better entry</small></div>'
+            signal: '<span class="bg-red-100 text-red-700 px-2 py-1 rounded-full text-sm font-medium"><i class="fas fa-arrow-down mr-1"></i>SELL</span>',
+            strategyShort: '<span class="text-yellow-600 text-sm"><i class="fas fa-pause mr-1"></i>Wait</span>'
         };
     } else {
         return {
-            targetZone: '<span class="text-blue-600 bg-blue-50 px-2 py-1 rounded text-sm">Hold current levels</span>',
-            buyRange: '<span class="text-gray-500">Current price acceptable</span>',
-            riskLevel: '<span class="text-blue-600 bg-blue-50 px-2 py-1 rounded text-sm">Low</span>',
-            strategy: '<div class="text-center"><i class="fas fa-equals text-blue-600 mr-1"></i>Continue regular investing<br><small class="text-gray-500">Maintain schedule</small></div>'
+            signal: '<span class="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-sm font-medium"><i class="fas fa-minus mr-1"></i>HOLD</span>',
+            strategyShort: '<span class="text-blue-600 text-sm"><i class="fas fa-equals mr-1"></i>Continue DCA</span>'
         };
     }
 }
@@ -939,35 +792,11 @@ function toggleMutualFundsView() {
 }
 
 async function loadMutualFundsData() {
-    console.log('Loading mutual funds data...');
-    const debugText = document.getElementById('debugText');
-    
-    if (debugText) {
-        debugText.innerHTML = 'Loading mutual funds data...';
-    }
-    
-    console.log('allSymbols:', allSymbols);
-    console.log('allDates:', allDates);
-    console.log('FUND_SYMBOLS:', FUND_SYMBOLS);
-    
     const loadingIndicator = document.getElementById('mutualFundsLoadingIndicator');
     const tableBody = document.getElementById('mutualFundsTableBody');
     const noDataMessage = document.getElementById('mutualFundsNoDataMessage');
 
-    console.log('Elements found:');
-    console.log('loadingIndicator:', loadingIndicator);
-    console.log('tableBody:', tableBody);
-    console.log('noDataMessage:', noDataMessage);
-    
-    if (debugText) {
-        debugText.innerHTML = `Found elements: table=${!!tableBody}, loading=${!!loadingIndicator}, noData=${!!noDataMessage}`;
-    }
-
-    if (!tableBody) {
-        console.error('Table body not found!');
-        if (debugText) debugText.innerHTML = 'ERROR: Table body element not found!';
-        return;
-    }
+    if (!tableBody) return;
 
     loadingIndicator.style.display = 'block';
     tableBody.innerHTML = '';
@@ -975,369 +804,256 @@ async function loadMutualFundsData() {
 
     const selectedDate = document.getElementById('dateFilter').value || allDates[0];
     const mutualFundSymbols = FUND_SYMBOLS.filter(symbol => allSymbols.includes(symbol));
-    
-    console.log('selectedDate:', selectedDate);
-    console.log('mutualFundSymbols:', mutualFundSymbols);
-    
-    if (debugText) {
-        debugText.innerHTML = `Loading ${mutualFundSymbols.length} symbols for date ${selectedDate}`;
-    }
 
     Promise.all(mutualFundSymbols.map(symbol => loadFundSymbolData(symbol, selectedDate)))
         .then(results => {
-            console.log('Raw results:', results);
             loadingIndicator.style.display = 'none';
             const validResults = results.filter(r => r !== null);
-            console.log('Valid mutual fund results:', validResults);
-            
-            if (debugText) {
-                debugText.innerHTML = `Loaded ${validResults.length} valid results out of ${results.length} total`;
-            }
-            
             renderMutualFundsTable(validResults);
         })
         .catch(error => {
             console.error('Error loading mutual funds:', error);
             loadingIndicator.style.display = 'none';
             noDataMessage.style.display = 'block';
-            
-            if (debugText) {
-                debugText.innerHTML = `ERROR: ${error.message}`;
-            }
         });
 }
 
 function renderMutualFundsTable(fundsData) {
-    console.log('renderMutualFundsTable called with:', fundsData);
-    const debugText = document.getElementById('debugText');
     const tableBody = document.getElementById('mutualFundsTableBody');
     const noDataMessage = document.getElementById('mutualFundsNoDataMessage');
 
-    console.log('Render elements:');
-    console.log('tableBody:', tableBody);
-    console.log('noDataMessage:', noDataMessage);
-    
-    if (debugText) {
-        debugText.innerHTML = `Rendering ${fundsData.length} funds`;
-    }
-
     if (fundsData.length === 0) {
-        console.log('No funds data, showing no data message');
         noDataMessage.style.display = 'block';
-        if (debugText) {
-            debugText.innerHTML = 'No fund data available';
-        }
         return;
     }
 
-    console.log('Rendering', fundsData.length, 'funds');
     noDataMessage.style.display = 'none';
 
     const rows = fundsData.map(data => {
-        console.log('Processing fund data:', data);
         const reinvestmentInfo = getReinvestmentInfo(data.recommendations);
         const currentPrice = data.recommendations?.recommendations?.entry_price;
-        console.log('Reinvestment info:', reinvestmentInfo);
-        console.log('Current price:', currentPrice);
+        const timingInfo = getTimingInfo(data.recommendations);
 
         return `
-            <tr class="table-row-hover">
-                <td>
+            <tr class="hover:bg-blue-50 transition-colors">
+                <td class="px-3 py-3">
                     <strong class="text-blue-600">${data.symbol}</strong>
-                    <br><small class="text-muted">${getFundType(data.symbol)}</small>
+                    <div class="text-xs text-gray-500">${getFundType(data.symbol)}</div>
                 </td>
-                <td>
-                    ${currentPrice ? `<span class="text-gray-900 font-medium">$${currentPrice.toFixed(2)}</span>` : '<span class="text-muted">-</span>'}
+                <td class="px-3 py-3">
+                    ${currentPrice ? `<span class="text-gray-900 font-medium">$${currentPrice.toFixed(2)}</span>` : '<span class="text-gray-400">—</span>'}
                 </td>
-                <td>
-                    ${reinvestmentInfo.targetZone}
+                <td class="px-3 py-3 hidden sm:table-cell">
+                    ${reinvestmentInfo.strategyShort}
                 </td>
-                <td>
-                    ${reinvestmentInfo.buyRange}
+                <td class="px-3 py-3">
+                    ${reinvestmentInfo.signal}
                 </td>
-                <td>
-                    ${reinvestmentInfo.riskLevel}
+                <td class="px-3 py-3 hidden md:table-cell">
+                    ${timingInfo.html}
                 </td>
-                <td>
-                    ${reinvestmentInfo.strategy}
-                </td>
-                <td>
-                    <button class="btn btn-sm btn-outline-info" onclick="addToWatchlist('${data.symbol}')">
-                        <i class="fas fa-star"></i>
-                    </button>
+                <td class="px-3 py-3">
+                    <a href="/fund/${data.symbol}" class="bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200 transition-colors text-sm inline-flex items-center" title="View Fund Prospectus">
+                        <i class="fas fa-chart-line sm:mr-1"></i><span class="hidden sm:inline">Details</span>
+                    </a>
                 </td>
             </tr>
         `;
     }).join('');
 
-    console.log('Generated HTML rows:', rows);
     tableBody.innerHTML = rows;
-    console.log('Table body HTML set successfully');
-    
-    if (debugText) {
-        debugText.innerHTML = `Successfully rendered ${fundsData.length} mutual funds`;
-    }
 }
 
-function debugMutualFunds() {
-    console.log('=== MANUAL DEBUG TEST ===');
-    console.log('allSymbols:', allSymbols);
-    console.log('allDates:', allDates);
-    console.log('FUND_SYMBOLS:', FUND_SYMBOLS);
-    
-    const availableFundSymbols = FUND_SYMBOLS.filter(symbol => allSymbols.includes(symbol));
-    console.log('Available fund symbols:', availableFundSymbols);
-    
-    // Test elements
-    const mutualFundsSection = document.getElementById('mutualFundsSection');
-    const tableBody = document.getElementById('mutualFundsTableBody');
-    const loadingIndicator = document.getElementById('mutualFundsLoadingIndicator');
-    
-    console.log('Elements check:');
-    console.log('mutualFundsSection:', mutualFundsSection);
-    console.log('tableBody:', tableBody);
-    console.log('loadingIndicator:', loadingIndicator);
-    
-    // Manually call the loading function
-    console.log('Calling loadMutualFundsData()...');
-    loadMutualFundsData();
-}
 
-// Ticker Management Functions
-function showTickerStatus(message, type = 'info') {
-    const statusDiv = document.getElementById('tickerManagementStatus');
-    const statusMessage = document.getElementById('statusMessage');
-    
-    statusMessage.textContent = message;
-    statusDiv.className = `alert alert-${type}`;
-    statusDiv.classList.remove('d-none');
-    
-    // Auto-hide after 5 seconds
-    setTimeout(() => {
-        statusDiv.classList.add('d-none');
-    }, 5000);
-}
+// ==================== SCHEDULER FUNCTIONS ====================
 
-function updateTickerCount() {
-    const countBadge = document.getElementById('tickerCount');
-    if (countBadge) {
-        countBadge.textContent = `${allSymbols.length} Tracked`;
-    }
-}
+let schedulerPollingInterval = null;
+let isSchedulerRunning = false;
 
-function updateTickersList() {
-    const tickersList = document.getElementById('tickersList');
-    const removeSelect = document.getElementById('removeTickerSelect');
-    
-    if (tickersList) {
-        tickersList.innerHTML = allSymbols.map(symbol => 
-            `<span class="bg-blue-600 text-white px-3 py-1 rounded-full text-sm font-medium cursor-pointer hover:bg-blue-700 ticker-badge" title="Click to remove" 
-                   onclick="quickRemoveTicker('${symbol}')">
-                ${symbol} <i class="fas fa-times ms-1"></i>
-            </span>`
-        ).join('');
-    }
-    
-    if (removeSelect) {
-        removeSelect.innerHTML = '<option value="">Select ticker to remove...</option>' +
-            allSymbols.map(symbol => 
-                `<option value="${symbol}">${symbol}</option>`
-            ).join('');
-    }
-}
-
-async function addTicker() {
-    const input = document.getElementById('newTickerInput');
-    const symbol = input.value.trim().toUpperCase();
-    
-    if (!symbol) {
-        showTickerStatus('Please enter a ticker symbol', 'warning');
+async function runScheduler() {
+    if (isSchedulerRunning) {
+        console.log('Scheduler already running, ignoring click');
         return;
     }
     
-    if (allSymbols.includes(symbol)) {
-        showTickerStatus(`${symbol} is already being tracked`, 'warning');
-        return;
-    }
+    isSchedulerRunning = true;
     
-    showTickerStatus(`Adding ${symbol}...`, 'info');
+    const btn = document.getElementById('runSchedulerBtn');
+    const btnIcon = document.getElementById('schedulerBtnIcon');
+    const btnText = document.getElementById('schedulerBtnText');
+    const progressContainer = document.getElementById('schedulerProgressContainer');
+    
+    // Disable button
+    btn.disabled = true;
+    btn.classList.remove('bg-green-500', 'hover:bg-green-600');
+    btn.classList.add('bg-gray-400', 'cursor-not-allowed');
+    btnIcon.classList.remove('fa-play');
+    btnIcon.classList.add('fa-spinner', 'animate-spin');
+    btnText.textContent = 'Starting...';
     
     try {
-        const response = await fetch('/api/add_ticker', {
+        const response = await fetch('/api/scheduler/run', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ symbol: symbol })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force: false })
         });
         
         const result = await response.json();
         
-        if (result.success) {
-            allSymbols.push(symbol);
-            updateTickerCount();
-            updateTickersList();
-            input.value = '';
-            showTickerStatus(`Successfully added ${symbol}!`, 'success');
-            
-            // Refresh the main table
-            loadResults();
+        if (response.ok && result.success) {
+            progressContainer.classList.remove('hidden');
+            startSchedulerPolling();
         } else {
-            showTickerStatus(`Failed to add ${symbol}: ${result.error}`, 'danger');
+            updateSchedulerUI('error', result.message || 'Failed to start scheduler');
+            resetSchedulerButton();
+            isSchedulerRunning = false;
         }
     } catch (error) {
-        console.error('Error adding ticker:', error);
-        showTickerStatus(`Error adding ${symbol}: ${error.message}`, 'danger');
+        console.error('Error starting scheduler:', error);
+        updateSchedulerUI('error', 'Network error: ' + error.message);
+        resetSchedulerButton();
+        isSchedulerRunning = false;
     }
 }
 
-async function removeTicker() {
-    const select = document.getElementById('removeTickerSelect');
-    const symbol = select.value;
-    
-    if (!symbol) {
-        showTickerStatus('Please select a ticker to remove', 'warning');
-        return;
-    }
-    
-    if (confirm(`Are you sure you want to remove ${symbol} from your watchlist?`)) {
-        await removeTickerFromSystem(symbol);
+function startSchedulerPolling() {
+    // Poll every 1.5 seconds for smoother updates
+    schedulerPollingInterval = setInterval(pollSchedulerStatus, 1500);
+    pollSchedulerStatus(); // Check immediately
+}
+
+function stopSchedulerPolling() {
+    if (schedulerPollingInterval) {
+        clearInterval(schedulerPollingInterval);
+        schedulerPollingInterval = null;
     }
 }
 
-async function quickRemoveTicker(symbol) {
-    if (confirm(`Remove ${symbol} from your watchlist?`)) {
-        await removeTickerFromSystem(symbol);
-    }
-}
-
-async function removeTickerFromSystem(symbol) {
-    showTickerStatus(`Removing ${symbol}...`, 'info');
-    
+async function pollSchedulerStatus() {
     try {
-        const response = await fetch('/api/remove_ticker', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ symbol: symbol })
-        });
+        const response = await fetch('/api/scheduler/status');
+        const status = await response.json();
         
-        const result = await response.json();
+        updateSchedulerProgress(status);
         
-        if (result.success) {
-            allSymbols = allSymbols.filter(s => s !== symbol);
-            updateTickerCount();
-            updateTickersList();
-            showTickerStatus(`Successfully removed ${symbol}`, 'success');
+        if (status.status === 'completed') {
+            stopSchedulerPolling();
             
-            // Refresh the main table
-            loadResults();
-        } else {
-            showTickerStatus(`Failed to remove ${symbol}: ${result.error}`, 'danger');
+            // Show completion message then refresh the page
+            const message = document.getElementById('schedulerMessage');
+            message.innerHTML = '<i class="fas fa-check-circle text-green-500 mr-2"></i>' + status.message + ' - Refreshing page...';
+            
+            setTimeout(() => {
+                window.location.reload();
+            }, 2500);
+            
+        } else if (status.status === 'error') {
+            stopSchedulerPolling();
+            resetSchedulerButton();
+            isSchedulerRunning = false;
         }
     } catch (error) {
-        console.error('Error removing ticker:', error);
-        showTickerStatus(`Error removing ${symbol}: ${error.message}`, 'danger');
+        console.error('Error checking scheduler status:', error);
     }
 }
 
-function handleAddTickerKeypress(event) {
-    if (event.key === 'Enter') {
-        addTicker();
+function updateSchedulerProgress(status) {
+    const message = document.getElementById('schedulerMessage');
+    const progressBar = document.getElementById('schedulerProgressBar');
+    const progressPercent = document.getElementById('schedulerProgressPercent');
+    const progressLabel = document.getElementById('schedulerProgressLabel');
+    const symbolCount = document.getElementById('schedulerSymbolCount');
+    const totalSymbols = document.getElementById('schedulerTotalSymbols');
+    const progressContainer = document.getElementById('schedulerProgressContainer');
+    
+    // Determine stage label
+    let stageLabel = '';
+    if (status.stage === 'fetching') {
+        stageLabel = 'Stage 1/2: Fetching Data';
+    } else if (status.stage === 'analyzing') {
+        stageLabel = 'Stage 2/2: Generating Predictions';
+    } else if (status.stage === 'reports') {
+        stageLabel = 'Finalizing...';
+    }
+    
+    if (status.status === 'running') {
+        progressContainer.classList.remove('hidden');
+        progressBar.style.width = `${status.progress || 0}%`;
+        progressPercent.textContent = `${status.progress || 0}%`;
+        progressLabel.textContent = stageLabel || status.message || 'Processing...';
+        symbolCount.textContent = status.symbols_processed || 0;
+        totalSymbols.textContent = status.total_symbols || 0;
+        message.textContent = status.message || 'Processing...';
+        
+        progressBar.classList.remove('bg-green-500', 'bg-red-500');
+        progressBar.classList.add('bg-gradient-teal');
+        
+    } else if (status.status === 'completed') {
+        progressContainer.classList.remove('hidden');
+        progressBar.style.width = '100%';
+        progressPercent.textContent = '100%';
+        progressLabel.textContent = 'Complete!';
+        progressBar.classList.remove('bg-gradient-teal', 'bg-red-500');
+        progressBar.classList.add('bg-green-500');
+        
+        message.innerHTML = '<i class="fas fa-check-circle text-green-500 mr-2"></i>' + status.message;
+        
+    } else if (status.status === 'error') {
+        progressBar.classList.remove('bg-gradient-teal', 'bg-green-500');
+        progressBar.classList.add('bg-red-500');
+        
+        message.innerHTML = '<i class="fas fa-exclamation-circle text-red-500 mr-2"></i>' + status.message;
+        
+    } else if (status.status === 'idle') {
+        // Idle - don't show progress, just ready message
+        progressContainer.classList.add('hidden');
+        message.innerHTML = '<i class="fas fa-info-circle text-gray-500 mr-2"></i>Ready to run';
     }
 }
 
-async function addPopularTicker(symbol) {
-    const input = document.getElementById('newTickerInput');
-    input.value = symbol;
-    await addTicker();
-}
-
-async function addTechStocks() {
-    const techStocks = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'META', 'NVDA', 'AMD'];
-    await addMultipleTickers(techStocks, 'tech stocks');
-}
-
-async function addBankStocks() {
-    const bankStocks = ['JPM', 'BAC', 'WFC', 'C', 'GS', 'MS'];
-    await addMultipleTickers(bankStocks, 'bank stocks');
-}
-
-async function addETFs() {
-    const etfs = ['SPY', 'QQQ', 'IWM', 'VTI', 'VOO', 'ARKK'];
-    await addMultipleTickers(etfs, 'popular ETFs');
-}
-
-async function addMultipleTickers(symbols, category) {
-    const newSymbols = symbols.filter(symbol => !allSymbols.includes(symbol));
+function updateSchedulerUI(status, message) {
+    const messageEl = document.getElementById('schedulerMessage');
     
-    if (newSymbols.length === 0) {
-        showTickerStatus(`All ${category} are already tracked`, 'info');
-        return;
+    if (status === 'error') {
+        messageEl.innerHTML = `<i class="fas fa-exclamation-circle text-red-500 mr-2"></i>${message}`;
+    } else {
+        messageEl.textContent = message;
     }
+}
+
+function resetSchedulerButton() {
+    const btn = document.getElementById('runSchedulerBtn');
+    const btnIcon = document.getElementById('schedulerBtnIcon');
+    const btnText = document.getElementById('schedulerBtnText');
     
-    showTickerStatus(`Adding ${newSymbols.length} ${category}...`, 'info');
-    
-    let successCount = 0;
-    let errors = [];
-    
-    for (const symbol of newSymbols) {
-        try {
-            const response = await fetch('/api/add_ticker', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ symbol: symbol })
-            });
-            
-            const result = await response.json();
-            
-            if (result.success) {
-                allSymbols.push(symbol);
-                successCount++;
-            } else {
-                errors.push(`${symbol}: ${result.error}`);
-            }
-        } catch (error) {
-            errors.push(`${symbol}: ${error.message}`);
+    btn.disabled = false;
+    btn.classList.remove('bg-gray-400', 'cursor-not-allowed');
+    btn.classList.add('bg-green-500', 'hover:bg-green-600');
+    btnIcon.classList.remove('fa-spinner', 'animate-spin');
+    btnIcon.classList.add('fa-play');
+    btnText.textContent = 'Run Daily Update';
+}
+
+// On page load - just show current status, don't auto-refresh
+document.addEventListener('DOMContentLoaded', async function() {
+    try {
+        const response = await fetch('/api/scheduler/status');
+        const status = await response.json();
+        
+        // Only show status if idle or error - don't trigger refresh for old completed status
+        if (status.status === 'running') {
+            // If scheduler is running, start polling
+            isSchedulerRunning = true;
+            document.getElementById('schedulerProgressContainer').classList.remove('hidden');
+            startSchedulerPolling();
+        } else {
+            // Show idle status
+            updateSchedulerProgress({ status: 'idle', message: 'Ready to run' });
         }
+    } catch (error) {
+        console.log('Could not fetch scheduler status');
     }
-    
-    updateTickerCount();
-    updateTickersList();
-    
-    if (successCount > 0) {
-        showTickerStatus(`Successfully added ${successCount} ${category}!`, 'success');
-        loadResults();
-    }
-    
-    if (errors.length > 0) {
-        console.error('Errors adding tickers:', errors);
-        setTimeout(() => {
-            showTickerStatus(`Some errors occurred: ${errors.slice(0, 2).join(', ')}`, 'warning');
-        }, 2000);
-    }
-}
+});
 
-function exportTickerList() {
-    const tickerData = {
-        symbols: allSymbols,
-        count: allSymbols.length,
-        exported_at: new Date().toISOString(),
-        system: 'Stock Analysis Dashboard'
-    };
-    
-    const dataStr = JSON.stringify(tickerData, null, 2);
-    const dataBlob = new Blob([dataStr], {type: 'application/json'});
-    
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(dataBlob);
-    link.download = `ticker_list_${new Date().toISOString().split('T')[0]}.json`;
-    link.click();
-    
-    showTickerStatus('Ticker list exported successfully!', 'success');
-}
 </script>
 {% endblock %}

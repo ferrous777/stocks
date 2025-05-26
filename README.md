@@ -1,207 +1,174 @@
-# Stock Market Analysis System
+# Stock Analysis Dashboard
 
-An automated daily stock market analysis system with comprehensive strategy execution, performance tracking, and intelligent scheduling.
+A comprehensive stock and mutual fund analysis system with automated daily data collection, multi-strategy backtesting, and a modern web interface.
 
-## 🚀 Quick Start (PythonAnywhere Ready!)
+## Features
 
-This system is optimized for **PythonAnywhere deployment** with automated daily scheduling:
+- **Automated Daily Data Collection** - Incremental data fetching that only pulls missing data
+- **Multi-Strategy Analysis** - Momentum, mean reversion, and breakout strategies
+- **Mutual Fund Prospectus** - Detailed 1, 3, 5, and 10 year performance analysis
+- **Web Dashboard** - Modern Flask-based interface for viewing analysis results
+- **Market Calendar Integration** - Automatically handles holidays and weekends
+- **PythonAnywhere Ready** - Optimized for cloud deployment with scheduled tasks
+
+## Quick Start
+
+### Installation
 
 ```bash
-# 1. Clone the repository
+# Clone the repository
 git clone https://github.com/yourusername/stocks.git
 cd stocks
 
-# 2. Install dependencies
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On macOS/Linux
+# venv\Scripts\activate   # On Windows
+
+# Install dependencies
 pip install -r requirements.txt
+```
 
-# 3. Test the system
+### Activating the Environment
+
+Each time you open a new terminal for development:
+
+```bash
+cd stocks
+source venv/bin/activate  # On macOS/Linux
+# venv\Scripts\activate   # On Windows
+```
+
+### Run the Web Server
+
+```bash
+# Start the Flask development server
+python app.py
+
+# Access at http://localhost:8090
+```
+
+### Run Daily Analysis
+
+```bash
+# Run the daily scheduler
+python scheduler/daily_scheduler.py
+
+# Or force run on non-trading days
 python pythonanywhere_daily_hook.py --force
-
-# 4. Set up PythonAnywhere scheduled task (see deployment section below)
 ```
 
-## 📊 Features
+## Project Structure
 
-### Market Analysis
-- **21 Configured Symbols**: Tech stocks, ETFs, mutual funds with priority-based processing
-- **3 Trading Strategies**: Momentum, mean reversion, and breakout detection
-- **Performance Metrics**: Rolling analysis (7, 30, 90-day windows)
-- **Market Benchmarking**: S&P 500 and sector comparisons
-
-### Automation & Scheduling
-- **Market Calendar Integration**: Automatically skips weekends and holidays
-- **Smart Execution**: US market holiday detection with early close handling
-- **Daily Reports**: Comprehensive analysis with strategy signals and performance
-- **Error Recovery**: Graceful failure handling and detailed logging
-
-### Data Management
-- **SQLite Database**: Efficient time-series storage with 9,889+ historical records
-- **JSON Export**: Structured data for external analysis
-- **Markdown Reports**: Human-readable daily summaries
-- **Performance Tracking**: Historical strategy effectiveness
-
-## 🔧 System Components
-
-### Core Modules
-- **Market Data Collection**: Automated data fetching and validation
-- **Strategy Engine**: Momentum, mean reversion, and breakout strategies
-- **Performance Calculator**: Rolling metrics and benchmark comparisons
-- **Report Generator**: Daily summaries and trend analysis
-
-### Configuration
-- **Symbol Management**: Priority-based symbol categorization
-- **Strategy Parameters**: Configurable trading strategy settings
-- **Scheduling Options**: Flexible timing and execution controls
-
-## 🚀 PythonAnywhere Deployment
-
-### ✅ Production Ready Features
-- **Market Calendar Integration**: US holidays and trading day detection
-- **PythonAnywhere Optimization**: Working directory and path management
-- **Comprehensive Logging**: Detailed execution logs and error tracking
-- **Smart Scheduling**: Only runs on trading days (unless forced)
-
-### Quick Deploy Steps
-
-1. **Upload to PythonAnywhere:**
-   ```bash
-   git clone https://github.com/yourusername/stocks.git
-   cd stocks
-   ```
-
-2. **Install Dependencies:**
-   ```bash
-   pip3.10 install --user -r requirements.txt
-   ```
-
-3. **Test System:**
-   ```bash
-   python3.10 pythonanywhere_daily_hook.py --force
-   ```
-
-4. **Schedule Daily Task:**
-   - Dashboard → Tasks → Create new task
-   - Command: `/home/yourusername/stocks/pythonanywhere_daily_hook.py`
-   - Time: Daily at 6:00 PM EST
-
-### Daily Automation
-The system automatically:
-- ✅ Checks market calendar (skips weekends/holidays)
-- 📊 Collects data for 21 configured symbols
-- 🎯 Executes 3 trading strategies
-- 📈 Calculates rolling performance metrics
-- 📄 Generates comprehensive reports
-- 💾 Saves timestamped results
-
-### Output Structure
 ```
-logs/
-├── daily_executions/     # JSON execution results
-├── daily_reports/        # Human-readable reports
-└── pythonanywhere_daily.log  # System logs
-
-reports/
-└── daily_report_*.md     # Markdown summaries
+stocks/
+├── app.py                    # Flask web application
+├── main.py                   # CLI entry point
+├── analysis/                 # Data analysis modules
+│   ├── aggregation.py        # Data aggregation
+│   └── fund_analyzer.py      # Mutual fund prospectus analysis
+├── config/                   # Configuration management
+├── data/                     # Database and data files
+├── docs/                     # Documentation
+├── market_data/              # Market data fetching
+├── scheduler/                # Daily scheduler
+├── storage/                  # Database adapters
+├── strategies/               # Trading strategies
+├── templates/                # HTML templates
+└── tests/                    # Test suite
 ```
 
-## 📈 Configured Symbols
+## Web Interface
 
-### Priority 1 (High Priority - 6 symbols)
-**Technology Stocks:**
-- AAPL, MSFT, GOOGL, AMZN, NVDA
+### Dashboard (`/`)
+Overview of all tracked symbols with filtering and analysis summaries.
 
-**Consumer:**
-- COST
+### Ticker Detail (`/ticker/<symbol>`)
+Comprehensive analysis for individual stocks including:
+- Current recommendations
+- Strategy performance
+- Historical data visualization
 
-### Priority 2 (Medium Priority - 13 symbols)
-**ETFs for diversified exposure:**
-- QQQ, VUG, IWF, SPYG, VGT, FDN
-- VEA, VWO, FEZ, EWJ, MCHI, INDA, EWZ
+### Fund Prospectus (`/fund/<symbol>`)
+Mutual fund and ETF analysis with:
+- 1, 3, 5, 10 year performance metrics
+- Risk analysis (beta, alpha, Sharpe ratio)
+- Benchmark comparison (vs S&P 500)
+- Fund metadata (expense ratio, holdings)
 
-### Priority 3 (Low Priority - 2 symbols)
-**Mutual Funds:**
-- KMKNX, FDEGX
+### Compare (`/compare`)
+Side-by-side comparison of multiple symbols.
 
-## 🛠️ Development & Testing
+## API Endpoints
 
-### Local Development
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/symbols` | List available symbols |
+| `GET /api/dates` | List available analysis dates |
+| `GET /api/backtest/<symbol>/<date>` | Get backtest results |
+| `GET /api/recommendations/<symbol>/<date>` | Get recommendations |
+| `GET /api/historical/<symbol>` | Get historical data |
+| `GET /api/fund/<symbol>/prospectus` | Get fund prospectus data |
+| `GET /api/fund/<symbol>/info` | Get fund metadata |
+| `GET /health` | Health check |
+
+## Configuration
+
+### Symbol Management
+
+Symbols are configured in `config/system_config.yaml`:
+
+```yaml
+symbols:
+  - symbol: AAPL
+    enabled: true
+    priority: 1
+    sector: Technology
+  - symbol: QQQ
+    enabled: true
+    priority: 2
+    sector: ETF
+```
+
+### Adding/Removing Symbols
+
+Use the API endpoints or modify the config directly:
+
 ```bash
-# Run daily workflow manually
-python dev-tools/scheduler_cli.py run
-
-# Backfill historical data
-python dev-tools/scheduler_cli.py backfill 2024-01-01 2024-12-31
-
-# Check system status
-python dev-tools/scheduler_cli.py status
-
-# Update symbol configuration
-python dev-tools/update_symbols.py
+# Via API
+curl -X POST http://localhost:8090/api/add_ticker \
+  -H "Content-Type: application/json" \
+  -d '{"symbol": "TSLA", "sector": "Technology"}'
 ```
 
-### Configuration Management
+## Deployment
+
+### PythonAnywhere
+
+See [docs/pythonanywhere_deployment.md](docs/pythonanywhere_deployment.md) for detailed deployment instructions.
+
+Quick setup:
+1. Upload code to PythonAnywhere
+2. Install dependencies: `pip3.10 install --user -r requirements.txt`
+3. Schedule daily task: `python3.10 pythonanywhere_daily_hook.py`
+
+### Production
+
+For production deployments:
+
 ```bash
-# View current symbols
-python dev-tools/config_cli.py list-symbols
-
-# Add new symbol
-python dev-tools/config_cli.py add-symbol TSLA --priority 1 --sector Technology
-
-# View aggregated data
-python dev-tools/analysis_cli.py monthly AAPL --start-date 2024-01-01
+# Using Gunicorn
+pip install gunicorn
+gunicorn -w 4 -b 0.0.0.0:5000 app:app
 ```
 
-## 📚 Documentation
+## Documentation
 
-- **[Complete Documentation](docs/README.md)** - Detailed component guides
-- **[PythonAnywhere Setup](PYTHONANYWHERE_SETUP.md)** - Quick deployment guide
-- **[Deployment Guide](docs/pythonanywhere_deployment.md)** - Technical details
-- **[Backtest Guide](docs/backtest.md)** - Strategy testing
-- **[Trade Guide](docs/trade_guide.md)** - Trading implementation
+- [API Documentation](docs/api_documentation.md)
+- [Deployment Guide](docs/pythonanywhere_deployment.md)
+- [Troubleshooting](docs/troubleshooting_guide.md)
+- [Data Schemas](docs/data_schemas.md)
 
-## 🔍 Market Calendar Features
+## License
 
-### US Market Holidays (Automatically Detected)
-- New Year's Day, MLK Day, Presidents' Day
-- Good Friday, Memorial Day, Juneteenth
-- Independence Day, Labor Day
-- Thanksgiving, Christmas Day
-
-### Special Handling
-- **Early Closes**: Day after Thanksgiving, Christmas Eve
-- **Weekend Skipping**: Automatic weekday-only execution
-- **Timezone Awareness**: EST/EDT handling for market hours
-
-## 📊 Monitoring & Logs
-
-### Check System Health
-```bash
-# View recent execution logs
-tail -f logs/pythonanywhere_daily.log
-
-# Check latest report
-cat logs/daily_reports/report_$(date +%Y-%m-%d).txt
-
-# View execution results
-cat logs/daily_executions/execution_$(date +%Y-%m-%d).json
-```
-
-### Performance Tracking
-- **Strategy Effectiveness**: Historical signal accuracy
-- **Data Quality**: Success rates and error tracking
-- **Execution Metrics**: Processing time and resource usage
-
----
-
-## 🎯 Ready for Production
-
-This system is **production-ready** for PythonAnywhere with:
-- ✅ Market calendar awareness
-- ✅ Comprehensive error handling
-- ✅ Detailed logging and reporting
-- ✅ Automated scheduling optimization
-- ✅ 9,889+ historical data points migrated
-
-**Deploy today**: Upload, install dependencies, and schedule the daily task!
-
-For detailed deployment instructions, see [`PYTHONANYWHERE_SETUP.md`](PYTHONANYWHERE_SETUP.md).
+MIT License - See LICENSE file for details.

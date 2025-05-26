@@ -62,6 +62,17 @@ strategies:
     volume_threshold: 2.0
   weight: 0.7
 symbols:
+# Benchmark Indices - used for comparison
+- custom_params: null
+  enabled: true
+  priority: 0
+  sector: Benchmark
+  symbol: SPY
+- custom_params: null
+  enabled: true
+  priority: 0
+  sector: Benchmark
+  symbol: VOO
 - custom_params: null
   enabled: true
   priority: 1
@@ -167,3 +178,123 @@ symbols:
   priority: 3
   sector: Mutual Fund
   symbol: FDEGX
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: NFLX
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: TSLA
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: META
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Healthcare
+  symbol: APH
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Healthcare
+  symbol: IDXX
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: INTU
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: KLAC
+# Gold & Precious Metals - strong performers in 2025-2026
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Gold
+  symbol: NEM
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Gold
+  symbol: AEM
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Gold
+  symbol: GFI
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: Gold
+  symbol: KGC
+# Semiconductor Equipment - KLAC peers (analyst favorites)
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Semiconductors
+  symbol: ASML
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Semiconductors
+  symbol: AMAT
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Semiconductors
+  symbol: LRCX
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Semiconductors
+  symbol: AMD
+# Emerging Markets - individual stocks with high growth
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Emerging Markets
+  symbol: TSM
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: Emerging Markets
+  symbol: JD
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: Emerging Markets
+  symbol: IBN
+# Tech/AI Growth - promising 2026 picks
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: UBER
+# Fidelity ZERO Expense Ratio Funds (0% fees)
+- custom_params: null
+  enabled: true
+  priority: 3
+  sector: Mutual Fund
+  symbol: FZROX
+- custom_params: null
+  enabled: true
+  priority: 3
+  sector: Mutual Fund
+  symbol: FNILX
+- custom_params: null
+  enabled: true
+  priority: 3
+  sector: Mutual Fund
+  symbol: FZIPX
+- custom_params: null
+  enabled: true
+  priority: 3
+  sector: Mutual Fund
+  symbol: FZILX

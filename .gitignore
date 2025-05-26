@@ -42,6 +42,30 @@ logs/
 .env
 .DS_Store
 
+# Database files (large, regenerated)
+*.db
+data/*.db
+data/timeseries.db
+data/prediction_tracker.db
+data/test_timeseries.db
+
+# Archives and backups
+*.tar.gz
+*.zip
+*.bak
+*-backup-*
+
+# Deployment artifacts
+deployment_manifest.json
+server_cleanup_report.md
+deployment_validation_report.md
+
+# Test artifacts
+*.pyc
+.coverage
+htmlcov/
+.pytest_cache/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb

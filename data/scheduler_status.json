@@ -1,0 +1,10 @@
+{
+  "status": "completed",
+  "message": "Complete! Processed 46 symbols for 20260127",
+  "progress": 100,
+  "symbols_processed": 46,
+  "total_symbols": 46,
+  "stage": "done",
+  "updated_at": "2026-01-27T23:51:31.842460",
+  "started_at": null
+}

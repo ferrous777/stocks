@@ -7,10 +7,14 @@ Provides a web interface to view backtest results, recommendations, and analysis
 import os
 import json
 import glob
+import yaml
+import threading
+import time
 from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_cors import CORS
 import pandas as pd
+from analysis.fund_analyzer import FundAnalyzer
 
 app = Flask(__name__)
 CORS(app)
@@ -28,16 +32,307 @@ except:
 # Configuration
 RESULTS_DIR = app.config.get('RESULTS_DIR', 'results')
 CACHE_DIR = app.config.get('CACHE_DIR', 'cache')
-STATIC_DIR = app.config.get('STATIC_DIR', 'static')
+CONFIG_FILE = app.config.get('CONFIG_FILE', 'config/system_config.yaml')
+SCHEDULER_STATUS_FILE = 'data/scheduler_status.json'
+
+# Scheduler state
+scheduler_thread = None
+scheduler_lock = threading.Lock()
+
+
+def update_scheduler_status(status, message, progress=0, symbols_processed=0, total_symbols=0, stage=''):
+    """Update the scheduler status file."""
+    status_data = {
+        'status': status,  # 'idle', 'running', 'completed', 'error'
+        'message': message,
+        'progress': progress,
+        'symbols_processed': symbols_processed,
+        'total_symbols': total_symbols,
+        'stage': stage,  # 'fetching', 'analyzing', 'reports'
+        'updated_at': datetime.now().isoformat(),
+        'started_at': None
+    }
+    
+    # Preserve started_at from existing file if running
+    if os.path.exists(SCHEDULER_STATUS_FILE):
+        try:
+            with open(SCHEDULER_STATUS_FILE, 'r') as f:
+                existing = json.load(f)
+                if status == 'running' and existing.get('started_at'):
+                    status_data['started_at'] = existing['started_at']
+        except:
+            pass
+    
+    if status == 'running' and not status_data['started_at']:
+        status_data['started_at'] = datetime.now().isoformat()
+    
+    os.makedirs(os.path.dirname(SCHEDULER_STATUS_FILE), exist_ok=True)
+    with open(SCHEDULER_STATUS_FILE, 'w') as f:
+        json.dump(status_data, f, indent=2)
+
+
+def reset_scheduler_status():
+    """Reset scheduler status to idle."""
+    status_data = {
+        'status': 'idle',
+        'message': 'Ready to run',
+        'progress': 0,
+        'symbols_processed': 0,
+        'total_symbols': 0,
+        'stage': '',
+        'updated_at': datetime.now().isoformat(),
+        'started_at': None
+    }
+    os.makedirs(os.path.dirname(SCHEDULER_STATUS_FILE), exist_ok=True)
+    with open(SCHEDULER_STATUS_FILE, 'w') as f:
+        json.dump(status_data, f, indent=2)
+
+
+def run_scheduler_task(force=False):
+    """Run the daily scheduler in background."""
+    try:
+        update_scheduler_status('running', 'Initializing scheduler...', 0, 0, 0, 'init')
+        
+        # Import scheduler components
+        from scheduler.daily_scheduler import MarketDataCollector, StrategyRunner, DailyReportGenerator
+        
+        collector = MarketDataCollector()
+        strategy_runner = StrategyRunner()
+        report_generator = DailyReportGenerator()
+        
+        symbols = get_available_symbols()
+        total = len(symbols)
+        today = datetime.now()
+        date_str = today.strftime('%Y%m%d')
+        
+        # ========== STAGE 1: FETCH DATA (0-50%) ==========
+        update_scheduler_status('running', f'Stage 1/2: Fetching market data for {total} symbols...', 1, 0, total, 'fetching')
+        
+        for i, symbol in enumerate(symbols):
+            progress = int((i / total) * 48) + 1  # 1-49%
+            update_scheduler_status(
+                'running', 
+                f'Fetching: {symbol} ({i+1}/{total})', 
+                progress,
+                i + 1, 
+                total,
+                'fetching'
+            )
+            try:
+                collector.fetch_latest_data(symbol)
+            except Exception as e:
+                print(f"Error fetching {symbol}: {e}")
+        
+        # ========== STAGE 2: ANALYZE & GENERATE PREDICTIONS (50-95%) ==========
+        update_scheduler_status('running', f'Stage 2/2: Generating predictions for {total} symbols...', 50, 0, total, 'analyzing')
+        
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        
+        for i, symbol in enumerate(symbols):
+            progress = 50 + int((i / total) * 45)  # 50-95%
+            update_scheduler_status(
+                'running',
+                f'Analyzing: {symbol} ({i+1}/{total})',
+                progress,
+                i + 1,
+                total,
+                'analyzing'
+            )
+            try:
+                # Run strategies
+                strategy_results = strategy_runner.run_all_strategies(symbol, today)
+                
+                # Save backtest results
+                if strategy_results:
+                    backtest_file = os.path.join(RESULTS_DIR, f'{symbol}_backtest_{date_str}.json')
+                    with open(backtest_file, 'w') as f:
+                        json.dump(strategy_results, f, indent=2)
+                
+                # Generate and save recommendations based on strategy results
+                recommendations = generate_recommendations_from_strategies(symbol, strategy_results, today)
+                if recommendations:
+                    rec_file = os.path.join(RESULTS_DIR, f'{symbol}_recommendations_{date_str}.json')
+                    with open(rec_file, 'w') as f:
+                        json.dump({'symbol': symbol, 'date': date_str, 'recommendations': recommendations}, f, indent=2)
+                        
+            except Exception as e:
+                print(f"Error analyzing {symbol}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # ========== FINALIZE ==========
+        update_scheduler_status('running', 'Generating daily report...', 96, total, total, 'reports')
+        
+        try:
+            report_generator.generate_daily_report(today)
+        except Exception as e:
+            print(f"Error generating report: {e}")
+        
+        update_scheduler_status('completed', f'Complete! Processed {total} symbols for {date_str}', 100, total, total, 'done')
+        
+    except Exception as e:
+        update_scheduler_status('error', f'Scheduler error: {str(e)}', 0, 0, 0, 'error')
+        print(f"Scheduler error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def generate_recommendations_from_strategies(symbol, strategy_results, date):
+    """Generate recommendations from strategy results, including time estimates."""
+    if not strategy_results:
+        return None
+    
+    # Collect all signals
+    signals = []
+    for strategy_name, result in strategy_results.items():
+        if isinstance(result, dict) and 'signal' in result:
+            signals.append({
+                'strategy': strategy_name,
+                'signal': result.get('signal', 'HOLD'),
+                'confidence': result.get('confidence', 0.5)
+            })
+    
+    if not signals:
+        return None
+    
+    # Determine consensus action
+    buy_count = sum(1 for s in signals if s['signal'] == 'BUY')
+    sell_count = sum(1 for s in signals if s['signal'] == 'SELL')
+    hold_count = sum(1 for s in signals if s['signal'] == 'HOLD')
+    
+    if buy_count > sell_count and buy_count > hold_count:
+        action = 'BUY'
+    elif sell_count > buy_count and sell_count > hold_count:
+        action = 'SELL'
+    else:
+        action = 'HOLD'
+    
+    # Get average confidence
+    avg_confidence = sum(s['confidence'] for s in signals) / len(signals) if signals else 0.5
+    
+    # Get current price and historical data from cache
+    cache_file = os.path.join(CACHE_DIR, f'{symbol}_historical.json')
+    current_price = 100.0  # default
+    data_points = []
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'r') as f:
+                data = json.load(f)
+                if data.get('data_points'):
+                    data_points = data['data_points']
+                    # Sort by date and get latest
+                    sorted_points = sorted(data_points, key=lambda x: x.get('date', ''))
+                    if sorted_points:
+                        current_price = sorted_points[-1].get('close', 100.0)
+        except Exception as e:
+            print(f"Error reading cache for {symbol}: {e}")
+    
+    # Calculate stop loss and take profit
+    if action == 'BUY':
+        stop_loss = current_price * 0.95  # 5% below
+        take_profit = current_price * 1.10  # 10% above
+        direction = 'long'
+    elif action == 'SELL':
+        stop_loss = current_price * 1.05  # 5% above
+        take_profit = current_price * 0.90  # 10% below
+        direction = 'short'
+    else:
+        stop_loss = current_price * 0.97
+        take_profit = current_price * 1.03
+        direction = 'long'  # Default for HOLD
+    
+    # Generate time estimate
+    time_estimate = None
+    if len(data_points) >= 30 and action != 'HOLD':
+        try:
+            from time_estimation import create_default_ensemble
+            ensemble = create_default_ensemble()
+            estimate = ensemble.estimate(
+                current_price=current_price,
+                target_price=take_profit,
+                stop_price=stop_loss,
+                data_points=data_points,
+                direction=direction
+            )
+            if estimate:
+                time_estimate = estimate.to_dict()
+        except Exception as e:
+            print(f"Time estimation error for {symbol}: {e}")
+    
+    return {
+        'action': action,
+        'confidence': avg_confidence,
+        'entry_price': current_price,
+        'stop_loss': stop_loss,
+        'take_profit': take_profit,
+        'signals': signals,
+        'details': f'{action} signal based on {len(signals)} strategies',
+        'time_estimate': time_estimate
+    }
+
+def load_config():
+    """Load system configuration from YAML file."""
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        return {'symbols': []}
+    except Exception as e:
+        print(f"Error loading config: {e}")
+        return {'symbols': []}
+
+def save_config(config):
+    """Save system configuration to YAML file."""
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            yaml.safe_dump(config, f, default_flow_style=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving config: {e}")
+        return False
+
+def get_config_symbols():
+    """Get list of symbols from the configuration file."""
+    config = load_config()
+    return [symbol['symbol'] for symbol in config.get('symbols', []) if symbol.get('enabled', True)]
 
 def get_available_symbols():
-    """Get list of available symbols from cache files."""
-    cache_files = glob.glob(os.path.join(CACHE_DIR, '*_historical.json'))
-    symbols = []
-    for file in cache_files:
-        symbol = os.path.basename(file).replace('_historical.json', '')
-        symbols.append(symbol)
-    return sorted(symbols)
+    """Get list of available symbols from config file."""
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            config = yaml.safe_load(f)
+        symbols = []
+        for symbol_config in config.get('symbols', []):
+            if symbol_config.get('enabled', True):
+                symbols.append(symbol_config['symbol'])
+        return sorted(symbols)
+    except Exception as e:
+        print(f"Error loading symbols from config: {e}")
+        # Fallback to cache files if config fails
+        cache_files = glob.glob(os.path.join(CACHE_DIR, '*_historical.json'))
+        symbols = []
+        for file in cache_files:
+            symbol = os.path.basename(file).replace('_historical.json', '')
+            symbols.append(symbol)
+        return sorted(symbols)
+
+
+def get_fund_symbols():
+    """Get list of fund/ETF symbols from config file based on sector."""
+    fund_sectors = {'ETF', 'Mutual Fund', 'Fund'}
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            config = yaml.safe_load(f)
+        fund_symbols = []
+        for symbol_config in config.get('symbols', []):
+            if symbol_config.get('enabled', True):
+                sector = symbol_config.get('sector', '')
+                if sector in fund_sectors:
+                    fund_symbols.append(symbol_config['symbol'])
+        return sorted(fund_symbols)
+    except Exception as e:
+        print(f"Error loading fund symbols from config: {e}")
+        return []
 
 def get_available_dates():
     """Get list of available dates from result files."""
@@ -46,28 +341,158 @@ def get_available_dates():
     for file in result_files:
         basename = os.path.basename(file)
         if '_backtest_' in basename:
+            # Extract the date portion (last 8 digits before .json)
+            # Handles both old format: symbol_backtest_YYYYMMDD.json
+            # and new format: symbol_backtest_strategy_period_YYYYMMDD.json
             date_part = basename.split('_backtest_')[1].replace('.json', '')
-            dates.add(date_part)
+            # Extract the actual date (last 8 digits)
+            import re
+            date_match = re.search(r'(\d{8})$', date_part)
+            if date_match:
+                dates.add(date_match.group(1))
     return sorted(list(dates), reverse=True)
 
 def load_backtest_results(symbol, date):
     """Load backtest results for a specific symbol and date."""
+    # Check if this is an algorithm-specific request (contains algorithm and timeframe)
+    if '_' in symbol and any(alg in symbol for alg in ['trend_following', 'momentum', 'mean_reversion']):
+        # This is an algorithm-specific request like "AAPL_trend_following_30d"
+        # The file format is: AAPL_backtest_trend_following_30d_20250616.json
+        # But the symbol comes in as: AAPL_trend_following_30d
+        parts = symbol.split('_')
+        if len(parts) >= 3:
+            base_symbol = parts[0]  # AAPL
+            algorithm = '_'.join(parts[1:-1])  # trend_following
+            timeframe = parts[-1]  # 30d
+            filename = f"{base_symbol}_backtest_{algorithm}_{timeframe}_{date}.json"
+            filepath = os.path.join(RESULTS_DIR, filename)
+            
+            if os.path.exists(filepath):
+                with open(filepath, 'r') as f:
+                    return json.load(f)
+        return None
+    
+    # For general symbol requests, try the old format first
     filename = f"{symbol}_backtest_{date}.json"
     filepath = os.path.join(RESULTS_DIR, filename)
     
     if os.path.exists(filepath):
         with open(filepath, 'r') as f:
             return json.load(f)
+    
+    # If old format doesn't exist, try to find strategy-specific files
+    # Look for any backtest file with the matching symbol and date
+    pattern = f"{symbol}_backtest_*_{date}.json"
+    matching_files = glob.glob(os.path.join(RESULTS_DIR, pattern))
+    
+    if matching_files:
+        # If multiple files exist, prioritize trend_following strategy
+        for file in matching_files:
+            if 'trend_following' in file:
+                with open(file, 'r') as f:
+                    return json.load(f)
+        
+        # If no trend_following file, use the first available
+        with open(matching_files[0], 'r') as f:
+            return json.load(f)
+    
     return None
 
 def load_recommendations(symbol, date):
     """Load recommendations for a specific symbol and date."""
+    # Try individual symbol file first (old format)
     filename = f"{symbol}_recommendations_{date}.json"
     filepath = os.path.join(RESULTS_DIR, filename)
     
     if os.path.exists(filepath):
         with open(filepath, 'r') as f:
             return json.load(f)
+    
+    # Try combined recommendations file (new format)
+    combined_filename = f"recommendations_{date}.json"
+    combined_filepath = os.path.join(RESULTS_DIR, combined_filename)
+    
+    if os.path.exists(combined_filepath):
+        with open(combined_filepath, 'r') as f:
+            data = json.load(f)
+            if symbol in data:
+                symbol_data = data[symbol]
+                
+                # Get current price from historical data
+                historical_data = load_historical_data(symbol)
+                current_price = 0
+                if historical_data and (historical_data.get('data_points') or historical_data.get('data')):
+                    # Get the most recent price from either data_points or data
+                    price_data = historical_data.get('data_points') or historical_data.get('data')
+                    if price_data:
+                        current_price = price_data[-1].get('close', 0)
+                
+                # Determine the primary action based on strongest signal
+                strongest_signal = "HOLD"
+                max_confidence = 0
+                primary_strategy = None
+                
+                for strategy_name, strategy_data in symbol_data.items():
+                    confidence = strategy_data.get("confidence", 0)
+                    signal = strategy_data.get("signal", "hold").upper()
+                    
+                    if confidence > max_confidence:
+                        max_confidence = confidence
+                        primary_strategy = strategy_name
+                        
+                        # Map strategy signals to trading actions
+                        if signal in ["ENTRY", "BUY"]:
+                            strongest_signal = "BUY"
+                        elif signal in ["EXIT", "SELL"]:
+                            strongest_signal = "SELL"
+                        else:
+                            strongest_signal = "HOLD"
+                
+                # Calculate entry price, stop loss, and take profit based on action
+                entry_price = current_price
+                stop_loss = 0
+                take_profit = 0
+                
+                if current_price > 0:
+                    if strongest_signal == "BUY":
+                        # For buy signals: entry at current price, stop loss 5% below, take profit 10% above
+                        entry_price = current_price
+                        stop_loss = current_price * 0.95  # 5% stop loss
+                        take_profit = current_price * 1.10  # 10% take profit
+                    elif strongest_signal == "SELL":
+                        # For sell signals: entry at current price, stop loss 5% above, take profit 10% below
+                        entry_price = current_price
+                        stop_loss = current_price * 1.05  # 5% stop loss (price going up)
+                        take_profit = current_price * 0.90  # 10% take profit (price going down)
+                    else:  # HOLD
+                        # For hold signals: just set current price levels
+                        entry_price = current_price
+                        stop_loss = current_price * 0.90  # 10% stop loss
+                        take_profit = current_price * 1.15  # 15% take profit
+                
+                # Build reasoning from all strategies
+                reasoning_parts = []
+                for strategy_name, strategy_data in symbol_data.items():
+                    reason = strategy_data.get('reason', '')
+                    signal = strategy_data.get('signal', 'hold')
+                    confidence = strategy_data.get('confidence', 0)
+                    reasoning_parts.append(f"{strategy_name} ({signal}, {confidence:.1%}): {reason}")
+                
+                return {
+                    "symbol": symbol,
+                    "analysis_date": date,
+                    "recommendations": {
+                        "action": strongest_signal,
+                        "confidence": max_confidence,
+                        "entry_price": round(entry_price, 2),
+                        "reasoning": "; ".join(reasoning_parts),
+                        "stop_loss": round(stop_loss, 2),
+                        "take_profit": round(take_profit, 2),
+                        "primary_strategy": primary_strategy,
+                        "current_price": round(current_price, 2)
+                    }
+                }
+    
     return None
 
 def load_historical_data(symbol):
@@ -160,9 +585,17 @@ def get_all_backtests(symbol):
 @app.route('/')
 def index():
     """Main dashboard page."""
-    symbols = get_available_symbols()
-    dates = get_available_dates()
-    return render_template('index.html', symbols=symbols, dates=dates)
+    try:
+        symbols = get_available_symbols()
+        dates = get_available_dates()
+        fund_symbols = get_fund_symbols()
+        print(f"Template data - Symbols: {len(symbols)}, Dates: {len(dates)}, Funds: {len(fund_symbols)}")
+        return render_template('index.html', symbols=symbols, dates=dates, fund_symbols=fund_symbols)
+    except Exception as e:
+        print(f"Error in index route: {e}")
+        import traceback
+        traceback.print_exc()
+        return render_template('index.html', symbols=[], dates=[], fund_symbols=[])
 
 @app.route('/ticker/<symbol>')
 def ticker_detail(symbol):
@@ -212,6 +645,148 @@ def ticker_detail(symbol):
                          best_strategy=best_strategy,
                          best_return=best_return)
 
+
+@app.route('/fund/<symbol>')
+def fund_detail(symbol):
+    """
+    Fund/ETF detail page with prospectus-style analysis.
+    Shows comprehensive performance metrics for 1, 3, 5, and 10 year periods.
+    """
+    symbol = symbol.upper()
+    
+    # Check if symbol exists
+    available_symbols = get_available_symbols()
+    if symbol not in available_symbols:
+        return render_template('error.html', message=f"Fund '{symbol}' not found"), 404
+    
+    # Load historical data
+    historical_data = load_historical_data(symbol)
+    
+    if not historical_data or 'data_points' not in historical_data:
+        return render_template('error.html', message=f"No data available for fund '{symbol}'"), 404
+    
+    # Initialize fund analyzer
+    analyzer = FundAnalyzer(cache_dir=CACHE_DIR)
+    
+    # Generate comprehensive prospectus data
+    prospectus_data = analyzer.generate_prospectus_data(symbol, historical_data['data_points'])
+    
+    # Get recommendation data if available
+    latest_recommendation, latest_rec_date = get_latest_recommendation(symbol)
+    
+    return render_template('fund_detail.html',
+                         symbol=symbol,
+                         prospectus=prospectus_data,
+                         historical_data=historical_data,
+                         latest_recommendation=latest_recommendation,
+                         latest_rec_date=latest_rec_date)
+
+
+@app.route('/api/fund/<symbol>/prospectus')
+def api_fund_prospectus(symbol):
+    """API endpoint to get fund prospectus data."""
+    symbol = symbol.upper()
+    
+    # Load historical data
+    historical_data = load_historical_data(symbol)
+    
+    if not historical_data or 'data_points' not in historical_data:
+        return jsonify({'error': f'No data available for {symbol}'}), 404
+    
+    # Initialize fund analyzer
+    analyzer = FundAnalyzer(cache_dir=CACHE_DIR)
+    
+    # Generate prospectus data
+    prospectus_data = analyzer.generate_prospectus_data(symbol, historical_data['data_points'])
+    
+    return jsonify(prospectus_data)
+
+
+@app.route('/api/fund/<symbol>/info')
+def api_fund_info(symbol):
+    """API endpoint to get fund metadata (expense ratio, holdings, etc.)."""
+    symbol = symbol.upper()
+    
+    analyzer = FundAnalyzer(cache_dir=CACHE_DIR)
+    fund_info = analyzer.fetch_fund_info(symbol)
+    
+    if fund_info:
+        return jsonify(fund_info.to_dict())
+    
+    return jsonify({'error': f'Unable to fetch fund info for {symbol}'}), 404
+
+
+@app.route('/api/scheduler/run', methods=['POST'])
+def api_run_scheduler():
+    """API endpoint to trigger the daily scheduler."""
+    global scheduler_thread
+    
+    with scheduler_lock:
+        # Check if scheduler is already running
+        if scheduler_thread and scheduler_thread.is_alive():
+            return jsonify({
+                'success': False,
+                'message': 'Scheduler is already running'
+            }), 409
+        
+        # Reset status before starting
+        reset_scheduler_status()
+        
+        # Check force parameter
+        force = request.json.get('force', False) if request.is_json else False
+        
+        # Start scheduler in background thread
+        scheduler_thread = threading.Thread(target=run_scheduler_task, args=(force,), daemon=True)
+        scheduler_thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Scheduler started'
+        })
+
+
+@app.route('/api/scheduler/reset', methods=['POST'])
+def api_reset_scheduler():
+    """Reset scheduler status to idle."""
+    reset_scheduler_status()
+    return jsonify({'success': True, 'message': 'Status reset to idle'})
+
+
+@app.route('/api/scheduler/status')
+def api_scheduler_status():
+    """API endpoint to get scheduler status."""
+    if os.path.exists(SCHEDULER_STATUS_FILE):
+        try:
+            with open(SCHEDULER_STATUS_FILE, 'r') as f:
+                status = json.load(f)
+            
+            # Check if thread is still alive
+            global scheduler_thread
+            if scheduler_thread and scheduler_thread.is_alive():
+                status['thread_alive'] = True
+            else:
+                status['thread_alive'] = False
+                # If status says running but thread is dead, mark as error
+                if status.get('status') == 'running':
+                    status['status'] = 'error'
+                    status['message'] = 'Scheduler thread died unexpectedly'
+            
+            return jsonify(status)
+        except Exception as e:
+            return jsonify({
+                'status': 'unknown',
+                'message': f'Error reading status: {str(e)}',
+                'thread_alive': False
+            })
+    
+    return jsonify({
+        'status': 'idle',
+        'message': 'Scheduler has not been run yet',
+        'progress': 0,
+        'thread_alive': False
+    })
+
+
 @app.route('/api/symbols')
 def api_symbols():
     """API endpoint to get available symbols."""
@@ -248,58 +823,54 @@ def api_historical(symbol):
 
 @app.route('/api/add_ticker', methods=['POST'])
 def add_ticker():
-    """Add a new ticker to the system."""
+    """Add a new ticker to the system configuration."""
     try:
         data = request.get_json()
         symbol = data.get('symbol', '').upper().strip()
+        sector = data.get('sector', 'Technology').strip()
+        priority = data.get('priority', 1)
         
         if not symbol:
             return jsonify({'success': False, 'error': 'Symbol is required'}), 400
         
-        # Check if symbol already exists
-        existing_symbols = get_available_symbols()
+        # Load current configuration
+        config = load_config()
+        
+        # Check if symbol already exists in config
+        existing_symbols = [s['symbol'] for s in config.get('symbols', [])]
         if symbol in existing_symbols:
-            return jsonify({'success': False, 'error': f'{symbol} already exists'}), 400
+            return jsonify({'success': False, 'error': f'{symbol} already exists in configuration'}), 400
         
-        # Create historical data file
-        historical_file = os.path.join(CACHE_DIR, f'{symbol}_historical.json')
-        if not os.path.exists(historical_file):
-            # Generate sample historical data
-            historical_data = generate_sample_historical_data(symbol)
-            with open(historical_file, 'w') as f:
-                json.dump(historical_data, f, indent=2)
+        # Add new symbol to configuration
+        new_symbol = {
+            'symbol': symbol,
+            'enabled': True,
+            'priority': priority,
+            'sector': sector,
+            'custom_params': None
+        }
         
-        # Create recommendation file
-        today = datetime.now().strftime('%Y%m%d')
-        recommendations_file = os.path.join(RESULTS_DIR, f'{symbol}_recommendations_{today}.json')
-        if not os.path.exists(recommendations_file):
-            recommendations_data = generate_sample_recommendations(symbol, today)
-            with open(recommendations_file, 'w') as f:
-                json.dump(recommendations_data, f, indent=2)
+        if 'symbols' not in config:
+            config['symbols'] = []
         
-        # Create backtest file
-        backtest_file = os.path.join(RESULTS_DIR, f'{symbol}_backtest_{today}.json')
-        if not os.path.exists(backtest_file):
-            backtest_data = generate_sample_backtest(symbol, today)
-            with open(backtest_file, 'w') as f:
-                json.dump(backtest_data, f, indent=2)
+        config['symbols'].append(new_symbol)
         
-        return jsonify({
-            'success': True, 
-            'message': f'Successfully added {symbol}',
-            'files_created': [
-                f'{symbol}_historical.json',
-                f'{symbol}_recommendations_{today}.json',
-                f'{symbol}_backtest_{today}.json'
-            ]
-        })
+        # Save updated configuration
+        if save_config(config):
+            return jsonify({
+                'success': True, 
+                'message': f'Successfully added {symbol} to configuration',
+                'symbol': new_symbol
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to save configuration'}), 500
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/remove_ticker', methods=['POST'])
 def remove_ticker():
-    """Remove a ticker from the system."""
+    """Remove a ticker from the system configuration."""
     try:
         data = request.get_json()
         symbol = data.get('symbol', '').upper().strip()
@@ -307,36 +878,49 @@ def remove_ticker():
         if not symbol:
             return jsonify({'success': False, 'error': 'Symbol is required'}), 400
         
-        # Check if symbol exists
-        existing_symbols = get_available_symbols()
+        # Load current configuration
+        config = load_config()
+        
+        # Check if symbol exists in config
+        existing_symbols = [s['symbol'] for s in config.get('symbols', [])]
         if symbol not in existing_symbols:
-            return jsonify({'success': False, 'error': f'{symbol} not found'}), 404
+            return jsonify({'success': False, 'error': f'{symbol} not found in configuration'}), 404
         
-        removed_files = []
+        # Remove symbol from configuration
+        config['symbols'] = [s for s in config.get('symbols', []) if s['symbol'] != symbol]
         
-        # Remove historical data file
-        historical_file = os.path.join(CACHE_DIR, f'{symbol}_historical.json')
-        if os.path.exists(historical_file):
-            os.remove(historical_file)
-            removed_files.append(f'{symbol}_historical.json')
-        
-        # Remove all recommendation files for this symbol
-        recommendation_files = glob.glob(os.path.join(RESULTS_DIR, f'{symbol}_recommendations_*.json'))
-        for file in recommendation_files:
-            os.remove(file)
-            removed_files.append(os.path.basename(file))
-        
-        # Remove all backtest files for this symbol
-        backtest_files = glob.glob(os.path.join(RESULTS_DIR, f'{symbol}_backtest_*.json'))
-        for file in backtest_files:
-            os.remove(file)
-            removed_files.append(os.path.basename(file))
-        
-        return jsonify({
-            'success': True, 
-            'message': f'Successfully removed {symbol}',
-            'files_removed': removed_files
-        })
+        # Save updated configuration
+        if save_config(config):
+            # Optionally remove data files (but keep them for historical purposes)
+            removed_files = []
+            
+            # Only remove files if explicitly requested
+            if data.get('remove_files', False):
+                # Remove historical data file
+                historical_file = os.path.join(CACHE_DIR, f'{symbol}_historical.json')
+                if os.path.exists(historical_file):
+                    os.remove(historical_file)
+                    removed_files.append(f'{symbol}_historical.json')
+                
+                # Remove all recommendation files for this symbol
+                recommendation_files = glob.glob(os.path.join(RESULTS_DIR, f'{symbol}_recommendations_*.json'))
+                for file in recommendation_files:
+                    os.remove(file)
+                    removed_files.append(os.path.basename(file))
+                
+                # Remove all backtest files for this symbol
+                backtest_files = glob.glob(os.path.join(RESULTS_DIR, f'{symbol}_backtest_*.json'))
+                for file in backtest_files:
+                    os.remove(file)
+                    removed_files.append(os.path.basename(file))
+            
+            return jsonify({
+                'success': True, 
+                'message': f'Successfully removed {symbol} from configuration',
+                'files_removed': removed_files if removed_files else 'Configuration updated, data files preserved'
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to save configuration'}), 500
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

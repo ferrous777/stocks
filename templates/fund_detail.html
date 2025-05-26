@@ -1,0 +1,408 @@
+{% extends "base.html" %}
+
+{% block title %}{{ symbol }} - Fund Prospectus | Stock Analysis Dashboard{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- Header Section -->
+    <div class="bg-gradient-primary rounded-xl shadow-lg p-8 text-white">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center">
+            <div>
+                <div class="flex items-center mb-2">
+                    <span class="bg-blue-500 text-xs font-semibold px-3 py-1 rounded-full mr-3">
+                        {{ prospectus.fund_info.fund_type if prospectus.fund_info else 'Fund' }}
+                    </span>
+                    <span class="text-blue-200 text-sm">
+                        {{ prospectus.fund_info.category if prospectus.fund_info else 'N/A' }}
+                    </span>
+                </div>
+                <h1 class="text-3xl font-bold mb-2">{{ symbol }}</h1>
+                <p class="text-blue-200 text-lg">
+                    {{ prospectus.fund_info.name if prospectus.fund_info else symbol }}
+                </p>
+            </div>
+            <div class="mt-4 md:mt-0 text-right">
+                <p class="text-sm text-blue-200 mb-1">Current NAV</p>
+                <p class="text-4xl font-bold">
+                    ${{ "%.2f"|format(prospectus.current_price) if prospectus.current_price else 'N/A' }}
+                </p>
+                <p class="text-sm text-blue-200 mt-2">
+                    <i class="far fa-clock mr-1"></i>
+                    As of {{ prospectus.generated_at[:10] if prospectus.generated_at else 'N/A' }}
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Fund Key Metrics -->
+    {% if prospectus.fund_info %}
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white rounded-lg shadow p-4 text-center">
+            <p class="text-gray-500 text-sm mb-1">Expense Ratio</p>
+            <p class="text-2xl font-bold text-gray-800">
+                {% if prospectus.fund_info.expense_ratio %}
+                    {{ "%.2f"|format(prospectus.fund_info.expense_ratio * 100) }}%
+                {% else %}
+                    N/A
+                {% endif %}
+            </p>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4 text-center">
+            <p class="text-gray-500 text-sm mb-1">Total Assets</p>
+            <p class="text-2xl font-bold text-gray-800">
+                {% if prospectus.fund_info.total_assets %}
+                    ${{ "%.1f"|format(prospectus.fund_info.total_assets / 1000000000) }}B
+                {% else %}
+                    N/A
+                {% endif %}
+            </p>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4 text-center">
+            <p class="text-gray-500 text-sm mb-1">Yield</p>
+            <p class="text-2xl font-bold text-gray-800">
+                {% if prospectus.fund_info.yield_percent %}
+                    {{ "%.2f"|format(prospectus.fund_info.yield_percent * 100) }}%
+                {% else %}
+                    N/A
+                {% endif %}
+            </p>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4 text-center">
+            <p class="text-gray-500 text-sm mb-1">Fund Family</p>
+            <p class="text-lg font-bold text-gray-800 truncate">
+                {{ prospectus.fund_info.fund_family if prospectus.fund_info.fund_family else 'N/A' }}
+            </p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Performance Section -->
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gray-800 text-white px-6 py-4">
+            <h2 class="text-xl font-bold flex items-center">
+                <i class="fas fa-chart-line mr-3"></i>
+                Performance Analysis
+            </h2>
+            <p class="text-gray-300 text-sm mt-1">Annualized returns and risk metrics by time period</p>
+        </div>
+        
+        <div class="p-6">
+            <!-- Performance Table -->
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead>
+                        <tr class="border-b-2 border-gray-200">
+                            <th class="text-left py-3 px-4 text-gray-600 font-semibold">Period</th>
+                            <th class="text-right py-3 px-4 text-gray-600 font-semibold">Total Return</th>
+                            <th class="text-right py-3 px-4 text-gray-600 font-semibold">Annualized</th>
+                            <th class="text-right py-3 px-4 text-gray-600 font-semibold">Volatility</th>
+                            <th class="text-right py-3 px-4 text-gray-600 font-semibold">Max Drawdown</th>
+                            <th class="text-right py-3 px-4 text-gray-600 font-semibold">Sharpe Ratio</th>
+                            <th class="text-right py-3 px-4 text-gray-600 font-semibold hidden md:table-cell">Data Points</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for period in ['1yr', '3yr', '5yr', '10yr'] %}
+                        {% set perf = prospectus.performance.get(period) %}
+                        <tr class="border-b border-gray-100 hover:bg-gray-50">
+                            <td class="py-4 px-4 font-semibold text-gray-800">
+                                {{ period.replace('yr', ' Year') }}
+                            </td>
+                            {% if perf %}
+                            <td class="py-4 px-4 text-right font-bold {{ 'text-green-600' if perf.total_return > 0 else 'text-red-600' }}">
+                                {{ "%.2f"|format(perf.total_return) }}%
+                            </td>
+                            <td class="py-4 px-4 text-right font-bold {{ 'text-green-600' if perf.annualized_return > 0 else 'text-red-600' }}">
+                                {{ "%.2f"|format(perf.annualized_return) }}%
+                            </td>
+                            <td class="py-4 px-4 text-right text-gray-700">
+                                {{ "%.2f"|format(perf.volatility) }}%
+                            </td>
+                            <td class="py-4 px-4 text-right text-red-600">
+                                -{{ "%.2f"|format(perf.max_drawdown) }}%
+                            </td>
+                            <td class="py-4 px-4 text-right {{ 'text-green-600' if perf.sharpe_ratio > 1 else 'text-yellow-600' if perf.sharpe_ratio > 0 else 'text-red-600' }}">
+                                {{ "%.2f"|format(perf.sharpe_ratio) }}
+                            </td>
+                            <td class="py-4 px-4 text-right text-gray-500 hidden md:table-cell">
+                                {{ perf.data_points }}
+                            </td>
+                            {% else %}
+                            <td class="py-4 px-4 text-right text-gray-400" colspan="6">
+                                Insufficient data
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Performance Period Details -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-8">
+                {% for period in ['1yr', '3yr', '5yr', '10yr'] %}
+                {% set perf = prospectus.performance.get(period) %}
+                {% if perf %}
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h4 class="font-bold text-gray-800 mb-3">{{ period.replace('yr', ' Year') }} Details</h4>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-gray-500">Start Price</span>
+                            <span class="font-semibold">${{ "%.2f"|format(perf.start_price) }}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-500">End Price</span>
+                            <span class="font-semibold">${{ "%.2f"|format(perf.end_price) }}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-500">Period</span>
+                            <span class="font-semibold text-xs">{{ perf.start_date }} - {{ perf.end_date }}</span>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Risk Metrics Section -->
+    {% if prospectus.risk_metrics %}
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gradient-purple text-white px-6 py-4">
+            <h2 class="text-xl font-bold flex items-center">
+                <i class="fas fa-shield-alt mr-3"></i>
+                Risk Analysis
+            </h2>
+            <p class="text-purple-200 text-sm mt-1">Risk metrics compared to S&P 500 benchmark</p>
+        </div>
+        
+        <div class="p-6">
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                <div class="bg-gray-50 rounded-lg p-4 text-center">
+                    <p class="text-gray-500 text-sm mb-1">Beta</p>
+                    <p class="text-2xl font-bold {{ 'text-green-600' if prospectus.risk_metrics.beta < 1 else 'text-yellow-600' if prospectus.risk_metrics.beta < 1.2 else 'text-red-600' }}">
+                        {{ "%.2f"|format(prospectus.risk_metrics.beta) }}
+                    </p>
+                    <p class="text-xs text-gray-400 mt-1">
+                        {{ 'Less volatile' if prospectus.risk_metrics.beta < 1 else 'Market-like' if prospectus.risk_metrics.beta < 1.2 else 'More volatile' }}
+                    </p>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4 text-center">
+                    <p class="text-gray-500 text-sm mb-1">Alpha</p>
+                    <p class="text-2xl font-bold {{ 'text-green-600' if prospectus.risk_metrics.alpha > 0 else 'text-red-600' }}">
+                        {{ "%.2f"|format(prospectus.risk_metrics.alpha) }}%
+                    </p>
+                    <p class="text-xs text-gray-400 mt-1">
+                        {{ 'Outperforming' if prospectus.risk_metrics.alpha > 0 else 'Underperforming' }}
+                    </p>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4 text-center">
+                    <p class="text-gray-500 text-sm mb-1">R-Squared</p>
+                    <p class="text-2xl font-bold text-gray-800">
+                        {{ "%.2f"|format(prospectus.risk_metrics.r_squared) }}
+                    </p>
+                    <p class="text-xs text-gray-400 mt-1">
+                        {{ 'High correlation' if prospectus.risk_metrics.r_squared > 0.7 else 'Moderate' if prospectus.risk_metrics.r_squared > 0.4 else 'Low correlation' }}
+                    </p>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4 text-center">
+                    <p class="text-gray-500 text-sm mb-1">Std Deviation</p>
+                    <p class="text-2xl font-bold text-gray-800">
+                        {{ "%.2f"|format(prospectus.risk_metrics.standard_deviation) }}%
+                    </p>
+                    <p class="text-xs text-gray-400 mt-1">Annualized</p>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4 text-center">
+                    <p class="text-gray-500 text-sm mb-1">Downside Dev</p>
+                    <p class="text-2xl font-bold text-gray-800">
+                        {{ "%.2f"|format(prospectus.risk_metrics.downside_deviation) }}%
+                    </p>
+                    <p class="text-xs text-gray-400 mt-1">Negative only</p>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4 text-center">
+                    <p class="text-gray-500 text-sm mb-1">Sortino Ratio</p>
+                    <p class="text-2xl font-bold {{ 'text-green-600' if prospectus.risk_metrics.sortino_ratio > 1 else 'text-yellow-600' if prospectus.risk_metrics.sortino_ratio > 0 else 'text-red-600' }}">
+                        {{ "%.2f"|format(prospectus.risk_metrics.sortino_ratio) }}
+                    </p>
+                    <p class="text-xs text-gray-400 mt-1">Risk-adj return</p>
+                </div>
+            </div>
+            
+            <!-- Risk Explanation -->
+            <div class="mt-6 p-4 bg-blue-50 rounded-lg">
+                <h4 class="font-bold text-blue-800 mb-2">Understanding Risk Metrics</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-blue-700">
+                    <div>
+                        <p><strong>Beta:</strong> Volatility relative to the market. Beta &lt; 1 means less volatile than S&P 500.</p>
+                        <p class="mt-1"><strong>Alpha:</strong> Excess return vs benchmark. Positive alpha indicates outperformance.</p>
+                        <p class="mt-1"><strong>R-Squared:</strong> How closely the fund tracks the benchmark. Higher = more correlated.</p>
+                    </div>
+                    <div>
+                        <p><strong>Std Deviation:</strong> Annualized volatility. Lower means more stable returns.</p>
+                        <p class="mt-1"><strong>Downside Dev:</strong> Volatility of negative returns only.</p>
+                        <p class="mt-1"><strong>Sortino Ratio:</strong> Risk-adjusted return using only downside risk. Higher is better.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Benchmark Comparison -->
+    {% if prospectus.benchmark_comparison %}
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gradient-teal text-white px-6 py-4">
+            <h2 class="text-xl font-bold flex items-center">
+                <i class="fas fa-balance-scale mr-3"></i>
+                Benchmark Comparison (vs S&P 500)
+            </h2>
+        </div>
+        
+        <div class="p-6">
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead>
+                        <tr class="border-b-2 border-gray-200">
+                            <th class="text-left py-3 px-4 text-gray-600 font-semibold">Period</th>
+                            <th class="text-right py-3 px-4 text-gray-600 font-semibold">{{ symbol }}</th>
+                            <th class="text-right py-3 px-4 text-gray-600 font-semibold">S&P 500</th>
+                            <th class="text-right py-3 px-4 text-gray-600 font-semibold">Outperformance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for period in ['1yr', '3yr', '5yr', '10yr'] %}
+                        {% set comp = prospectus.benchmark_comparison.get(period) %}
+                        {% if comp and comp.fund_return is not none %}
+                        <tr class="border-b border-gray-100 hover:bg-gray-50">
+                            <td class="py-4 px-4 font-semibold text-gray-800">
+                                {{ period.replace('yr', ' Year') }}
+                            </td>
+                            <td class="py-4 px-4 text-right font-bold {{ 'text-green-600' if comp.fund_return > 0 else 'text-red-600' }}">
+                                {{ "%.2f"|format(comp.fund_return) }}%
+                            </td>
+                            <td class="py-4 px-4 text-right font-bold {{ 'text-green-600' if comp.benchmark_return > 0 else 'text-red-600' }}">
+                                {{ "%.2f"|format(comp.benchmark_return) }}%
+                            </td>
+                            <td class="py-4 px-4 text-right">
+                                {% if comp.outperformance is not none %}
+                                <span class="px-3 py-1 rounded-full text-sm font-bold {{ 'bg-green-100 text-green-700' if comp.outperformance > 0 else 'bg-red-100 text-red-700' }}">
+                                    {{ '+' if comp.outperformance > 0 else '' }}{{ "%.2f"|format(comp.outperformance) }}%
+                                </span>
+                                {% else %}
+                                N/A
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Top Holdings Section -->
+    {% if prospectus.fund_info and prospectus.fund_info.top_holdings %}
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gradient-orange text-white px-6 py-4">
+            <h2 class="text-xl font-bold flex items-center">
+                <i class="fas fa-list-ol mr-3"></i>
+                Top Holdings
+            </h2>
+        </div>
+        
+        <div class="p-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {% for holding in prospectus.fund_info.top_holdings[:10] %}
+                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                    <span class="font-semibold text-gray-800">{{ holding.name }}</span>
+                    <span class="text-gray-600">{{ "%.2f"|format(holding.weight) }}%</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Sector Weights -->
+    {% if prospectus.fund_info and prospectus.fund_info.sector_weights %}
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gradient-green text-white px-6 py-4">
+            <h2 class="text-xl font-bold flex items-center">
+                <i class="fas fa-chart-pie mr-3"></i>
+                Sector Allocation
+            </h2>
+        </div>
+        
+        <div class="p-6">
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {% for sector, weight in prospectus.fund_info.sector_weights.items() %}
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <p class="text-gray-600 text-sm mb-1">{{ sector }}</p>
+                    <p class="text-xl font-bold text-gray-800">{{ "%.1f"|format(weight) }}%</p>
+                    <div class="w-full bg-gray-200 rounded-full h-2 mt-2">
+                        <div class="bg-green-500 h-2 rounded-full" style="width: {{ weight }}%"></div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Current Recommendation (if available) -->
+    {% if latest_recommendation %}
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gradient-pink text-white px-6 py-4">
+            <h2 class="text-xl font-bold flex items-center">
+                <i class="fas fa-lightbulb mr-3"></i>
+                Current Recommendation
+            </h2>
+            <p class="text-pink-200 text-sm mt-1">As of {{ latest_rec_date }}</p>
+        </div>
+        
+        <div class="p-6">
+            <div class="flex flex-col md:flex-row items-center justify-between">
+                <div class="mb-4 md:mb-0">
+                    {% set rec = latest_recommendation.get('recommendations', {}) %}
+                    <span class="text-4xl font-bold px-6 py-3 rounded-lg {{ 'bg-green-100 text-green-700' if rec.get('action') == 'BUY' else 'bg-red-100 text-red-700' if rec.get('action') == 'SELL' else 'bg-yellow-100 text-yellow-700' }}">
+                        {{ rec.get('action', 'HOLD') }}
+                    </span>
+                </div>
+                <div class="grid grid-cols-3 gap-6 text-center">
+                    <div>
+                        <p class="text-gray-500 text-sm">Entry Price</p>
+                        <p class="text-xl font-bold text-gray-800">${{ "%.2f"|format(rec.get('entry_price', 0)) }}</p>
+                    </div>
+                    <div>
+                        <p class="text-gray-500 text-sm">Stop Loss</p>
+                        <p class="text-xl font-bold text-red-600">${{ "%.2f"|format(rec.get('stop_loss', 0)) }}</p>
+                    </div>
+                    <div>
+                        <p class="text-gray-500 text-sm">Take Profit</p>
+                        <p class="text-xl font-bold text-green-600">${{ "%.2f"|format(rec.get('take_profit', 0)) }}</p>
+                    </div>
+                </div>
+            </div>
+            {% if rec.get('reasoning') %}
+            <div class="mt-4 p-4 bg-gray-50 rounded-lg">
+                <p class="text-gray-600 text-sm">{{ rec.get('reasoning') }}</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Disclaimer -->
+    <div class="bg-gray-100 rounded-lg p-6 text-center">
+        <p class="text-gray-500 text-sm">
+            <i class="fas fa-info-circle mr-1"></i>
+            <strong>Important:</strong> Past performance is not indicative of future results. 
+            This analysis is for informational purposes only and does not constitute investment advice.
+            Please consult a qualified financial advisor before making investment decisions.
+        </p>
+    </div>
+</div>
+{% endblock %}
