@@ -9,7 +9,7 @@ PythonAnywhere Usage:
 1. Upload this file to your PythonAnywhere account
 2. Go to Tasks tab on your Dashboard
 3. Set up a scheduled task to run this script daily
-4. Command: /home/yourusername/stocks/pythonanywhere_daily_hook.py
+4. Command: /home/ferrous77/pythonanywhere_daily_hook.py
 5. Time: Choose appropriate market close time (e.g., 6:00 PM EST)
 
 The script handles:
@@ -27,11 +27,17 @@ from datetime import datetime, date
 from pathlib import Path
 
 # Ensure we're in the correct working directory
+# On PythonAnywhere, files are in /home/ferrous77/ not /home/ferrous77/stocks/
 script_dir = Path(__file__).parent.absolute()
-os.chdir(script_dir)
+if str(script_dir).endswith('/stocks'):
+    # Local development - use stocks directory
+    os.chdir(script_dir)
+    src_path = script_dir / 'src'
+else:
+    # PythonAnywhere - files are in /home/ferrous77/
+    os.chdir(script_dir)
+    src_path = script_dir / 'src'
 
-# Add src to Python path
-src_path = script_dir / 'src'
 sys.path.insert(0, str(src_path))
 
 # Import our modules after path setup
@@ -43,6 +49,11 @@ except ImportError as e:
     print(f"ERROR: Failed to import required modules: {e}")
     print(f"Current working directory: {os.getcwd()}")
     print(f"Python path: {sys.path}")
+    print(f"Script directory: {script_dir}")
+    print(f"Source path: {src_path}")
+    print(f"Source path exists: {src_path.exists()}")
+    if src_path.exists():
+        print(f"Contents of src: {list(src_path.iterdir())}")
     sys.exit(1)
 
 # Setup logging with absolute path
