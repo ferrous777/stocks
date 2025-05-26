@@ -166,13 +166,13 @@ The system includes a comprehensive Flask web application for accessing analysis
 
 #### Quick Start (Auto-installs dependencies)
 ```bash
-python start_server.py
+python dev-tools/start_server.py
 ```
 
 #### Custom Configuration
 ```bash
 # Custom host and port
-python start_server.py --host 0.0.0.0 --port 8080 --no-browser
+python dev-tools/start_server.py --host 0.0.0.0 --port 8080 --no-browser
 
 # Direct Flask launch
 python app.py
@@ -278,12 +278,12 @@ This system is optimized for automated deployment on PythonAnywhere with daily s
 
 3. **Test the System:**
    ```bash
-   python3.10 pythonanywhere_daily_hook.py --force
+   python3.10 dev-tools/pythonanywhere_daily_hook.py --force
    ```
 
 4. **Schedule Daily Task:**
    - Go to PythonAnywhere Dashboard → **Tasks** tab
-   - Command: `/home/yourusername/stocks/pythonanywhere_daily_hook.py`
+   - Command: `/home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py`
    - Schedule: Daily at 6:00 PM EST (after market close)
 
 ### What Happens Daily
@@ -316,7 +316,7 @@ reports/
 ### Monitoring & Testing
 ```bash
 # Test manual run
-python3.10 pythonanywhere_daily_hook.py --force
+python3.10 dev-tools/pythonanywhere_daily_hook.py --force
 
 # Check recent logs
 tail -f logs/pythonanywhere_daily.log
@@ -329,7 +329,7 @@ python3.10 update_symbols.py
 ```
 
 ### Key Files
-- `pythonanywhere_daily_hook.py` - Main scheduler hook (executable)
+- `dev-tools/pythonanywhere_daily_hook.py` - Main scheduler hook (executable)
 - `PYTHONANYWHERE_SETUP.md` - Comprehensive deployment guide
 - `docs/pythonanywhere_deployment.md` - Detailed technical documentation
 

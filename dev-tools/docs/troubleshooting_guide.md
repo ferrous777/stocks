@@ -126,7 +126,7 @@ crontab -l
 # (Via web interface)
 
 # Test manual execution
-python pythonanywhere_daily_hook.py --force
+python dev-tools/pythonanywhere_daily_hook.py --force
 ```
 
 #### Solutions
@@ -137,7 +137,7 @@ python pythonanywhere_daily_hook.py --force
 crontab -e
 
 # Add correct job
-0 9 * * 1-5 cd /path/to/stocks && python pythonanywhere_daily_hook.py
+0 9 * * 1-5 cd /path/to/stocks && python dev-tools/pythonanywhere_daily_hook.py
 
 # Check cron logs
 grep CRON /var/log/syslog | tail -10
@@ -152,7 +152,7 @@ grep CRON /var/log/syslog | tail -10
 3. **Permission Issues**
 ```bash
 # Fix file permissions
-chmod +x pythonanywhere_daily_hook.py
+chmod +x dev-tools/pythonanywhere_daily_hook.py
 chmod -R 755 /path/to/stocks
 ```
 

@@ -1,6 +1,7 @@
 # PythonAnywhere Deployment Ignore File
 # This file specifies what should NOT be uploaded to PythonAnywhere
 # Note: dev-tools/ is tracked in git but excluded from production deployment
+# Note: pythonanywhere_daily_hook.py is in root for production deployment
 
 # Development tools and scripts (keep in git, exclude from production)
 dev-tools/

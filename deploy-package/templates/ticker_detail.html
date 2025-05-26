@@ -1,0 +1,1290 @@
+{% extends "base.html" %}
+
+{% block title %}{{ symbol }} - Detailed Analysis{% endblock %}
+
+{% block extra_css %}
+<style>
+/* Minimal custom styles - most styling moved to Tailwind classes */
+.chart-container {
+    position: relative;
+    height: 400px;
+}
+
+/* Custom gradient backgrounds using standard Tailwind colors */
+.gradient-stat-card {
+    background: linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%);  /* violet-500 to purple-500 */
+}
+
+.gradient-signal-card {
+    background: linear-gradient(135deg, #f472b6 0%, #ec4899 100%);  /* pink-400 to pink-500 */
+}
+
+.gradient-analysis-card {
+    background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);  /* cyan-500 to cyan-600 */
+}
+
+.signal-name {
+    font-size: 0.8rem;
+    color: #6b7280;  /* gray-500 */
+    margin-bottom: 0.25rem;
+}
+
+/* Analysis reasoning styles */
+.reasoning-card {
+    background: #f9fafb;  /* gray-50 */
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.reasoning-text {
+    font-style: italic;
+    margin-bottom: 1rem;
+    color: #6b7280;  /* gray-500 */
+}
+
+.confidence-bar {
+    margin-top: 0.5rem;
+}
+
+.confidence-label {
+    font-size: 0.9rem;
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+}
+
+/* Risk management styles */
+.risk-card {
+    background: #f9fafb;  /* gray-50 */
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.risk-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+}
+
+.risk-metric {
+    text-align: center;
+    background: white;
+    padding: 1rem;
+    border-radius: 6px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.risk-metric h6 {
+    font-size: 0.8rem;
+    color: #6b7280;  /* gray-500 */
+    margin-bottom: 0.25rem;
+}
+
+.risk-value {
+    font-size: 1.1rem;
+    font-weight: bold;
+}
+
+/* Strategy details styles */
+.strategy-details .card {
+    transition: all 0.3s ease;
+}
+
+.strategy-details .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+/* Trade history styles */
+.trade-history {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.trade-item {
+    padding: 0.75rem 0;
+    transition: background-color 0.2s ease;
+}
+
+.trade-item:hover {
+    background-color: #f9fafb;  /* gray-50 */
+    border-radius: 4px;
+}
+
+/* Historical stats styles */
+.stat-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e5e7eb;  /* gray-200 */
+}
+
+.stat-item:last-child {
+    border-bottom: none;
+}
+
+/* Performance metrics styles */
+.metric-grid {
+    display: grid;
+    gap: 1rem;
+}
+
+.metric-item {
+    text-align: center;
+    padding: 1rem;
+    background: #f9fafb;  /* gray-50 */
+    border-radius: 8px;
+}
+
+.metric-item h6 {
+    font-size: 0.8rem;
+    color: #6b7280;  /* gray-500 */
+    margin-bottom: 0.5rem;
+}
+
+.metric-value {
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+/* Risk analysis styles */
+.risk-metrics {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.risk-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    background: #f9fafb;  /* gray-50 */
+    border-radius: 6px;
+}
+
+.risk-label {
+    font-size: 0.9rem;
+    color: #6b7280;  /* gray-500 */
+}
+
+.risk-value {
+    font-weight: bold;
+}
+
+/* Technical indicators styles */
+.indicator-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 0.75rem;
+}
+
+.indicator-item {
+    text-align: center;
+    padding: 0.75rem;
+    background: #f9fafb;  /* gray-50 */
+    border-radius: 6px;
+}
+
+.indicator-label {
+    font-size: 0.8rem;
+    color: #6b7280;  /* gray-500 */
+    margin-bottom: 0.25rem;
+}
+
+.indicator-value {
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+/* Timeline styles */
+.timeline-item {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #e5e7eb;  /* gray-200 */
+}
+
+.timeline-item:last-child {
+    border-bottom: none;
+}
+
+.timeline-date {
+    font-size: 0.8rem;
+    color: #6c757d;
+    margin-right: 1rem;
+    min-width: 80px;
+}
+
+.timeline-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.timeline-price {
+    font-weight: 500;
+}
+
+.timeline-confidence {
+    font-size: 0.8rem;
+    color: #6c757d;
+}
+
+/* Market context styles */
+.context-grid, .sector-grid {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.context-item, .sector-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    background: #f8f9fa;
+    border-radius: 6px;
+}
+
+.context-label, .sector-label {
+    font-size: 0.9rem;
+    color: #495057;
+}
+
+.context-value, .sector-performance {
+    font-weight: 500;
+}
+
+/* Loading placeholder styles */
+.loading-placeholder {
+    text-align: center;
+    padding: 2rem;
+    color: #6c757d;
+}
+
+/* Chart container */
+.chart-container {
+    position: relative;
+    width: 100%;
+    height: 300px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6c757d;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .metric-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .indicator-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .signal-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .timeline-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .timeline-date {
+        margin-bottom: 0.5rem;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <!-- Header Section -->
+    <div class="mb-8">
+        <div class="w-full">
+            <div class="flex flex-col lg:flex-row lg:justify-between lg:items-center space-y-4 lg:space-y-0">
+                <div>
+                    <h1 class="text-4xl lg:text-5xl font-bold text-blue-600 flex items-center">
+                        <i class="fas fa-chart-line mr-4 text-blue-600"></i>{{ symbol }}
+                    </h1>
+                    <p class="text-lg text-gray-600 mt-2">Comprehensive Analysis & Trading Details</p>
+                </div>
+                <div class="flex flex-wrap gap-3">
+                    <a href="/" class="border border-gray-300 text-gray-700 px-6 py-3 rounded-full hover:bg-gray-50 transition-all duration-300 flex items-center space-x-2">
+                        <i class="fas fa-arrow-left"></i>
+                        <span>Back to Dashboard</span>
+                    </a>
+                    <button class="bg-gradient-primary text-white px-6 py-3 rounded-full hover:shadow-lg transition-all duration-300 flex items-center space-x-2" onclick="refreshData()">
+                        <i class="fas fa-sync"></i>
+                        <span>Refresh Data</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="bg-white rounded-xl shadow-lg hover:shadow-xl transform hover:-translate-y-1 transition-all duration-300">
+            <div class="p-6 text-center">
+                <div class="text-4xl mb-4">
+                    <i class="fas fa-dollar-sign text-green-600"></i>
+                </div>
+                <h4 class="text-2xl font-bold text-gray-900" id="currentPrice">Loading...</h4>
+                <p class="text-gray-600 text-sm">Current Entry Price</p>
+            </div>
+        </div>
+        <div class="bg-white rounded-xl shadow-lg hover:shadow-xl transform hover:-translate-y-1 transition-all duration-300">
+            <div class="p-6 text-center">
+                <div class="text-4xl mb-4">
+                    <i class="fas fa-thumbs-up text-blue-600"></i>
+                </div>
+                <h4 class="text-2xl font-bold text-gray-900" id="currentAction">Loading...</h4>
+                <p class="text-gray-600 text-sm">Current Recommendation</p>
+            </div>
+        </div>
+        <div class="bg-white rounded-xl shadow-lg hover:shadow-xl transform hover:-translate-y-1 transition-all duration-300">
+            <div class="p-6 text-center">
+                <div class="text-4xl mb-4">
+                    <i class="fas fa-percentage text-yellow-600"></i>
+                </div>
+                <h4 class="text-2xl font-bold text-gray-900" id="confidence">Loading...</h4>
+                <p class="text-gray-600 text-sm">Confidence Level</p>
+            </div>
+        </div>
+        <div class="bg-white rounded-xl shadow-lg hover:shadow-xl transform hover:-translate-y-1 transition-all duration-300">
+            <div class="p-6 text-center">
+                <div class="text-4xl mb-4">
+                    <i class="fas fa-trophy text-purple-600"></i>
+                </div>
+                <h4 class="text-2xl font-bold text-gray-900" id="bestStrategy">Loading...</h4>
+                <p class="text-gray-600 text-sm">Best Strategy</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Current Recommendations Widget -->
+    <div class="mb-6">
+        <div class="w-full">
+            <div class="bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300">
+                <div class="bg-gradient-primary text-white px-6 py-4 rounded-t-xl">
+                    <h5 class="text-xl font-semibold flex items-center">
+                        <i class="fas fa-lightbulb mr-3"></i>Current Trading Recommendations
+                    </h5>
+                </div>
+                <div class="p-6">
+                    <!-- Trading Signals Section -->
+                    <div class="mb-6">
+                        <h6 class="text-lg font-semibold flex items-center text-blue-700 mb-4">
+                            <i class="fas fa-target mr-2"></i>Trading Signals
+                        </h6>
+                        <div class="trading-signals" id="tradingSignals">
+                            <div class="text-center py-8 text-gray-500 italic">
+                                <i class="fas fa-spinner fa-spin mr-2"></i> Loading recommendations...
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Analysis Reasoning Section -->
+                    <div class="mb-6">
+                        <h6 class="text-lg font-semibold flex items-center text-blue-700 mb-4">
+                            <i class="fas fa-brain mr-2"></i>Analysis Reasoning
+                        </h6>
+                        <div class="analysis-reasoning" id="analysisReasoning">
+                            <div class="text-center py-8 text-gray-500 italic">
+                                <i class="fas fa-spinner fa-spin mr-2"></i> Loading analysis...
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Risk Management Section -->
+                    <div class="mb-6">
+                        <h6 class="text-lg font-semibold flex items-center text-yellow-700 mb-4">
+                            <i class="fas fa-shield-alt mr-2"></i>Risk Management
+                        </h6>
+                        <div class="risk-management" id="riskManagement">
+                            <div class="text-center py-8 text-gray-500 italic">
+                                <i class="fas fa-spinner fa-spin mr-2"></i> Loading risk data...
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Technical Signals Detail Section -->
+                    <div class="mb-0">
+                        <h6 class="text-lg font-semibold flex items-center text-green-700 mb-4">
+                            <i class="fas fa-chart-line mr-2"></i>Technical Signal Details
+                        </h6>
+                        <div class="technical-signals" id="technicalSignals">
+                            <div class="text-center py-8 text-gray-500 italic">
+                                <i class="fas fa-spinner fa-spin mr-2"></i> Loading technical signals...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backtest Performance Widget -->
+    <div class="mb-6">
+        <div class="w-full">
+            <div class="bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300">
+                <div class="bg-gradient-to-r from-green-600 to-green-700 text-white px-6 py-4 rounded-t-xl">
+                    <h5 class="text-xl font-semibold flex items-center">
+                        <i class="fas fa-chart-bar mr-3"></i>Strategy Backtest Performance
+                    </h5>
+                </div>
+                <div class="p-6">
+                    <div class="mb-6">
+                        <div class="w-full">
+                            <div class="overflow-x-auto">
+                                <table class="w-full table-auto" id="backtestTable">
+                                    <thead class="bg-gray-800 text-white">
+                                        <tr>
+                                            <th class="px-4 py-3 text-left"><i class="fas fa-cogs mr-2"></i>Strategy</th>
+                                            <th class="px-4 py-3 text-left"><i class="fas fa-percentage mr-2"></i>Total Return</th>
+                                            <th class="px-4 py-3 text-left"><i class="fas fa-trophy mr-2"></i>Win Rate</th>
+                                            <th class="px-4 py-3 text-left"><i class="fas fa-exchange-alt mr-2"></i>Total Trades</th>
+                                            <th class="px-4 py-3 text-left"><i class="fas fa-dollar-sign mr-2"></i>Final Balance</th>
+                                            <th class="px-4 py-3 text-left"><i class="fas fa-chart-line mr-2"></i>Sharpe Ratio</th>
+                                            <th class="px-4 py-3 text-left"><i class="fas fa-exclamation-triangle mr-2"></i>Max Drawdown</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="backtestTableBody" class="divide-y divide-gray-200">
+                                        <tr>
+                                            <td colspan="7" class="px-4 py-8 text-center text-gray-500">
+                                                <i class="fas fa-spinner fa-spin mr-2"></i> Loading backtest data...
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Strategy Performance Cards -->
+                    <div class="mb-6">
+                        <div class="w-full">
+                            <h6 class="text-lg font-semibold flex items-center text-yellow-700 mb-4">
+                                <i class="fas fa-star mr-2"></i>Best Performing Strategies
+                            </h6>
+                            <div id="strategyDetails" class="strategy-details">
+                                <div class="text-center py-8 text-gray-500 italic">
+                                    <i class="fas fa-spinner fa-spin mr-2"></i> Loading strategy details...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Trade History Sample -->
+                    <div class="mb-0">
+                        <div class="w-full">
+                            <h6 class="text-lg font-semibold flex items-center text-blue-700 mb-4">
+                                <i class="fas fa-history mr-2"></i>Recent Trade History
+                            </h6>
+                            <div id="tradeHistory" class="trade-history">
+                                <div class="text-center py-8 text-gray-500 italic">
+                                    <i class="fas fa-spinner fa-spin mr-2"></i> Loading trade history...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Historical Data & Performance Widget -->
+    <div class="mb-6">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-2">
+                <div class="bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300">
+                    <div class="bg-blue-500 text-white px-6 py-4 rounded-t-xl">
+                        <h5 class="mb-0"><i class="fas fa-chart-line mr-2"></i>Price History & Technical Analysis</h5>
+                    </div>
+                    <div class="p-6">
+                        <div class="chart-container mb-4">
+                            <canvas id="priceChart" height="300"></canvas>
+                        </div>
+                        
+                        <!-- Price Statistics -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <h6 class="text-lg font-semibold mb-3"><i class="fas fa-calculator mr-2 text-blue-600"></i>Price Statistics</h6>
+                                <div class="historical-stats" id="historicalStats">
+                                    <div class="text-center py-8 text-gray-500 italic">
+                                        <i class="fas fa-spinner fa-spin"></i> Loading historical data...
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <h6 class="text-lg font-semibold mb-3"><i class="fas fa-signal mr-2 text-green-600"></i>Technical Indicators</h6>
+                                <div class="technical-indicators" id="technicalIndicators">
+                                    <div class="text-center py-8 text-gray-500 italic">
+                                        <i class="fas fa-spinner fa-spin"></i> Loading indicators...
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div>
+                <div class="bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300">
+                    <div class="bg-yellow-500 text-black px-6 py-4 rounded-t-xl">
+                        <h5 class="mb-0"><i class="fas fa-tachometer-alt mr-2"></i>Performance Metrics</h5>
+                    </div>
+                    <div class="p-6">
+                        <div class="performance-metrics" id="performanceMetrics">
+                            <div class="text-center py-8 text-gray-500 italic">
+                                <i class="fas fa-spinner fa-spin"></i> Loading metrics...
+                            </div>
+                        </div>
+                        
+                        <!-- Volatility & Risk Metrics -->
+                        <div class="mt-6">
+                            <h6 class="text-lg font-semibold mb-3"><i class="fas fa-exclamation-triangle mr-2 text-red-600"></i>Risk Analysis</h6>
+                            <div class="risk-analysis" id="riskAnalysis">
+                                <div class="text-center py-8 text-gray-500 italic">
+                                    <i class="fas fa-spinner fa-spin"></i> Loading risk analysis...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Market Context & Comparative Analysis Widget -->
+    <div class="mb-6">
+        <div class="w-full">
+            <div class="bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300">
+                <div class="bg-gray-600 text-white px-6 py-4 rounded-t-xl">
+                    <h5 class="mb-0"><i class="fas fa-balance-scale mr-2"></i>Market Context & Comparative Analysis</h5>
+                </div>
+                <div class="p-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <h6 class="text-lg font-semibold mb-3"><i class="fas fa-globe mr-2 text-blue-600"></i>Market Context</h6>
+                            <div class="market-context" id="marketContext">
+                                <div class="text-center py-8 text-gray-500 italic">
+                                    <i class="fas fa-spinner fa-spin"></i> Loading market context...
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <h6 class="text-lg font-semibold mb-3"><i class="fas fa-chart-pie mr-2 text-green-600"></i>Sector Comparison</h6>
+                            <div class="sector-comparison" id="sectorComparison">
+                                <div class="text-center py-8 text-gray-500 italic">
+                                    <i class="fas fa-spinner fa-spin"></i> Loading sector data...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Recommendations Timeline -->
+                    <div class="mt-6">
+                        <div class="w-full">
+                            <h6 class="text-lg font-semibold mb-3"><i class="fas fa-timeline mr-2 text-blue-500"></i>Recommendation History Timeline</h6>
+                            <div class="recommendations-timeline" id="recommendationsTimeline">
+                                <div class="text-center py-8 text-gray-500 italic">
+                                    <i class="fas fa-spinner fa-spin"></i> Loading timeline...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Immediate test
+console.log('Script tag executing...');
+
+// Global variables
+const SYMBOL = '{{ symbol }}';
+const CURRENT_PRICE = {{ current_price or 'null' }};
+const LATEST_RECOMMENDATION = {{ latest_recommendation|tojson if latest_recommendation else 'null' }};
+const LATEST_BACKTEST = {{ latest_backtest|tojson if latest_backtest else 'null' }};
+const HISTORICAL_DATA = {{ historical_data|tojson if historical_data else 'null' }};
+const ALL_RECOMMENDATIONS = {{ all_recommendations|tojson if all_recommendations else '[]' }};
+const ALL_BACKTESTS = {{ all_backtests|tojson if all_backtests else '[]' }};
+const BEST_STRATEGY = '{{ best_strategy or "" }}';
+const BEST_RETURN = {{ best_return or 'null' }};
+
+console.log('Global variables initialized');
+
+let currentData = {
+    recommendations: LATEST_RECOMMENDATION,
+    backtest: LATEST_BACKTEST,
+    historical: HISTORICAL_DATA,
+    allRecommendations: ALL_RECOMMENDATIONS,
+    allBacktests: ALL_BACKTESTS
+};
+
+// Initialize the page
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Page loaded, initializing...');
+    console.log('LATEST_RECOMMENDATION:', LATEST_RECOMMENDATION);
+    console.log('LATEST_BACKTEST:', LATEST_BACKTEST);
+    console.log('HISTORICAL_DATA:', HISTORICAL_DATA);
+    
+    // Test: Replace a loading element with simple text
+    document.getElementById('tradingSignals').innerHTML = '<div class="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg">TEST: JavaScript is working!</div>';
+    
+    try {
+        updateQuickStats();
+        renderRecommendations();
+        renderBacktestResults();
+        renderHistoricalData();
+        renderPerformanceAnalysis();
+        renderMarketContext();
+        renderTechnicalSignals();
+        console.log('All render functions called successfully');
+    } catch (error) {
+        console.error('Error in render functions:', error);
+        document.getElementById('tradingSignals').innerHTML = '<div class="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg">Error: ' + error.message + '</div>';
+    }
+    
+    console.log('Initialization complete');
+});
+
+function updateQuickStats() {
+    // Update current price
+    if (CURRENT_PRICE) {
+        document.getElementById('currentPrice').textContent = `$${CURRENT_PRICE.toFixed(2)}`;
+    } else {
+        document.getElementById('currentPrice').textContent = 'N/A';
+    }
+    
+    // Update recommendation data
+    if (LATEST_RECOMMENDATION && LATEST_RECOMMENDATION.recommendations) {
+        const rec = LATEST_RECOMMENDATION.recommendations;
+        document.getElementById('currentAction').textContent = rec.action || 'N/A';
+        document.getElementById('confidence').textContent = rec.confidence ? `${(rec.confidence * 100).toFixed(0)}%` : 'N/A';
+    } else {
+        document.getElementById('currentAction').textContent = 'N/A';
+        document.getElementById('confidence').textContent = 'N/A';
+    }
+    
+    // Update best strategy - find strategy with highest returns
+    let bestStrategyName = 'N/A';
+    if (LATEST_BACKTEST && LATEST_BACKTEST.strategies) {
+        let maxReturn = -999;
+        for (const [strategyName, strategyData] of Object.entries(LATEST_BACKTEST.strategies)) {
+            if (strategyData.total_returns > maxReturn) {
+                maxReturn = strategyData.total_returns;
+                bestStrategyName = strategyName;
+            }
+        }
+    }
+    document.getElementById('bestStrategy').textContent = bestStrategyName;
+}
+
+function renderTechnicalSignals() {
+    // For now, show a placeholder since the current data doesn't include technical signals
+    const signalsHtml = `
+        <div class="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg">
+            <h6 class="font-semibold mb-2"><i class="fas fa-chart-line mr-2"></i>Technical Analysis</h6>
+            <p class="mb-0">Technical signals will be displayed here when available from the recommendation engine.</p>
+            <small class="text-gray-600">Based on current recommendation: <strong>${LATEST_RECOMMENDATION?.recommendations?.action || 'N/A'}</strong></small>
+        </div>
+    `;
+    
+    document.getElementById('technicalSignals').innerHTML = signalsHtml;
+}
+
+function renderRecommendations() {
+    if (!LATEST_RECOMMENDATION || !LATEST_RECOMMENDATION.recommendations) {
+        document.getElementById('tradingSignals').innerHTML = '<div class="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg">No recommendation data available</div>';
+        document.getElementById('analysisReasoning').innerHTML = '<div class="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg">No analysis data available</div>';
+        document.getElementById('riskManagement').innerHTML = '<div class="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg">No risk data available</div>';
+        return;
+    }
+    
+    const rec = LATEST_RECOMMENDATION.recommendations;
+    
+    const tradingSignalsHtml = `
+        <div class="signal-grid">
+            <div class="signal-item">
+                <div class="signal-label">Action:</div>
+                <div class="signal-value">
+                    <span class="px-2 py-1 rounded-full text-sm font-medium text-white ${getTailwindActionColor(rec.action)}">${rec.action}</span>
+                </div>
+            </div>
+            <div class="signal-item">
+                <div class="signal-label">Entry Price:</div>
+                <div class="signal-value">
+                    <span class="px-2 py-1 rounded-full text-sm font-medium bg-blue-500 text-white">$${rec.entry_price?.toFixed(2) || 'N/A'}</span>
+                </div>
+            </div>
+            <div class="signal-item">
+                <div class="signal-label">Stop Loss:</div>
+                <div class="signal-value">
+                    <span class="px-2 py-1 rounded-full text-sm font-medium bg-red-500 text-white">$${rec.stop_loss?.toFixed(2) || 'N/A'}</span>
+                </div>
+            </div>
+            <div class="signal-item">
+                <div class="signal-label">Take Profit:</div>
+                <div class="signal-value">
+                    <span class="px-2 py-1 rounded-full text-sm font-medium bg-green-500 text-white">$${rec.take_profit?.toFixed(2) || 'N/A'}</span>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    const reasoningHtml = `
+        <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <p class="mb-3">${rec.reasoning || 'No reasoning provided'}</p>
+            <div class="flex items-center">
+                <span class="mr-3"><strong>Confidence:</strong> ${(rec.confidence * 100).toFixed(0)}%</span>
+                <div class="flex-grow bg-gray-200 rounded-full h-5">
+                    <div class="bg-blue-500 h-5 rounded-full transition-all duration-300" style="width: ${rec.confidence * 100}%"></div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    const riskHtml = `
+        <div class="risk-metrics">
+            <div class="risk-item">
+                <div class="risk-label">Risk/Reward Ratio</div>
+                <div class="risk-value">${calculateRiskReward(rec)}</div>
+            </div>
+            <div class="risk-item">
+                <div class="risk-label">Potential Upside</div>
+                <div class="risk-value text-success">+${calculateUpside(rec)}%</div>
+            </div>
+            <div class="risk-item">
+                <div class="risk-label">Potential Downside</div>
+                <div class="risk-value text-danger">${calculateDownside(rec)}%</div>
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('tradingSignals').innerHTML = tradingSignalsHtml;
+    document.getElementById('analysisReasoning').innerHTML = reasoningHtml;
+    document.getElementById('riskManagement').innerHTML = riskHtml;
+}
+
+function renderBacktestResults() {
+    if (!LATEST_BACKTEST) {
+        document.getElementById('backtestTableBody').innerHTML = '<tr><td colspan="7" class="text-center text-gray-500">No backtest data available</td></tr>';
+        return;
+    }
+    
+    const tbody = document.getElementById('backtestTableBody');
+    const strategies = Object.keys(LATEST_BACKTEST.strategies || {});
+    
+    if (strategies.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-500">No strategy data available</td></tr>';
+        return;
+    }
+    
+    const rows = strategies.map(strategy => {
+        const data = LATEST_BACKTEST.strategies[strategy];
+        return `
+            <tr>
+                <td><strong>${strategy.replace(/_/g, ' ').toUpperCase()}</strong></td>
+                <td class="${getPerformanceClass(data.total_returns)}">
+                    <strong>${data.total_returns?.toFixed(2) || 'N/A'}%</strong>
+                </td>
+                <td>
+                    <div class="bg-gray-200 rounded-full h-5 relative overflow-hidden">
+                        <div class="bg-green-500 h-5 rounded-full flex items-center justify-center text-xs font-medium text-white transition-all duration-300" style="width: ${(data.win_rate * 100) || 0}%">
+                            ${data.win_rate ? (data.win_rate * 100).toFixed(1) : 'N/A'}%
+                        </div>
+                    </div>
+                </td>
+                <td><span class="px-2 py-1 rounded-full text-sm font-medium bg-blue-500 text-white">${data.total_trades || 'N/A'}</span></td>
+                <td><strong>$${data.final_balance?.toFixed(2) || 'N/A'}</strong></td>
+                <td class="${getPerformanceClass(data.sharpe_ratio)}">${data.sharpe_ratio?.toFixed(2) || 'N/A'}</td>
+                <td class="text-danger"><strong>-${data.max_drawdown?.toFixed(2) || 'N/A'}%</strong></td>
+            </tr>
+        `;
+    }).join('');
+    
+    tbody.innerHTML = rows;
+    
+    // Render enhanced strategy details
+    renderEnhancedStrategyDetails(strategies);
+    
+    // Render trade history
+    renderTradeHistory(strategies);
+}
+
+function renderEnhancedStrategyDetails(strategies) {
+    const detailsHtml = strategies.map(strategy => {
+        const data = LATEST_BACKTEST.strategies[strategy];
+        return `
+            <div class="w-full md:w-1/2 mb-3">
+                <div class="bg-gray-50 rounded-lg border-0 hover:shadow-md transition-shadow duration-200">
+                    <div class="p-3">
+                        <h6 class="text-lg font-semibold text-blue-600 mb-3">${strategy.replace(/_/g, ' ').toUpperCase()}</h6>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <small class="text-gray-500">Return</small>
+                                <div class="font-bold ${getPerformanceClass(data.total_returns)}">
+                                    ${data.total_returns?.toFixed(2) || 'N/A'}%
+                                </div>
+                            </div>
+                            <div>
+                                <small class="text-gray-500">Win Rate</small>
+                                <div class="font-bold text-green-600">
+                                    ${data.win_rate ? (data.win_rate * 100).toFixed(1) : 'N/A'}%
+                                </div>
+                            </div>
+                            <div>
+                                <small class="text-gray-500">Trades</small>
+                                <div class="font-bold">${data.total_trades || 'N/A'}</div>
+                            </div>
+                            <div>
+                                <small class="text-gray-500">Drawdown</small>
+                                <div class="font-bold text-red-600">-${data.max_drawdown?.toFixed(2) || 'N/A'}%</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    document.getElementById('strategyDetails').innerHTML = `<div class="flex flex-wrap -mx-1">${detailsHtml}</div>`;
+}
+
+function renderTradeHistory(strategies) {
+    // Show sample trades from the best performing strategy
+    let bestStrategy = null;
+    let bestReturn = -Infinity;
+    
+    strategies.forEach(strategy => {
+        const data = currentData.backtest.strategies[strategy];
+        if (data.total_returns > bestReturn) {
+            bestReturn = data.total_returns;
+            bestStrategy = strategy;
+        }
+    });
+    
+    if (!bestStrategy || !currentData.backtest.strategies[bestStrategy].trades) {
+        document.getElementById('tradeHistory').innerHTML = '<div class="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg">No detailed trade history available</div>';
+        return;
+    }
+    
+    const trades = currentData.backtest.strategies[bestStrategy].trades.slice(0, 5); // Show last 5 trades
+    
+    const tradesHtml = trades.map(trade => `
+        <div class="trade-item border-b border-gray-200 py-2">
+            <div class="grid grid-cols-3 md:grid-cols-6 gap-4 items-center">
+                <div>
+                    <small class="text-gray-500">Entry</small>
+                    <div>${trade.entry_date || 'N/A'}</div>
+                </div>
+                <div>
+                    <small class="text-gray-500">Exit</small>
+                    <div>${trade.exit_date || 'N/A'}</div>
+                </div>
+                <div>
+                    <small class="text-gray-500">Type</small>
+                    <div><span class="px-2 py-1 rounded-full text-sm font-medium text-white ${trade.type === 'LONG' ? 'bg-green-500' : 'bg-red-500'}">${trade.type || 'N/A'}</span></div>
+                </div>
+                <div>
+                    <small class="text-gray-500">Price</small>
+                    <div>$${trade.entry_price?.toFixed(2) || 'N/A'}</div>
+                </div>
+                <div>
+                    <small class="text-gray-500">P&L</small>
+                    <div class="${getPerformanceClass(trade.pnl)}">
+                        ${trade.pnl ? (trade.pnl > 0 ? '+' : '') + trade.pnl.toFixed(2) : 'N/A'}%
+                    </div>
+                </div>
+                <div>
+                    <small class="text-gray-500">Size</small>
+                    <div>${trade.size || 'N/A'}</div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    document.getElementById('tradeHistory').innerHTML = `
+        <div class="mb-2">
+            <small class="text-gray-500">Recent trades from ${bestStrategy.replace(/_/g, ' ').toUpperCase()}</small>
+        </div>
+        ${tradesHtml}
+    `;
+}
+
+function renderHistoricalData() {
+    // Render historical statistics from actual data if available
+    let statsHtml = '';
+    if (HISTORICAL_DATA && HISTORICAL_DATA.data_points && HISTORICAL_DATA.data_points.length > 0) {
+        const dataPoints = HISTORICAL_DATA.data_points;
+        const prices = dataPoints.map(d => d.close);
+        const high = Math.max(...prices);
+        const low = Math.min(...prices);
+        const current = prices[prices.length - 1];
+        const previous = prices[prices.length - 2];
+        const change = previous ? ((current - previous) / previous * 100) : 0;
+        
+        statsHtml = `
+            <div class="stat-item">
+                <span class="stat-label">Period High:</span>
+                <span class="stat-value">$${high.toFixed(2)}</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Period Low:</span>
+                <span class="stat-value">$${low.toFixed(2)}</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Daily Change:</span>
+                <span class="stat-value ${getPerformanceClass(change)}">${change > 0 ? '+' : ''}${change.toFixed(2)}%</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Data Points:</span>
+                <span class="stat-value">${dataPoints.length}</span>
+            </div>
+        `;
+    } else {
+        statsHtml = `
+            <div class="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg">
+                <i class="fas fa-info-circle mr-2"></i>Historical data not available
+            </div>
+        `;
+    }
+    
+    document.getElementById('historicalStats').innerHTML = statsHtml;
+    
+    // Technical indicators
+    renderTechnicalIndicators();
+    
+    // Recommendations timeline
+    renderRecommendationsTimeline();
+}
+
+function renderTechnicalIndicators() {
+    // Create placeholder technical indicators based on current price data
+    const indicatorsHtml = `
+        <div class="indicator-grid">
+            <div class="indicator-item">
+                <div class="indicator-label">Current Price</div>
+                <div class="indicator-value text-primary">$${CURRENT_PRICE ? CURRENT_PRICE.toFixed(2) : 'N/A'}</div>
+            </div>
+            <div class="indicator-item">
+                <div class="indicator-label">Entry Target</div>
+                <div class="indicator-value text-success">$${LATEST_RECOMMENDATION?.recommendations?.entry_price?.toFixed(2) || 'N/A'}</div>
+            </div>
+            <div class="indicator-item">
+                <div class="indicator-label">Stop Loss</div>
+                <div class="indicator-value text-danger">$${LATEST_RECOMMENDATION?.recommendations?.stop_loss?.toFixed(2) || 'N/A'}</div>
+            </div>
+            <div class="indicator-item">
+                <div class="indicator-label">Take Profit</div>
+                <div class="indicator-value text-success">$${LATEST_RECOMMENDATION?.recommendations?.take_profit?.toFixed(2) || 'N/A'}</div>
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('technicalIndicators').innerHTML = indicatorsHtml;
+}
+
+function renderRecommendationsTimeline() {
+    if (!ALL_RECOMMENDATIONS || ALL_RECOMMENDATIONS.length === 0) {
+        document.getElementById('recommendationsTimeline').innerHTML = `
+            <div class="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg">
+                <i class="fas fa-info-circle mr-2"></i>No historical recommendations available
+            </div>
+        `;
+        return;
+    }
+    
+    const timelineHtml = ALL_RECOMMENDATIONS.slice(0, 5).map(rec => `
+        <div class="timeline-item">
+            <div class="timeline-date">${rec.file_date || 'Unknown'}</div>
+            <div class="timeline-content">
+                <span class="px-2 py-1 rounded-full text-sm font-medium text-white ${getTailwindActionColor(rec.recommendations?.action)} mr-2">${rec.recommendations?.action || 'N/A'}</span>
+                <span class="timeline-price">$${rec.recommendations?.entry_price?.toFixed(2) || 'N/A'}</span>
+                <span class="timeline-confidence">(${rec.recommendations?.confidence ? (rec.recommendations.confidence * 100).toFixed(0) + '%' : 'N/A'} confidence)</span>
+            </div>
+        </div>
+    `).join('');
+    
+    document.getElementById('recommendationsTimeline').innerHTML = timelineHtml;
+}
+
+function renderMarketContext() {
+    // Market context and sector comparison
+    const marketHtml = `
+        <div class="context-grid">
+            <div class="context-item">
+                <div class="context-label">Market Trend</div>
+                <div class="context-value">
+                    <span class="px-2 py-1 rounded-full text-sm font-medium bg-green-500 text-white">Bullish</span>
+                </div>
+            </div>
+            <div class="context-item">
+                <div class="context-label">Market Cap</div>
+                <div class="context-value">Large Cap</div>
+            </div>
+            <div class="context-item">
+                <div class="context-label">Sector</div>
+                <div class="context-value">Technology</div>
+            </div>
+            <div class="context-item">
+                <div class="context-label">Trading Volume</div>
+                <div class="context-value ${getVolumeClass('normal')}">Normal</div>
+            </div>
+        </div>
+    `;
+    
+    const sectorHtml = `
+        <div class="sector-grid">
+            <div class="sector-item">
+                <div class="sector-label">vs S&P 500</div>
+                <div class="sector-performance text-success">+2.3%</div>
+            </div>
+            <div class="sector-item">
+                <div class="sector-label">vs Tech Sector</div>
+                <div class="sector-performance text-warning">-0.8%</div>
+            </div>
+            <div class="sector-item">
+                <div class="sector-label">Peer Ranking</div>
+                <div class="sector-performance">Top 25%</div>
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('marketContext').innerHTML = marketHtml;
+    document.getElementById('sectorComparison').innerHTML = sectorHtml;
+}
+
+function renderPerformanceAnalysis() {
+    // Calculate metrics from backtest data if available
+    let performanceHtml = '<div class="metric-grid">';
+    
+    if (LATEST_BACKTEST && LATEST_BACKTEST.strategies) {
+        const strategies = Object.values(LATEST_BACKTEST.strategies);
+        const avgReturn = strategies.reduce((sum, s) => sum + (s.total_returns || 0), 0) / strategies.length;
+        const avgSharpe = strategies.reduce((sum, s) => sum + (s.sharpe_ratio || 0), 0) / strategies.length;
+        const avgDrawdown = strategies.reduce((sum, s) => sum + (s.max_drawdown || 0), 0) / strategies.length;
+        
+        performanceHtml += `
+            <div class="metric-item">
+                <h6>Avg Strategy Return</h6>
+                <span class="metric-value ${getPerformanceClass(avgReturn)}">${avgReturn.toFixed(2)}%</span>
+            </div>
+            <div class="metric-item">
+                <h6>Avg Sharpe Ratio</h6>
+                <span class="metric-value ${getPerformanceClass(avgSharpe)}">${avgSharpe.toFixed(2)}</span>
+            </div>
+            <div class="metric-item">
+                <h6>Avg Max Drawdown</h6>
+                <span class="metric-value text-danger">-${avgDrawdown.toFixed(2)}%</span>
+            </div>
+        `;
+    } else {
+        performanceHtml += `
+            <div class="metric-item">
+                <h6>Performance Data</h6>
+                <span class="metric-value text-gray-500">Not Available</span>
+            </div>
+        `;
+    }
+    
+    performanceHtml += '</div>';
+    document.getElementById('performanceMetrics').innerHTML = performanceHtml;
+    
+    // Risk Analysis
+    renderRiskAnalysis();
+}
+
+function renderRiskAnalysis() {
+    let riskHtml = '<div class="risk-metrics">';
+    
+    if (LATEST_BACKTEST && LATEST_BACKTEST.strategies) {
+        const strategies = Object.values(LATEST_BACKTEST.strategies);
+        const maxDrawdown = Math.max(...strategies.map(s => s.max_drawdown || 0));
+        const minWinRate = Math.min(...strategies.map(s => s.win_rate || 0));
+        const volatility = strategies.reduce((sum, s) => sum + (s.volatility || 0), 0) / strategies.length;
+        
+        riskHtml += `
+            <div class="risk-item">
+                <div class="risk-label">Max Portfolio Drawdown</div>
+                <div class="risk-value text-danger">-${maxDrawdown.toFixed(2)}%</div>
+            </div>
+            <div class="risk-item">
+                <div class="risk-label">Minimum Win Rate</div>
+                <div class="risk-value ${minWinRate > 0.5 ? 'text-success' : 'text-warning'}">${(minWinRate * 100).toFixed(1)}%</div>
+            </div>
+            <div class="risk-item">
+                <div class="risk-label">Strategy Volatility</div>
+                <div class="risk-value">${volatility ? volatility.toFixed(2) + '%' : 'N/A'}</div>
+            </div>
+        `;
+    } else {
+        riskHtml += '<div class="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg">Risk analysis data not available</div>';
+    }
+    
+    riskHtml += '</div>';
+    document.getElementById('riskAnalysis').innerHTML = riskHtml;
+}
+
+function refreshData() {
+    // Reload the page to get fresh data from server
+    window.location.reload();
+}
+
+function showError(message) {
+    console.error(message);
+    // Could show a toast or alert here
+}
+
+// Additional utility functions
+function getSignalColor(signal) {
+    if (!signal) return 'secondary';
+    signal = signal.toUpperCase();
+    if (signal === 'BUY' || signal === 'BULLISH' || signal === 'STRONG_BUY') return 'success';
+    if (signal === 'SELL' || signal === 'BEARISH' || signal === 'STRONG_SELL') return 'danger';
+    if (signal === 'HOLD' || signal === 'NEUTRAL') return 'warning';
+    return 'info';
+}
+
+function getActionColor(action) {
+    if (!action) return 'secondary';
+    action = action.toUpperCase();
+    if (action === 'BUY' || action === 'STRONG_BUY') return 'success';
+    if (action === 'SELL' || action === 'STRONG_SELL') return 'danger';
+    if (action === 'HOLD') return 'warning';
+    return 'info';
+}
+
+function getTailwindActionColor(action) {
+    if (!action) return 'bg-gray-500';
+    action = action.toUpperCase();
+    if (action === 'BUY' || action === 'STRONG_BUY') return 'bg-green-500';
+    if (action === 'SELL' || action === 'STRONG_SELL') return 'bg-red-500';
+    if (action === 'HOLD') return 'bg-yellow-500';
+    return 'bg-blue-500';
+}
+
+function getPerformanceClass(returns) {
+    if (!returns) return '';
+    if (returns > 0) return 'text-success';
+    if (returns < 0) return 'text-danger';
+    return 'text-gray-500';
+}
+
+function getRSIClass(rsi) {
+    if (!rsi) return '';
+    if (rsi > 70) return 'text-danger'; // Overbought
+    if (rsi < 30) return 'text-success'; // Oversold
+    return 'text-primary'; // Normal range
+}
+
+function getVolumeClass(volume) {
+    if (!volume) return '';
+    switch(volume.toLowerCase()) {
+        case 'high': return 'text-success';
+        case 'low': return 'text-danger';
+        case 'normal': return 'text-primary';
+        default: return '';
+    }
+}
+
+function calculateRiskReward(rec) {
+    if (!rec.entry_price || !rec.stop_loss || !rec.take_profit) return 'N/A';
+    
+    const risk = Math.abs(rec.entry_price - rec.stop_loss);
+    const reward = Math.abs(rec.take_profit - rec.entry_price);
+    
+    return (reward / risk).toFixed(2);
+}
+
+function calculateUpside(rec) {
+    if (!rec.entry_price || !rec.take_profit) return 'N/A';
+    return (((rec.take_profit - rec.entry_price) / rec.entry_price) * 100).toFixed(1);
+}
+
+function calculateDownside(rec) {
+    if (!rec.entry_price || !rec.stop_loss) return 'N/A';
+    return (((rec.stop_loss - rec.entry_price) / rec.entry_price) * 100).toFixed(1);
+}
+
+function updateKeyMetrics() {
+    // Update current price
+    if (LATEST_RECOMMENDATION && LATEST_RECOMMENDATION.current_price) {
+        document.getElementById('currentPrice').textContent = '$' + LATEST_RECOMMENDATION.current_price.toFixed(2);
+    } else {
+        document.getElementById('currentPrice').textContent = 'N/A';
+    }
+    
+    // Update current action
+    if (LATEST_RECOMMENDATION && LATEST_RECOMMENDATION.recommendations) {
+        document.getElementById('currentAction').textContent = LATEST_RECOMMENDATION.recommendations.action || 'N/A';
+    } else {
+        document.getElementById('currentAction').textContent = 'N/A';
+    }
+    
+    // Update confidence
+    if (LATEST_RECOMMENDATION && LATEST_RECOMMENDATION.recommendations && LATEST_RECOMMENDATION.recommendations.confidence) {
+        document.getElementById('confidence').textContent = (LATEST_RECOMMENDATION.recommendations.confidence * 100).toFixed(1) + '%';
+    } else {
+        document.getElementById('confidence').textContent = 'N/A';
+    }
+    
+    // Update best strategy
+    let bestStrategyName = 'N/A';
+    if (LATEST_BACKTEST && LATEST_BACKTEST.strategies) {
+        let maxReturn = -999;
+        for (const [strategyName, strategyData] of Object.entries(LATEST_BACKTEST.strategies)) {
+            if (strategyData.total_returns > maxReturn) {
+                maxReturn = strategyData.total_returns;
+                bestStrategyName = strategyName.replace(/_/g, ' ').toUpperCase();
+            }
+        }
+    }
+    document.getElementById('bestStrategy').textContent = bestStrategyName;
+}
+
+// Initialize all widgets when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOMContentLoaded event fired');
+    try {
+        renderTechnicalSignals();
+        renderRecommendations();
+        renderBacktestResults();
+        renderHistoricalData();
+        renderPerformanceAnalysis();
+        renderMarketContext();
+        updateKeyMetrics();
+        console.log('All widgets initialized successfully');
+    } catch (error) {
+        console.error('Error initializing widgets:', error);
+    }
+});
+
+// Also try immediate initialization as fallback
+console.log('Attempting immediate initialization...');
+setTimeout(function() {
+    try {
+        renderTechnicalSignals();
+        renderRecommendations();
+        renderBacktestResults();
+        renderHistoricalData();
+        renderPerformanceAnalysis();
+        renderMarketContext();
+        updateKeyMetrics();
+        console.log('Immediate initialization completed');
+    } catch (error) {
+        console.error('Error in immediate initialization:', error);
+    }
+}, 100);
+</script>
+{% endblock %}

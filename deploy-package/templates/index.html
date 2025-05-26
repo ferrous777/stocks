@@ -1,0 +1,1343 @@
+{% extends "base.html" %}
+
+{% block title %}Stock Analysis Dashboard{% endblock %}
+
+{% block content %}
+<!-- Dashboard Header -->
+<div class="mb-8">
+    <div class="bg-white rounded-xl shadow-lg hover-lift transition-transform duration-300">
+        <div class="bg-gradient-secondary text-white p-6 rounded-t-xl">
+            <h4 class="text-2xl font-semibold mb-0 flex items-center">
+                <i class="fas fa-chart-line mr-3"></i>
+                Stock Analysis Dashboard
+            </h4>
+        </div>
+        <div class="p-6">
+            <p class="text-xl text-gray-600 mb-6">Welcome to your comprehensive stock analysis platform. View backtest results, trading recommendations, and performance metrics for your portfolio.</p>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="bg-gradient-purple text-white rounded-xl p-6 text-center hover-lift transition-transform duration-300">
+                    <div class="text-3xl font-bold">{{ symbols|length }}</div>
+                    <div class="text-sm opacity-90">Tracked Symbols</div>
+                </div>
+                <div class="bg-gradient-purple text-white rounded-xl p-6 text-center hover-lift transition-transform duration-300">
+                    <div class="text-3xl font-bold">{{ dates|length }}</div>
+                    <div class="text-sm opacity-90">Analysis Dates</div>
+                </div>
+                <div class="bg-gradient-purple text-white rounded-xl p-6 text-center hover-lift transition-transform duration-300">
+                    <div class="text-3xl font-bold">5</div>
+                    <div class="text-sm opacity-90">Strategies</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters and Actions -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <!-- Quick Filters -->
+    <div class="bg-white rounded-xl shadow-lg hover-lift transition-transform duration-300">
+        <div class="bg-gradient-secondary text-white p-4 rounded-t-xl">
+            <h5 class="text-lg font-semibold mb-0 flex items-center">
+                <i class="fas fa-filter mr-2"></i>
+                Quick Filters
+            </h5>
+        </div>
+        <div class="p-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label for="dateFilter" class="block text-sm font-medium text-gray-700 mb-2">Analysis Date</label>
+                    <select id="dateFilter" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">All Dates</option>
+                        {% for date in dates %}
+                        <option value="{{ date }}">{{ date }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label for="symbolFilter" class="block text-sm font-medium text-gray-700 mb-2">Symbol Filter</label>
+                    <input type="text" id="symbolFilter" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Filter symbols...">
+                </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button class="bg-gradient-secondary text-white px-4 py-2 rounded-full hover:shadow-lg transition-all duration-300 flex items-center" onclick="applyFilters()">
+                    <i class="fas fa-search mr-2"></i>Apply Filters
+                </button>
+                <button class="bg-gray-500 text-white px-4 py-2 rounded-full hover:shadow-lg transition-all duration-300 flex items-center" onclick="clearFilters()">
+                    <i class="fas fa-times mr-2"></i>Clear
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="bg-white rounded-xl shadow-lg hover-lift transition-transform duration-300">
+        <div class="bg-gradient-secondary text-white p-4 rounded-t-xl">
+            <h5 class="text-lg font-semibold mb-0 flex items-center">
+                <i class="fas fa-info-circle mr-2"></i>
+                Quick Actions
+            </h5>
+        </div>
+        <div class="p-6">
+            <div class="grid grid-cols-2 gap-2">
+                <a href="/compare" class="bg-gradient-secondary text-white px-3 py-2 rounded-lg hover:shadow-lg transition-all duration-300 text-center text-sm flex items-center justify-center">
+                    <i class="fas fa-balance-scale mr-1"></i>Compare
+                </a>
+                <button class="bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-all duration-300 text-sm flex items-center justify-center" onclick="loadLatestResults()">
+                    <i class="fas fa-sync mr-1"></i>Latest
+                </button>
+                <button class="bg-green-100 text-green-700 px-3 py-2 rounded-lg hover:bg-green-200 transition-all duration-300 text-sm flex items-center justify-center" onclick="showTopPerformers()">
+                    <i class="fas fa-trophy mr-1"></i>Top
+                </button>
+                <button class="bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-all duration-300 text-sm flex items-center justify-center" onclick="toggleFundsView()">
+                    <i class="fas fa-chart-pie mr-1"></i>Funds
+                </button>
+                <button class="bg-yellow-100 text-yellow-700 px-3 py-2 rounded-lg hover:bg-yellow-200 transition-all duration-300 text-sm flex items-center justify-center" onclick="toggleMutualFundsView()">
+                    <i class="fas fa-university mr-1"></i>MF
+                </button>
+                <button class="bg-red-100 text-red-700 px-3 py-2 rounded-lg hover:bg-red-200 transition-all duration-300 text-sm flex items-center justify-center" onclick="debugMutualFunds()">
+                    <i class="fas fa-bug mr-1"></i>Debug
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Ticker Management Widget -->
+<div class="mb-8">
+    <div class="bg-gradient-light-blue border-2 border-blue-100 rounded-xl shadow-lg p-6">
+        <div class="bg-gradient-teal text-white p-4 rounded-xl mb-6">
+            <h5 class="text-lg font-semibold mb-0 flex items-center justify-between">
+                <span class="flex items-center">
+                    <i class="fas fa-cog mr-2"></i>
+                    Ticker Management
+                </span>
+                <span class="bg-white bg-opacity-20 px-3 py-1 rounded-full text-sm" id="tickerCount">{{ symbols|length }} Tracked</span>
+            </h5>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Add Ticker Section -->
+            <div>
+                <div class="flex items-center text-blue-600 font-semibold mb-4 pb-2 border-b-2 border-blue-100">
+                    <i class="fas fa-plus-circle text-green-500 mr-2"></i>
+                    Add New Ticker
+                </div>
+                <div class="flex mb-4 shadow-lg rounded-lg overflow-hidden">
+                    <input type="text" id="newTickerInput" class="flex-1 px-4 py-3 border-0 focus:ring-2 focus:ring-blue-500 font-medium" 
+                           placeholder="Enter ticker symbol (e.g., AAPL)" 
+                           onkeypress="handleAddTickerKeypress(event)">
+                    <button class="bg-green-500 text-white px-6 py-3 hover:bg-green-600 transition-colors flex items-center" onclick="addTicker()">
+                        <i class="fas fa-plus mr-2"></i>Add
+                    </button>
+                </div>
+                <div class="mb-4">
+                    <label class="block font-semibold text-gray-700 mb-3">Quick Add Popular Stocks:</label>
+                    <div class="space-y-2">
+                        <button class="w-full bg-white border border-gray-200 text-left px-4 py-2 rounded-lg hover:bg-blue-50 hover-slide transition-all duration-300 flex items-center" onclick="addPopularTicker('NFLX')">
+                            <i class="fas fa-video text-red-500 mr-3"></i>NFLX - Netflix
+                        </button>
+                        <button class="w-full bg-white border border-gray-200 text-left px-4 py-2 rounded-lg hover:bg-blue-50 hover-slide transition-all duration-300 flex items-center" onclick="addPopularTicker('PYPL')">
+                            <i class="fas fa-credit-card text-blue-500 mr-3"></i>PYPL - PayPal
+                        </button>
+                        <button class="w-full bg-white border border-gray-200 text-left px-4 py-2 rounded-lg hover:bg-blue-50 hover-slide transition-all duration-300 flex items-center" onclick="addPopularTicker('SHOP')">
+                            <i class="fas fa-shopping-cart text-green-500 mr-3"></i>SHOP - Shopify
+                        </button>
+                    </div>
+                </div>
+            </div>
+                    
+                    <!-- Remove Ticker Section -->
+            <!-- Remove Ticker Section -->
+            <div>
+                <div class="flex items-center text-blue-600 font-semibold mb-4 pb-2 border-b-2 border-blue-100">
+                    <i class="fas fa-minus-circle text-red-500 mr-2"></i>
+                    Remove Ticker
+                </div>
+                <div class="flex mb-4 shadow-lg rounded-lg overflow-hidden">
+                    <select id="removeTickerSelect" class="flex-1 px-4 py-3 border-0 focus:ring-2 focus:ring-blue-500 font-medium">
+                        <option value="">Select ticker to remove...</option>
+                        {% for symbol in symbols %}
+                        <option value="{{ symbol }}">{{ symbol }}</option>
+                        {% endfor %}
+                    </select>
+                    <button class="bg-red-500 text-white px-6 py-3 hover:bg-red-600 transition-colors flex items-center" onclick="removeTicker()">
+                        <i class="fas fa-trash mr-2"></i>Remove
+                    </button>
+                </div>
+                
+                <!-- Current Tickers List -->
+                <div class="mb-4">
+                    <label class="block font-semibold text-gray-700 mb-3">Current Tickers:</label>
+                    <div id="tickersList" class="max-h-32 overflow-y-auto custom-scrollbar bg-white rounded-lg p-3 border border-gray-200">
+                        {% for symbol in symbols %}
+                        <span class="inline-block bg-gradient-purple text-white px-3 py-1 m-1 rounded-full text-sm cursor-pointer hover-scale transition-transform duration-200 relative" 
+                              title="Click to remove" onclick="quickRemoveTicker('{{ symbol }}')">
+                            {{ symbol }} <i class="fas fa-times ml-1 opacity-70 hover:opacity-100 transition-opacity"></i>
+                        </span>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Status Messages -->
+        <div id="tickerManagementStatus" class="hidden rounded-lg border-0 shadow-lg mt-4 p-3 font-medium" role="alert">
+            <i class="fas fa-info-circle mr-2"></i>
+            <span id="statusMessage"></span>
+        </div>
+        
+        <!-- Bulk Actions -->
+        <div class="mt-6">
+            <div class="flex items-center text-blue-600 font-semibold mb-4 pb-2 border-b-2 border-blue-100">
+                <i class="fas fa-layer-group mr-2"></i>
+                Bulk Actions
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button class="bg-green-100 text-green-700 px-4 py-2 rounded-full text-sm hover:bg-green-200 transition-colors flex items-center" onclick="addTechStocks()">
+                    <i class="fas fa-microchip mr-1"></i>Add Tech Stocks
+                </button>
+                <button class="bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-sm hover:bg-blue-200 transition-colors flex items-center" onclick="addBankStocks()">
+                    <i class="fas fa-university mr-1"></i>Add Bank Stocks
+                </button>
+                <button class="bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-sm hover:bg-blue-200 transition-colors flex items-center" onclick="addETFs()">
+                    <i class="fas fa-chart-pie mr-1"></i>Add Popular ETFs
+                </button>
+                <button class="bg-yellow-100 text-yellow-700 px-4 py-2 rounded-full text-sm hover:bg-yellow-200 transition-colors flex items-center" onclick="exportTickerList()">
+                    <i class="fas fa-download mr-1"></i>Export List
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Fund Reinvestment Section -->
+<div class="mb-8 hidden" id="fundsSection">
+    <div class="bg-white rounded-xl shadow-lg hover-lift transition-transform duration-300">
+        <div class="bg-blue-500 text-white p-6 rounded-t-xl">
+            <h5 class="text-lg font-semibold mb-2 flex items-center">
+                <i class="fas fa-chart-pie mr-3"></i>
+                Fund & ETF Reinvestment Timing (3-Month Outlook)
+            </h5>
+            <small class="opacity-90">Optimal entry points for long-term accumulation and dollar-cost averaging</small>
+        </div>
+        <div class="p-6">
+            <div class="overflow-x-auto">
+                <table id="fundsTable" class="w-full">
+                    <thead>
+                        <tr class="bg-gradient-primary text-white">
+                            <th class="px-4 py-3 text-left font-semibold">Fund/ETF</th>
+                            <th class="px-4 py-3 text-left font-semibold">Current Price</th>
+                            <th class="px-4 py-3 text-left font-semibold">3-Month Target Zone</th>
+                            <th class="px-4 py-3 text-left font-semibold">Optimal Buy Range</th>
+                            <th class="px-4 py-3 text-left font-semibold">Risk Level</th>
+                            <th class="px-4 py-3 text-left font-semibold">Reinvestment Strategy</th>
+                            <th class="px-4 py-3 text-left font-semibold">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fundsTableBody" class="divide-y divide-gray-200">
+                        <!-- Fund rows will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="fundsLoadingIndicator" class="hidden text-center py-8">
+                <i class="fas fa-spinner animate-spin text-2xl text-blue-500 mb-4"></i>
+                <p class="text-gray-600">Loading fund analysis data...</p>
+            </div>
+            <div id="fundsNoDataMessage" class="hidden bg-blue-50 border border-blue-200 text-blue-700 p-4 rounded-lg text-center">
+                <i class="fas fa-info-circle mr-2"></i>
+                No fund data available for the selected filters
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Stocks Analysis Section -->
+<div id="stocksSection">
+    <div class="bg-white rounded-xl shadow-lg hover-lift transition-transform duration-300">
+        <div class="bg-gradient-secondary text-white p-6 rounded-t-xl flex justify-between items-center">
+            <h5 class="text-lg font-semibold mb-0 flex items-center">
+                <i class="fas fa-table mr-3"></i>
+                Stock Analysis Summary
+            </h5>
+            <div class="bg-white bg-opacity-20 px-3 py-1 rounded-full text-sm">{{ symbols|length }} symbols</div>
+        </div>
+        <div class="p-6">
+            <div class="overflow-x-auto">
+                <table id="symbolsTable" class="w-full">
+                    <thead>
+                        <tr class="bg-gradient-primary text-white">
+                            <th class="px-4 py-3 text-left font-semibold">Symbol</th>
+                            <th class="px-4 py-3 text-left font-semibold">Date</th>
+                            <th class="px-4 py-3 text-left font-semibold">Entry Price</th>
+                            <th class="px-4 py-3 text-left font-semibold">Stop Loss</th>
+                            <th class="px-4 py-3 text-left font-semibold">Take Profit</th>
+                            <th class="px-4 py-3 text-left font-semibold">Recommendation</th>
+                            <th class="px-4 py-3 text-left font-semibold">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="symbolsTableBody" class="divide-y divide-gray-200">
+                        <!-- Table rows will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="loadingIndicator" class="hidden text-center py-8">
+                <i class="fas fa-spinner animate-spin text-2xl text-blue-500 mb-4"></i>
+                <p class="text-gray-600">Loading analysis data...</p>
+            </div>
+            <div id="noDataMessage" class="hidden bg-blue-50 border border-blue-200 text-blue-700 p-4 rounded-lg text-center">
+                <i class="fas fa-info-circle mr-2"></i>
+                No data available for the selected filters
+            </div>
+        </div>
+        </div>
+    </div>
+</div>
+
+<!-- Mutual Funds Section -->
+<div class="mb-8 block" id="mutualFundsSection">
+    <div class="bg-white rounded-xl shadow-lg hover-lift transition-transform duration-300">
+        <div class="bg-yellow-500 text-gray-900 p-6 rounded-t-xl">
+            <h5 class="text-lg font-semibold mb-2 flex items-center">
+                <i class="fas fa-university mr-3"></i>
+                Mutual Funds Overview
+            </h5>
+            <small class="opacity-80">Key metrics and reinvestment strategies for mutual funds</small>
+        </div>
+        <div class="p-6">
+            <!-- Debug Status Panel -->
+            <div id="debugStatus" class="bg-gray-100 border border-gray-300 p-3 rounded-lg mb-4">
+                <strong>Debug Status:</strong> <span id="debugText">Initializing...</span>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table id="mutualFundsTable" class="w-full">
+                    <thead>
+                        <tr class="bg-gradient-primary text-white">
+                            <th class="px-4 py-3 text-left font-semibold">Fund</th>
+                            <th class="px-4 py-3 text-left font-semibold">Current Price</th>
+                            <th class="px-4 py-3 text-left font-semibold">3-Month Target Zone</th>
+                            <th class="px-4 py-3 text-left font-semibold">Optimal Buy Range</th>
+                            <th class="px-4 py-3 text-left font-semibold">Risk Level</th>
+                            <th class="px-4 py-3 text-left font-semibold">Reinvestment Strategy</th>
+                            <th class="px-4 py-3 text-left font-semibold">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mutualFundsTableBody" class="divide-y divide-gray-200">
+                        <tr>
+                            <td colspan="7" class="text-center text-blue-600 py-8">
+                                <i class="fas fa-info-circle mr-2"></i>
+                                Mutual funds data loading on page startup...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="mutualFundsLoadingIndicator" class="hidden text-center py-8">
+                <i class="fas fa-spinner animate-spin text-2xl text-blue-500 mb-4"></i>
+                <p class="text-gray-600">Loading mutual fund data...</p>
+            </div>
+            <div id="mutualFundsNoDataMessage" class="hidden text-center py-8 text-blue-600">
+                <i class="fas fa-info-circle mr-2"></i>
+                No mutual fund data available for the selected filters
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Modal -->
+<div id="loadingModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+    <div class="bg-white rounded-lg p-8 max-w-sm w-full mx-4">
+        <div class="text-center">
+            <i class="fas fa-spinner animate-spin text-3xl text-blue-500 mb-4"></i>
+            <p class="text-lg text-gray-700">Loading analysis data...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // Ensure symbols and dates are properly rendered as JSON
+    let allSymbols = JSON.parse('{{ symbols | tojson | safe }}');
+    let allDates = JSON.parse('{{ dates | tojson | safe }}');
+</script>
+<script>
+let currentFilter = {
+    date: '',
+    symbol: ''
+};
+
+// Fund/ETF symbols that should show reinvestment timing instead of trading signals
+// Only including symbols that we know have data available
+const FUND_SYMBOLS = ['KMKNX', 'FDEGX', 'QQQ', 'VUG', 'IWF', 'SPYG', 'VGT', 'FDN', 'VEA', 'VWO', 'FEZ', 'EWJ', 'MCHI', 'INDA', 'EWZ'];
+
+let showingFundsView = false;
+
+// Load initial data
+document.addEventListener('DOMContentLoaded', function() {
+    loadSymbols();
+    loadMutualFundsData();
+});
+
+function loadSymbols() {
+    const tableBody = document.getElementById('symbolsTableBody');
+    const loadingIndicator = document.getElementById('loadingIndicator');
+    const noDataMessage = document.getElementById('noDataMessage');
+    
+    // Show loading state
+    tableBody.innerHTML = '';
+    loadingIndicator.style.display = 'block';
+    noDataMessage.style.display = 'none';
+    
+    // Filter symbols based on current filter and exclude fund symbols from main table
+    let filteredSymbols = allSymbols.filter(symbol => !FUND_SYMBOLS.includes(symbol));
+    if (currentFilter.symbol) {
+        filteredSymbols = filteredSymbols.filter(symbol => 
+            symbol.toLowerCase().includes(currentFilter.symbol.toLowerCase())
+        );
+    }
+    
+    const selectedDate = currentFilter.date || (allDates.length > 0 ? allDates[0] : '');
+    
+    if (!selectedDate) {
+        loadingIndicator.style.display = 'none';
+        noDataMessage.innerHTML = '<i class="fas fa-exclamation-triangle me-2"></i>No analysis dates available';
+        noDataMessage.style.display = 'block';
+        return;
+    }
+    
+    // Load data for each symbol
+    Promise.all(filteredSymbols.map(symbol => loadSymbolData(symbol, selectedDate)))
+        .then(results => {
+            loadingIndicator.style.display = 'none';
+            renderSymbolsTable(results.filter(r => r !== null));
+        })
+        .catch(error => {
+            console.error('Error loading symbols:', error);
+            loadingIndicator.style.display = 'none';
+            noDataMessage.innerHTML = '<i class="fas fa-exclamation-circle me-2"></i>Error loading symbol data';
+            noDataMessage.style.display = 'block';
+        });
+}
+
+async function loadSymbolData(symbol, date) {
+    try {
+        // Try to get recommendations first (they're more important)
+        let recommendations = null;
+        try {
+            const recResponse = await fetch(`/api/recommendations/${symbol}/${date}`);
+            if (recResponse.ok) {
+                recommendations = await recResponse.json();
+            } else if (date === '20250524') {
+                // Try fallback dates if primary date doesn't work
+                const fallbackDates = ['20250416', '20250412'];
+                for (const fallbackDate of fallbackDates) {
+                    const fallbackResponse = await fetch(`/api/recommendations/${symbol}/${fallbackDate}`);
+                    if (fallbackResponse.ok) {
+                        recommendations = await fallbackResponse.json();
+                        break;
+                    }
+                }
+            }
+        } catch (e) {
+            console.log(`No recommendations for ${symbol}`);
+        }
+        
+        // Try to get backtest data
+        let backtestData = null;
+        try {
+            const response = await fetch(`/api/backtest/${symbol}/${date}`);
+            if (response.ok) {
+                backtestData = await response.json();
+            } else if (date === '20250524') {
+                // Try fallback dates for backtest
+                const fallbackDates = ['20250416', '20250412'];
+                for (const fallbackDate of fallbackDates) {
+                    const fallbackResponse = await fetch(`/api/backtest/${symbol}/${fallbackDate}`);
+                    if (fallbackResponse.ok) {
+                        backtestData = await fallbackResponse.json();
+                        break;
+                    }
+                }
+            }
+        } catch (e) {
+            console.log(`No backtest for ${symbol}`);
+        }
+        
+        // If we have either recommendations or backtest data, return the result
+        if (recommendations || backtestData) {
+            return {
+                symbol,
+                date,
+                backtest: backtestData,
+                recommendations
+            };
+        }
+        
+        // Return null if we have neither
+        return null;
+    } catch (error) {
+        console.error(`Error loading data for ${symbol}:`, error);
+        return null;
+    }
+}
+
+function renderSymbolsTable(symbolsData) {
+    const tableBody = document.getElementById('symbolsTableBody');
+    const noDataMessage = document.getElementById('noDataMessage');
+    
+    if (symbolsData.length === 0) {
+        noDataMessage.style.display = 'block';
+        return;
+    }
+    
+    noDataMessage.style.display = 'none';
+    
+    const rows = symbolsData.map(data => {
+        const recommendationInfo = getRecommendationSummary(data.recommendations);
+        const tradingInfo = getTradingInfo(data.recommendations);
+        
+        return `
+            <tr class="hover:bg-blue-50 cursor-pointer transition-colors">
+                <td class="px-4 py-3">
+                    <strong class="text-blue-600 font-semibold">${data.symbol}</strong>
+                </td>
+                <td class="px-4 py-3">
+                    <small class="text-gray-500">${formatDate(data.date)}</small>
+                </td>
+                <td class="px-4 py-3">
+                    ${tradingInfo.entryPrice}
+                </td>
+                <td class="px-4 py-3">
+                    ${tradingInfo.stopLoss}
+                </td>
+                <td class="px-4 py-3">
+                    ${tradingInfo.takeProfit}
+                </td>
+                <td class="px-4 py-3">
+                    ${recommendationInfo.html}
+                </td>
+                <td class="px-4 py-3">
+                    <div class="flex gap-1">
+                        <a href="/ticker/${data.symbol}" class="bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200 transition-colors text-sm flex items-center" title="View Detailed Analysis">
+                            <i class="fas fa-chart-line mr-1"></i>Details
+                        </a>
+                        <button class="bg-gray-100 text-gray-700 px-2 py-1 rounded hover:bg-gray-200 transition-colors text-sm" onclick="addToComparison('${data.symbol}')" title="Add to Comparison">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    tableBody.innerHTML = rows;
+}
+
+function getRecommendationSummary(recommendations) {    
+    if (!recommendations) {
+        return {
+            html: '<span class="text-gray-500"><i class="fas fa-minus mr-1"></i>No data</span>',
+            summary: 'No recommendations'
+        };
+    }
+    
+    // Handle the actual data structure from the API
+    let action = null;
+    let details = '';
+    
+    if (recommendations.recommendations && recommendations.recommendations.action) {
+        // New format: { recommendations: { action: "SELL", ... } }
+        action = recommendations.recommendations.action;
+        details = recommendations.recommendations.details || '';
+    } else if (recommendations.action) {
+        // Direct format: { action: "SELL", ... }
+        action = recommendations.action;
+        details = recommendations.details || '';
+    } else if (Array.isArray(recommendations)) {
+        // Array format: [{ action: "SELL" }, ...]
+        const actions = recommendations.map(r => r.action).filter(a => a);
+        if (actions.length > 0) {
+            action = actions[0];
+        }
+    }
+    
+    if (!action) {
+        return {
+            html: '<span class="text-gray-500"><i class="fas fa-question-circle mr-1"></i>Invalid</span>',
+            summary: 'No actionable recommendations'
+        };
+    }
+    
+    const actionColors = {
+        'BUY': 'bg-green-100 text-green-800',
+        'SELL': 'bg-red-100 text-red-800', 
+        'HOLD': 'bg-yellow-100 text-yellow-800',
+        'STRONG_BUY': 'bg-green-100 text-green-800',
+        'STRONG_SELL': 'bg-red-100 text-red-800'
+    };
+    
+    const icon = getActionIcon(action);
+    const color = actionColors[action] || 'bg-gray-100 text-gray-800';
+    
+    return {
+        html: `
+            <div class="flex items-center gap-2">
+                ${icon}
+                <span class="px-2 py-1 rounded-full text-sm font-medium ${color}">${action}</span>
+            </div>
+        `,
+        summary: action
+    };
+}
+
+function getActionIcon(action) {
+    const icons = {
+        'BUY': '<i class="fas fa-arrow-up text-green-600"></i>',
+        'SELL': '<i class="fas fa-arrow-down text-red-600"></i>',
+        'HOLD': '<i class="fas fa-pause text-yellow-600"></i>',
+        'STRONG_BUY': '<i class="fas fa-arrow-up text-green-600"></i>',
+        'STRONG_SELL': '<i class="fas fa-arrow-down text-red-600"></i>'
+    };
+    return icons[action] || '<i class="fas fa-circle text-muted me-1"></i>';
+}
+
+function formatDate(dateString) {
+    const date = new Date(dateString.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'));
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function getTradingInfo(recommendations) {
+    if (!recommendations || !recommendations.recommendations) {
+        return {
+            entryPrice: '<span class="text-gray-500 text-sm">—</span>',
+            stopLoss: '<span class="text-gray-500 text-sm">—</span>',
+            takeProfit: '<span class="text-gray-500 text-sm">—</span>'
+        };
+    }
+    
+    const rec = recommendations.recommendations;
+    
+    return {
+        entryPrice: rec.entry_price ? 
+            `<span class="text-gray-900 font-medium">$${rec.entry_price.toFixed(2)}</span>` : 
+            '<span class="text-gray-500 text-sm">—</span>',
+        stopLoss: rec.stop_loss ? 
+            `<span class="text-gray-900 font-medium">$${rec.stop_loss.toFixed(2)}</span>` : 
+            '<span class="text-gray-500 text-sm">—</span>',
+        takeProfit: rec.take_profit ? 
+            `<span class="text-gray-900 font-medium">$${rec.take_profit.toFixed(2)}</span>` : 
+            '<span class="text-gray-500 text-sm">—</span>'
+    };
+}
+
+function addToComparison(symbol) {
+    // Add to comparison functionality
+    let comparisonList = JSON.parse(localStorage.getItem('comparisonSymbols') || '[]');
+    if (!comparisonList.includes(symbol)) {
+        comparisonList.push(symbol);
+        localStorage.setItem('comparisonSymbols', JSON.stringify(comparisonList));
+        
+        // Show toast notification
+        showToast(`${symbol} added to comparison`, 'success');
+    } else {
+        showToast(`${symbol} already in comparison`, 'warning');
+    }
+}
+
+function showToast(message, type = 'info') {
+    // Simple toast notification
+    const toast = document.createElement('div');
+    toast.className = `alert alert-${type} position-fixed`;
+    toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 250px;';
+    toast.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close ms-2" onclick="this.parentElement.remove()"></button>
+    `;
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        if (toast.parentElement) {
+            toast.remove();
+        }
+    }, 3000);
+}
+
+function applyFilters() {
+    currentFilter.date = document.getElementById('dateFilter').value;
+    currentFilter.symbol = document.getElementById('symbolFilter').value;
+    loadSymbols();
+}
+
+function clearFilters() {
+    document.getElementById('dateFilter').value = '';
+    document.getElementById('symbolFilter').value = '';
+    currentFilter = { date: '', symbol: '' };
+    loadSymbols();
+}
+
+function loadLatestResults() {
+    if (allDates.length > 0) {
+        currentFilter.date = allDates[0];
+        document.getElementById('dateFilter').value = allDates[0];
+        loadSymbols();
+    }
+}
+
+function showTopPerformers() {
+    // TODO: Implement top performers filtering
+    alert('Top performers feature coming soon!');
+}
+
+function toggleFundsView() {
+    console.log('Toggling funds view, current state:', showingFundsView);
+    showingFundsView = !showingFundsView;
+    console.log('New state:', showingFundsView);
+    
+    const fundsSection = document.getElementById('fundsSection');
+    const stocksSection = document.getElementById('stocksSection');
+    const mutualFundsSection = document.getElementById('mutualFundsSection');
+    
+    console.log('Funds section:', fundsSection);
+    console.log('Stocks section:', stocksSection);
+    
+    if (showingFundsView) {
+        fundsSection.style.display = 'block';
+        stocksSection.style.display = 'none';
+        mutualFundsSection.style.display = 'none';
+        loadFundsData();
+    } else {
+        fundsSection.style.display = 'none';
+        stocksSection.style.display = 'block';
+    }
+}
+
+async function loadFundsData() {
+    console.log('Loading funds data...');
+    const loadingIndicator = document.getElementById('fundsLoadingIndicator');
+    const tableBody = document.getElementById('fundsTableBody');
+    const noDataMessage = document.getElementById('fundsNoDataMessage');
+    
+    loadingIndicator.style.display = 'block';
+    tableBody.innerHTML = '';
+    noDataMessage.style.display = 'none';
+    
+    const selectedDate = document.getElementById('dateFilter').value || allDates[0];
+    console.log('Selected date:', selectedDate);
+    
+    const fundSymbols = FUND_SYMBOLS.filter(symbol => allSymbols.includes(symbol));
+    console.log('Fund symbols to load:', fundSymbols);
+    
+    // Load data for fund symbols (recommendations only, no backtest needed)
+    Promise.all(fundSymbols.map(symbol => loadFundSymbolData(symbol, selectedDate)))
+        .then(results => {
+            console.log('Fund results:', results);
+            loadingIndicator.style.display = 'none';
+            const validResults = results.filter(r => r !== null);
+            console.log('Valid fund results:', validResults);
+            renderFundsTable(validResults);
+        })
+        .catch(error => {
+            console.error('Error loading funds:', error);
+            loadingIndicator.style.display = 'none';
+            noDataMessage.innerHTML = '<i class="fas fa-exclamation-circle me-2"></i>Error loading fund data';
+            noDataMessage.style.display = 'block';
+        });
+}
+
+async function loadFundSymbolData(symbol, date) {
+    try {
+        // For funds, we only need recommendation data
+        const response = await fetch(`/api/recommendations/${symbol}/${date}`);
+        if (response.ok) {
+            const recommendations = await response.json();
+            return {
+                symbol: symbol,
+                date: date,
+                recommendations: recommendations
+            };
+        } else if (date === '20250524') {
+            // Try fallback dates if primary date doesn't work
+            const fallbackDates = ['20250416', '20250412'];
+            for (const fallbackDate of fallbackDates) {
+                const fallbackResponse = await fetch(`/api/recommendations/${symbol}/${fallbackDate}`);
+                if (fallbackResponse.ok) {
+                    const recommendations = await fallbackResponse.json();
+                    return {
+                        symbol: symbol,
+                        date: fallbackDate,
+                        recommendations: recommendations
+                    };
+                }
+            }
+        }
+        return null;
+    } catch (error) {
+        console.error(`Error loading data for ${symbol}:`, error);
+        return null;
+    }
+}
+
+function renderFundsTable(fundsData) {
+    const tableBody = document.getElementById('fundsTableBody');
+    const noDataMessage = document.getElementById('fundsNoDataMessage');
+    
+    if (fundsData.length === 0) {
+        noDataMessage.style.display = 'block';
+        return;
+    }
+    
+    noDataMessage.style.display = 'none';
+    
+    const rows = fundsData.map(data => {
+        const reinvestmentInfo = getReinvestmentInfo(data.recommendations);
+        const currentPrice = data.recommendations?.recommendations?.entry_price;
+        
+        return `
+            <tr class="table-row-hover">
+                <td>
+                    <strong class="text-blue-600">${data.symbol}</strong>
+                    <br><small class="text-muted">${getFundType(data.symbol)}</small>
+                </td>
+                <td>
+                    ${currentPrice ? `<span class="text-gray-900 font-medium">$${currentPrice.toFixed(2)}</span>` : '<span class="text-muted">-</span>'}
+                </td>
+                <td>
+                    ${reinvestmentInfo.targetZone}
+                </td>
+                <td>
+                    ${reinvestmentInfo.buyRange}
+                </td>
+                <td>
+                    ${reinvestmentInfo.riskLevel}
+                </td>
+                <td>
+                    ${reinvestmentInfo.strategy}
+                </td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        <a href="/symbol/${data.symbol}/${data.date}" class="btn btn-outline-info btn-sm" title="View Details">
+                            <i class="fas fa-eye"></i>
+                        </a>
+                        <button class="btn btn-outline-success btn-sm" onclick="addToWatchlist('${data.symbol}')" title="Add to Watchlist">
+                            <i class="fas fa-bookmark"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    tableBody.innerHTML = rows;
+}
+
+function getReinvestmentInfo(recommendations) {
+    if (!recommendations || !recommendations.recommendations) {
+        return {
+            targetZone: '<span class="text-muted"><i class="fas fa-minus me-1"></i>No data</span>',
+            buyRange: '<span class="text-muted"><i class="fas fa-minus me-1"></i>No data</span>',
+            riskLevel: '<span class="text-gray-600 bg-gray-100 px-2 py-1 rounded text-sm">Unknown</span>',
+            strategy: '<span class="text-muted">Hold current position</span>'
+        };
+    }
+    
+    const rec = recommendations.recommendations;
+    const action = rec.action;
+    
+    if (action === 'BUY' || action === 'STRONG_BUY') {
+        const entryPrice = rec.entry_price;
+        const stopLoss = rec.stop_loss;
+        const targetLow = entryPrice * 0.95; // 5% below entry for accumulation
+        const targetHigh = entryPrice * 1.02; // 2% above entry for fair value
+        
+        return {
+            targetZone: `<div class="text-center">
+                <span class="text-gray-900 font-medium">$${targetLow.toFixed(2)} - $${targetHigh.toFixed(2)}</span>
+                <br><small class="text-green-600">Accumulation Zone</small>
+            </div>`,
+            buyRange: `<div class="text-center">
+                <span class="text-gray-900 font-medium">$${entryPrice.toFixed(2)}</span>
+                <br><small class="text-gray-500">Primary entry</small>
+            </div>`,
+            riskLevel: '<span class="text-green-600 bg-green-50 px-2 py-1 rounded text-sm">Low</span>',
+            strategy: '<div class="text-center"><i class="fas fa-plus-circle text-green-600 mr-1"></i>Dollar-cost average<br><small class="text-gray-500">Weekly/Monthly buys</small></div>'
+        };
+    } else if (action === 'SELL' || action === 'STRONG_SELL') {
+        return {
+            targetZone: '<span class="text-yellow-600 bg-yellow-50 px-2 py-1 rounded text-sm">Wait for dip</span>',
+            buyRange: '<span class="text-gray-500">Not recommended</span>',
+            riskLevel: '<span class="text-yellow-600 bg-yellow-50 px-2 py-1 rounded text-sm">Medium</span>',
+            strategy: '<div class="text-center"><i class="fas fa-pause text-yellow-600 mr-1"></i>Pause investing<br><small class="text-gray-500">Wait for better entry</small></div>'
+        };
+    } else {
+        return {
+            targetZone: '<span class="text-blue-600 bg-blue-50 px-2 py-1 rounded text-sm">Hold current levels</span>',
+            buyRange: '<span class="text-gray-500">Current price acceptable</span>',
+            riskLevel: '<span class="text-blue-600 bg-blue-50 px-2 py-1 rounded text-sm">Low</span>',
+            strategy: '<div class="text-center"><i class="fas fa-equals text-blue-600 mr-1"></i>Continue regular investing<br><small class="text-gray-500">Maintain schedule</small></div>'
+        };
+    }
+}
+
+function getCurrentPriceFromBacktest(backtestData) {
+    // Try to extract current price from backtest data
+    if (!backtestData) return null;
+    
+    for (const [strategyName, data] of Object.entries(backtestData)) {
+        if (data && data.final_balance && data.total_trades) {
+            // Estimate current price from final balance and trades
+            return data.final_balance / 100; // Rough estimate
+        }
+    }
+    return null;
+}
+
+function getFundType(symbol) {
+    const fundTypes = {
+        'EWJ': 'Japan ETF',
+        'EWZ': 'Brazil ETF', 
+        'FDEGX': 'Emerging Markets Fund',
+        'FDN': 'Internet ETF',
+        'FEZ': 'Europe ETF',
+        'INDA': 'India ETF',
+        'IWF': 'Large Cap Growth ETF',
+        'KMKNX': 'International Fund',
+        'MCHI': 'China ETF',
+        'QQQ': 'NASDAQ ETF',
+        'SPYG': 'S&P Growth ETF',
+        'VEA': 'International ETF',
+        'VGT': 'Technology ETF',
+        'VUG': 'Growth ETF',
+        'VWO': 'Emerging Markets ETF'
+    };
+    return fundTypes[symbol] || 'Investment Fund';
+}
+
+function addToWatchlist(symbol) {
+    // Add to watchlist functionality
+    let watchlist = JSON.parse(localStorage.getItem('watchlistSymbols') || '[]');
+    if (!watchlist.includes(symbol)) {
+        watchlist.push(symbol);
+        localStorage.setItem('watchlistSymbols', JSON.stringify(watchlist));
+        showToast(`${symbol} added to watchlist`, 'success');
+    } else {
+        showToast(`${symbol} already in watchlist`, 'warning');
+    }
+}
+
+function toggleMutualFundsView() {
+    console.log('Toggling mutual funds view');
+    const mutualFundsSection = document.getElementById('mutualFundsSection');
+    const stocksSection = document.getElementById('stocksSection');
+    const fundsSection = document.getElementById('fundsSection');
+
+    mutualFundsSection.style.display = 'block';
+    stocksSection.style.display = 'none';
+    fundsSection.style.display = 'none';
+
+    loadMutualFundsData();
+}
+
+async function loadMutualFundsData() {
+    console.log('Loading mutual funds data...');
+    const debugText = document.getElementById('debugText');
+    
+    if (debugText) {
+        debugText.innerHTML = 'Loading mutual funds data...';
+    }
+    
+    console.log('allSymbols:', allSymbols);
+    console.log('allDates:', allDates);
+    console.log('FUND_SYMBOLS:', FUND_SYMBOLS);
+    
+    const loadingIndicator = document.getElementById('mutualFundsLoadingIndicator');
+    const tableBody = document.getElementById('mutualFundsTableBody');
+    const noDataMessage = document.getElementById('mutualFundsNoDataMessage');
+
+    console.log('Elements found:');
+    console.log('loadingIndicator:', loadingIndicator);
+    console.log('tableBody:', tableBody);
+    console.log('noDataMessage:', noDataMessage);
+    
+    if (debugText) {
+        debugText.innerHTML = `Found elements: table=${!!tableBody}, loading=${!!loadingIndicator}, noData=${!!noDataMessage}`;
+    }
+
+    if (!tableBody) {
+        console.error('Table body not found!');
+        if (debugText) debugText.innerHTML = 'ERROR: Table body element not found!';
+        return;
+    }
+
+    loadingIndicator.style.display = 'block';
+    tableBody.innerHTML = '';
+    noDataMessage.style.display = 'none';
+
+    const selectedDate = document.getElementById('dateFilter').value || allDates[0];
+    const mutualFundSymbols = FUND_SYMBOLS.filter(symbol => allSymbols.includes(symbol));
+    
+    console.log('selectedDate:', selectedDate);
+    console.log('mutualFundSymbols:', mutualFundSymbols);
+    
+    if (debugText) {
+        debugText.innerHTML = `Loading ${mutualFundSymbols.length} symbols for date ${selectedDate}`;
+    }
+
+    Promise.all(mutualFundSymbols.map(symbol => loadFundSymbolData(symbol, selectedDate)))
+        .then(results => {
+            console.log('Raw results:', results);
+            loadingIndicator.style.display = 'none';
+            const validResults = results.filter(r => r !== null);
+            console.log('Valid mutual fund results:', validResults);
+            
+            if (debugText) {
+                debugText.innerHTML = `Loaded ${validResults.length} valid results out of ${results.length} total`;
+            }
+            
+            renderMutualFundsTable(validResults);
+        })
+        .catch(error => {
+            console.error('Error loading mutual funds:', error);
+            loadingIndicator.style.display = 'none';
+            noDataMessage.style.display = 'block';
+            
+            if (debugText) {
+                debugText.innerHTML = `ERROR: ${error.message}`;
+            }
+        });
+}
+
+function renderMutualFundsTable(fundsData) {
+    console.log('renderMutualFundsTable called with:', fundsData);
+    const debugText = document.getElementById('debugText');
+    const tableBody = document.getElementById('mutualFundsTableBody');
+    const noDataMessage = document.getElementById('mutualFundsNoDataMessage');
+
+    console.log('Render elements:');
+    console.log('tableBody:', tableBody);
+    console.log('noDataMessage:', noDataMessage);
+    
+    if (debugText) {
+        debugText.innerHTML = `Rendering ${fundsData.length} funds`;
+    }
+
+    if (fundsData.length === 0) {
+        console.log('No funds data, showing no data message');
+        noDataMessage.style.display = 'block';
+        if (debugText) {
+            debugText.innerHTML = 'No fund data available';
+        }
+        return;
+    }
+
+    console.log('Rendering', fundsData.length, 'funds');
+    noDataMessage.style.display = 'none';
+
+    const rows = fundsData.map(data => {
+        console.log('Processing fund data:', data);
+        const reinvestmentInfo = getReinvestmentInfo(data.recommendations);
+        const currentPrice = data.recommendations?.recommendations?.entry_price;
+        console.log('Reinvestment info:', reinvestmentInfo);
+        console.log('Current price:', currentPrice);
+
+        return `
+            <tr class="table-row-hover">
+                <td>
+                    <strong class="text-blue-600">${data.symbol}</strong>
+                    <br><small class="text-muted">${getFundType(data.symbol)}</small>
+                </td>
+                <td>
+                    ${currentPrice ? `<span class="text-gray-900 font-medium">$${currentPrice.toFixed(2)}</span>` : '<span class="text-muted">-</span>'}
+                </td>
+                <td>
+                    ${reinvestmentInfo.targetZone}
+                </td>
+                <td>
+                    ${reinvestmentInfo.buyRange}
+                </td>
+                <td>
+                    ${reinvestmentInfo.riskLevel}
+                </td>
+                <td>
+                    ${reinvestmentInfo.strategy}
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-outline-info" onclick="addToWatchlist('${data.symbol}')">
+                        <i class="fas fa-star"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    console.log('Generated HTML rows:', rows);
+    tableBody.innerHTML = rows;
+    console.log('Table body HTML set successfully');
+    
+    if (debugText) {
+        debugText.innerHTML = `Successfully rendered ${fundsData.length} mutual funds`;
+    }
+}
+
+function debugMutualFunds() {
+    console.log('=== MANUAL DEBUG TEST ===');
+    console.log('allSymbols:', allSymbols);
+    console.log('allDates:', allDates);
+    console.log('FUND_SYMBOLS:', FUND_SYMBOLS);
+    
+    const availableFundSymbols = FUND_SYMBOLS.filter(symbol => allSymbols.includes(symbol));
+    console.log('Available fund symbols:', availableFundSymbols);
+    
+    // Test elements
+    const mutualFundsSection = document.getElementById('mutualFundsSection');
+    const tableBody = document.getElementById('mutualFundsTableBody');
+    const loadingIndicator = document.getElementById('mutualFundsLoadingIndicator');
+    
+    console.log('Elements check:');
+    console.log('mutualFundsSection:', mutualFundsSection);
+    console.log('tableBody:', tableBody);
+    console.log('loadingIndicator:', loadingIndicator);
+    
+    // Manually call the loading function
+    console.log('Calling loadMutualFundsData()...');
+    loadMutualFundsData();
+}
+
+// Ticker Management Functions
+function showTickerStatus(message, type = 'info') {
+    const statusDiv = document.getElementById('tickerManagementStatus');
+    const statusMessage = document.getElementById('statusMessage');
+    
+    statusMessage.textContent = message;
+    statusDiv.className = `alert alert-${type}`;
+    statusDiv.classList.remove('d-none');
+    
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        statusDiv.classList.add('d-none');
+    }, 5000);
+}
+
+function updateTickerCount() {
+    const countBadge = document.getElementById('tickerCount');
+    if (countBadge) {
+        countBadge.textContent = `${allSymbols.length} Tracked`;
+    }
+}
+
+function updateTickersList() {
+    const tickersList = document.getElementById('tickersList');
+    const removeSelect = document.getElementById('removeTickerSelect');
+    
+    if (tickersList) {
+        tickersList.innerHTML = allSymbols.map(symbol => 
+            `<span class="bg-blue-600 text-white px-3 py-1 rounded-full text-sm font-medium cursor-pointer hover:bg-blue-700 ticker-badge" title="Click to remove" 
+                   onclick="quickRemoveTicker('${symbol}')">
+                ${symbol} <i class="fas fa-times ms-1"></i>
+            </span>`
+        ).join('');
+    }
+    
+    if (removeSelect) {
+        removeSelect.innerHTML = '<option value="">Select ticker to remove...</option>' +
+            allSymbols.map(symbol => 
+                `<option value="${symbol}">${symbol}</option>`
+            ).join('');
+    }
+}
+
+async function addTicker() {
+    const input = document.getElementById('newTickerInput');
+    const symbol = input.value.trim().toUpperCase();
+    
+    if (!symbol) {
+        showTickerStatus('Please enter a ticker symbol', 'warning');
+        return;
+    }
+    
+    if (allSymbols.includes(symbol)) {
+        showTickerStatus(`${symbol} is already being tracked`, 'warning');
+        return;
+    }
+    
+    showTickerStatus(`Adding ${symbol}...`, 'info');
+    
+    try {
+        const response = await fetch('/api/add_ticker', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ symbol: symbol })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            allSymbols.push(symbol);
+            updateTickerCount();
+            updateTickersList();
+            input.value = '';
+            showTickerStatus(`Successfully added ${symbol}!`, 'success');
+            
+            // Refresh the main table
+            loadResults();
+        } else {
+            showTickerStatus(`Failed to add ${symbol}: ${result.error}`, 'danger');
+        }
+    } catch (error) {
+        console.error('Error adding ticker:', error);
+        showTickerStatus(`Error adding ${symbol}: ${error.message}`, 'danger');
+    }
+}
+
+async function removeTicker() {
+    const select = document.getElementById('removeTickerSelect');
+    const symbol = select.value;
+    
+    if (!symbol) {
+        showTickerStatus('Please select a ticker to remove', 'warning');
+        return;
+    }
+    
+    if (confirm(`Are you sure you want to remove ${symbol} from your watchlist?`)) {
+        await removeTickerFromSystem(symbol);
+    }
+}
+
+async function quickRemoveTicker(symbol) {
+    if (confirm(`Remove ${symbol} from your watchlist?`)) {
+        await removeTickerFromSystem(symbol);
+    }
+}
+
+async function removeTickerFromSystem(symbol) {
+    showTickerStatus(`Removing ${symbol}...`, 'info');
+    
+    try {
+        const response = await fetch('/api/remove_ticker', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ symbol: symbol })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            allSymbols = allSymbols.filter(s => s !== symbol);
+            updateTickerCount();
+            updateTickersList();
+            showTickerStatus(`Successfully removed ${symbol}`, 'success');
+            
+            // Refresh the main table
+            loadResults();
+        } else {
+            showTickerStatus(`Failed to remove ${symbol}: ${result.error}`, 'danger');
+        }
+    } catch (error) {
+        console.error('Error removing ticker:', error);
+        showTickerStatus(`Error removing ${symbol}: ${error.message}`, 'danger');
+    }
+}
+
+function handleAddTickerKeypress(event) {
+    if (event.key === 'Enter') {
+        addTicker();
+    }
+}
+
+async function addPopularTicker(symbol) {
+    const input = document.getElementById('newTickerInput');
+    input.value = symbol;
+    await addTicker();
+}
+
+async function addTechStocks() {
+    const techStocks = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'META', 'NVDA', 'AMD'];
+    await addMultipleTickers(techStocks, 'tech stocks');
+}
+
+async function addBankStocks() {
+    const bankStocks = ['JPM', 'BAC', 'WFC', 'C', 'GS', 'MS'];
+    await addMultipleTickers(bankStocks, 'bank stocks');
+}
+
+async function addETFs() {
+    const etfs = ['SPY', 'QQQ', 'IWM', 'VTI', 'VOO', 'ARKK'];
+    await addMultipleTickers(etfs, 'popular ETFs');
+}
+
+async function addMultipleTickers(symbols, category) {
+    const newSymbols = symbols.filter(symbol => !allSymbols.includes(symbol));
+    
+    if (newSymbols.length === 0) {
+        showTickerStatus(`All ${category} are already tracked`, 'info');
+        return;
+    }
+    
+    showTickerStatus(`Adding ${newSymbols.length} ${category}...`, 'info');
+    
+    let successCount = 0;
+    let errors = [];
+    
+    for (const symbol of newSymbols) {
+        try {
+            const response = await fetch('/api/add_ticker', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ symbol: symbol })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                allSymbols.push(symbol);
+                successCount++;
+            } else {
+                errors.push(`${symbol}: ${result.error}`);
+            }
+        } catch (error) {
+            errors.push(`${symbol}: ${error.message}`);
+        }
+    }
+    
+    updateTickerCount();
+    updateTickersList();
+    
+    if (successCount > 0) {
+        showTickerStatus(`Successfully added ${successCount} ${category}!`, 'success');
+        loadResults();
+    }
+    
+    if (errors.length > 0) {
+        console.error('Errors adding tickers:', errors);
+        setTimeout(() => {
+            showTickerStatus(`Some errors occurred: ${errors.slice(0, 2).join(', ')}`, 'warning');
+        }, 2000);
+    }
+}
+
+function exportTickerList() {
+    const tickerData = {
+        symbols: allSymbols,
+        count: allSymbols.length,
+        exported_at: new Date().toISOString(),
+        system: 'Stock Analysis Dashboard'
+    };
+    
+    const dataStr = JSON.stringify(tickerData, null, 2);
+    const dataBlob = new Blob([dataStr], {type: 'application/json'});
+    
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(dataBlob);
+    link.download = `ticker_list_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    
+    showTickerStatus('Ticker list exported successfully!', 'success');
+}
+</script>
+{% endblock %}

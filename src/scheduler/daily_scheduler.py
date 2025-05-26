@@ -23,6 +23,7 @@ from storage.timeseries_db import TimeSeriesDB
 from storage.models import DailySnapshot
 from analysis.aggregation import DataAggregator
 from market_calendar.market_calendar import MarketCalendar, MarketType, is_trading_day
+from market_data.market_data import MarketData
 
 # Ensure logs directory exists
 os.makedirs('logs', exist_ok=True)
@@ -44,32 +45,60 @@ class MarketDataCollector:
     
     def __init__(self):
         self.db = TimeSeriesDB()
+        self.market_data = MarketData()
     
     def fetch_latest_data(self, symbol: str, date: Optional[datetime] = None) -> Optional[DailySnapshot]:
         """
-        Fetch latest market data for a symbol
-        NOTE: This is a placeholder - real implementation would use actual market data API
+        Fetch latest market data for a symbol using Yahoo Finance API
         """
         if date is None:
             date = datetime.now()
         
-        # For now, simulate data - in real implementation, this would call:
-        # - Alpha Vantage API
-        # - Yahoo Finance API  
-        # - IEX Cloud API
-        # - etc.
-        
         logger.info(f"Fetching data for {symbol} on {date.date()}")
         
         # Check if we already have data for this date
-        existing_data = self.db.get_daily_snapshot(symbol, date.strftime('%Y-%m-%d'))
+        date_str = date.strftime('%Y-%m-%d')
+        existing_data = self.db.get_daily_snapshot(symbol, date_str)
         if existing_data:
             logger.info(f"Data already exists for {symbol} on {date.date()}")
             return existing_data
         
-        # Simulate API call - replace with real implementation
-        logger.warning(f"Simulated data fetch for {symbol} - replace with real API call")
-        return None
+        try:
+            # Use the real market data API
+            # Fetch data for a 5-day window to ensure we get the latest trading day
+            end_date = date
+            start_date = date - timedelta(days=5)
+            
+            historical_data = self.market_data.get_batch_data([symbol], start_date, end_date, force_refresh=True)
+            
+            if symbol in historical_data and historical_data[symbol] and historical_data[symbol].data_points:
+                # Get the most recent data point
+                latest_point = historical_data[symbol].data_points[-1]
+                
+                # Convert to DailySnapshot
+                daily_snapshot = DailySnapshot(
+                    symbol=symbol,
+                    date=latest_point.date,
+                    open=latest_point.open,
+                    high=latest_point.high,
+                    low=latest_point.low,
+                    close=latest_point.close,
+                    volume=latest_point.volume,
+                    adjusted_close=latest_point.close,  # Using close as adjusted_close for now
+                    strategy_signals={}
+                )
+                
+                # Store in database
+                self.db.save_daily_snapshot(daily_snapshot)
+                logger.info(f"Successfully fetched and stored data for {symbol}")
+                return daily_snapshot
+            else:
+                logger.warning(f"No data returned for {symbol}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to fetch data for {symbol}: {e}")
+            return None
     
     def fetch_all_symbols(self, symbols: List[str], date: Optional[datetime] = None) -> Dict[str, Optional[DailySnapshot]]:
         """Fetch data for all symbols"""

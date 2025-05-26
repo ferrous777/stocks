@@ -134,13 +134,13 @@ pip install -r requirements.txt
 
 # 5. Set up scheduled task
 # Add to PythonAnywhere Tasks tab:
-# cd /home/yourusername/stocks && python3.10 pythonanywhere_daily_hook.py
+# cd /home/yourusername/stocks && python3.10 dev-tools/pythonanywhere_daily_hook.py
 ```
 
 #### Deployment Validation
 ```bash
 # Test manual execution
-python3.10 pythonanywhere_daily_hook.py --force
+python3.10 dev-tools/pythonanywhere_daily_hook.py --force
 
 # Verify web interface
 curl https://yourusername.pythonanywhere.com/health
@@ -328,7 +328,7 @@ python detect_gaps.py --start 2024-01-01
 tail -50 logs/pythonanywhere_daily.log
 
 # Test manual execution
-python pythonanywhere_daily_hook.py --force
+python dev-tools/pythonanywhere_daily_hook.py --force
 ```
 
 **Solutions**:

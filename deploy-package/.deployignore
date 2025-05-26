@@ -1,0 +1,37 @@
+# PythonAnywhere Deployment Ignore File
+# This file specifies what should NOT be uploaded to PythonAnywhere
+# Note: dev-tools/ is tracked in git but excluded from production deployment
+# Note: pythonanywhere_daily_hook.py is in root for production deployment
+
+# Development tools and scripts (keep in git, exclude from production)
+dev-tools/
+
+# Local development environment
+venv/
+.vscode/
+__pycache__/
+
+# Generated/cached data
+cache/
+results/
+logs/
+
+# Local configuration
+.env
+.DS_Store
+
+# Git repository
+.git/
+.gitignore
+
+# Documentation (keep README.md for basic info)
+# README.md is kept for basic project info on PythonAnywhere
+
+# Python cache files
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+.Python
+*.egg-info/

@@ -61,7 +61,7 @@ Test the PythonAnywhere hook script to ensure it works:
 
 ```bash
 cd ~/stocks
-python3.10 pythonanywhere_daily_hook.py --force
+python3.10 dev-tools/pythonanywhere_daily_hook.py --force
 ```
 
 This will run the daily workflow regardless of whether it's a trading day.
@@ -76,7 +76,7 @@ This will run the daily workflow regardless of whether it's a trading day.
 
 **Command:**
 ```bash
-/home/yourusername/stocks/pythonanywhere_daily_hook.py
+/home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py
 ```
 
 **Time:** 
@@ -94,7 +94,7 @@ Free accounts can set up one daily task. Use the same command as above.
 If you need a specific Python version:
 
 ```bash
-python3.9 /home/yourusername/stocks/pythonanywhere_daily_hook.py
+python3.9 /home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py
 ```
 
 ### Using Virtual Environment
@@ -102,18 +102,18 @@ python3.9 /home/yourusername/stocks/pythonanywhere_daily_hook.py
 If you're using a virtual environment:
 
 ```bash
-source virtualenvwrapper.sh && workon myenv && python /home/yourusername/stocks/pythonanywhere_daily_hook.py
+source virtualenvwrapper.sh && workon myenv && python /home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py
 ```
 
 Or using the direct path to the venv python:
 
 ```bash
-/home/yourusername/.virtualenvs/myenv/bin/python /home/yourusername/stocks/pythonanywhere_daily_hook.py
+/home/yourusername/.virtualenvs/myenv/bin/python /home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py
 ```
 
 ## Features of the PythonAnywhere Hook
 
-The `pythonanywhere_daily_hook.py` script includes:
+The `dev-tools/pythonanywhere_daily_hook.py` script includes:
 
 ### Market Calendar Integration
 - Automatically skips weekends and holidays
@@ -166,7 +166,7 @@ You can always run the script manually to test:
 
 ```bash
 cd ~/stocks
-python3.10 pythonanywhere_daily_hook.py --force
+python3.10 dev-tools/pythonanywhere_daily_hook.py --force
 ```
 
 ### Log Files
@@ -195,7 +195,7 @@ Check the following log files for detailed information:
 ### Force Execution
 To run on non-trading days:
 ```bash
-python3.10 pythonanywhere_daily_hook.py --force
+python3.10 dev-tools/pythonanywhere_daily_hook.py --force
 ```
 
 ### Different Time Zones

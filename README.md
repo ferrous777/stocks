@@ -127,28 +127,28 @@ reports/
 ### Local Development
 ```bash
 # Run daily workflow manually
-python scheduler_cli.py run
+python dev-tools/scheduler_cli.py run
 
 # Backfill historical data
-python scheduler_cli.py backfill 2024-01-01 2024-12-31
+python dev-tools/scheduler_cli.py backfill 2024-01-01 2024-12-31
 
 # Check system status
-python scheduler_cli.py status
+python dev-tools/scheduler_cli.py status
 
 # Update symbol configuration
-python update_symbols.py
+python dev-tools/update_symbols.py
 ```
 
 ### Configuration Management
 ```bash
 # View current symbols
-python config_cli.py list-symbols
+python dev-tools/config_cli.py list-symbols
 
 # Add new symbol
-python config_cli.py add-symbol TSLA --priority 1 --sector Technology
+python dev-tools/config_cli.py add-symbol TSLA --priority 1 --sector Technology
 
 # View aggregated data
-python analysis_cli.py monthly AAPL --start-date 2024-01-01
+python dev-tools/analysis_cli.py monthly AAPL --start-date 2024-01-01
 ```
 
 ## 📚 Documentation

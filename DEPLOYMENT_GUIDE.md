@@ -9,6 +9,7 @@ The project has been reorganized for clean PythonAnywhere deployment:
 /
 ├── app.py                 # Main Flask application
 ├── wsgi.py               # WSGI entry point for PythonAnywhere
+├── pythonanywhere_daily_hook.py  # Production scheduler
 ├── requirements.txt      # Python dependencies
 ├── README.md            # Basic project documentation
 ├── config/              # Configuration files
@@ -49,6 +50,7 @@ tar -czf stocks-app.tar.gz -C deploy-package .
 Upload only these essential directories and files:
 - `app.py`
 - `wsgi.py` 
+- `pythonanywhere_daily_hook.py`
 - `requirements.txt`
 - `src/`
 - `templates/`

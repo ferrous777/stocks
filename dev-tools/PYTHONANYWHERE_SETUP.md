@@ -5,7 +5,7 @@
 Your stock analysis system is already optimized for PythonAnywhere deployment with:
 
 - **Market Calendar Integration**: Automatically skips weekends and holidays
-- **Smart Scheduling Hook**: `pythonanywhere_daily_hook.py` 
+- **Smart Scheduling Hook**: `dev-tools/pythonanywhere_daily_hook.py` 
 - **Comprehensive Logging**: Detailed execution logs and reports
 - **Error Handling**: Graceful failure modes and recovery
 - **Working Directory Management**: Handles PythonAnywhere environment properly
@@ -39,7 +39,7 @@ Test your daily hook to ensure everything works:
 
 ```bash
 cd ~/stocks
-python3.10 pythonanywhere_daily_hook.py --force
+python3.10 dev-tools/pythonanywhere_daily_hook.py --force
 ```
 
 ### 4. Set Up Scheduled Task
@@ -49,7 +49,7 @@ python3.10 pythonanywhere_daily_hook.py --force
 
 **Command:**
 ```
-/home/yourusername/stocks/pythonanywhere_daily_hook.py
+/home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py
 ```
 
 **Schedule:** Daily at 6:00 PM EST (after market close)
@@ -134,7 +134,7 @@ cat logs/daily_reports/report_$(date +%Y-%m-%d).txt
 ### Manual Test Run
 ```bash
 cd ~/stocks
-python3.10 pythonanywhere_daily_hook.py --force
+python3.10 dev-tools/pythonanywhere_daily_hook.py --force
 ```
 
 ## 🔍 Troubleshooting
@@ -146,7 +146,7 @@ python3.10 pythonanywhere_daily_hook.py --force
 - Check Python path setup in the script
 
 **Permission Errors:**
-- Make the script executable: `chmod +x pythonanywhere_daily_hook.py`
+- Make the script executable: `chmod +x dev-tools/pythonanywhere_daily_hook.py`
 
 **Database Issues:**
 - Initialize database: `python3.10 -c "from src.storage.timeseries_db import TimeSeriesDB; TimeSeriesDB()"`
