@@ -1,20 +1,3 @@
 [
-    "AAPL",
-    "MSFT",
-    "GOOGL",
-    "AMZN",
-    "NVDA",
-    "AVGO",
-    "CRM",
-    "ADBE",
-    "NOW",
-    "AMD",
-    "ACN",
-    "IBM",
-    "COST",    
-    "HALO",
-    "CPRX",
-    "CORT",
-    "EXEL",
-    "LGND"
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "COST"
 ]

@@ -1,0 +1,575 @@
+{% extends "base.html" %}
+
+{% block title %}Compare Symbols{% endblock %}
+
+{% block content %}
+<div class="mb-8">
+    <div class="w-full">
+        <div class="bg-white rounded-xl shadow-lg">
+            <div class="border-b border-gray-200 px-6 py-4">
+                <h4 class="text-lg font-semibold text-gray-900 flex items-center">
+                    <i class="fas fa-balance-scale mr-2 text-blue-600"></i>
+                    Symbol Comparison
+                </h4>
+            </div>
+            <div class="p-6">
+                <p class="text-lg text-gray-600 mb-6">Compare performance across multiple symbols and strategies.</p>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label for="comparisonDate" class="block text-sm font-medium text-gray-700 mb-2">Analysis Date</label>
+                        <select id="comparisonDate" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            {% for date in dates %}
+                            <option value="{{ date }}" {% if loop.first %}selected{% endif %}>{{ date }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label for="comparisonStrategy" class="block text-sm font-medium text-gray-700 mb-2">Strategy Focus</label>
+                        <select id="comparisonStrategy" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            <option value="all">All Strategies</option>
+                            <option value="RSI Strategy">RSI Strategy</option>
+                            <option value="MACD Strategy">MACD Strategy</option>
+                            <option value="Bollinger Bands">Bollinger Bands</option>
+                            <option value="Trend Following">Trend Following</option>
+                            <option value="Volume-Price Analysis">Volume-Price Analysis</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="mt-6 flex flex-wrap gap-3">
+                    <button class="bg-gradient-primary text-white px-6 py-2 rounded-full hover:shadow-lg transition-all duration-300 flex items-center space-x-2" onclick="loadComparison()">
+                        <i class="fas fa-sync"></i>
+                        <span>Load Comparison</span>
+                    </button>
+                    <button class="border border-gray-300 text-gray-700 px-6 py-2 rounded-full hover:bg-gray-50 transition-all duration-300 flex items-center space-x-2" onclick="exportResults()">
+                        <i class="fas fa-download"></i>
+                        <span>Export Results</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="comparisonResults" style="display: none;">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <div class="lg:col-span-2">
+            <div class="bg-white rounded-xl shadow-lg">
+                <div class="border-b border-gray-200 px-6 py-4">
+                    <h5 class="text-lg font-semibold text-gray-900 flex items-center">
+                        <i class="fas fa-chart-bar mr-2 text-blue-600"></i>
+                        Performance Comparison
+                    </h5>
+                </div>
+                <div class="p-6">
+                    <canvas id="comparisonChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div>
+            <div class="bg-white rounded-xl shadow-lg">
+                <div class="border-b border-gray-200 px-6 py-4">
+                    <h5 class="text-lg font-semibold text-gray-900 flex items-center">
+                        <i class="fas fa-trophy mr-2 text-yellow-500"></i>
+                        Top Performers
+                    </h5>
+                </div>
+                <div class="p-6" id="topPerformers">
+                    <!-- Top performers will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div>
+            <div class="bg-white rounded-xl shadow-lg">
+                <div class="border-b border-gray-200 px-6 py-4">
+                    <h5 class="text-lg font-semibold text-gray-900 flex items-center">
+                        <i class="fas fa-percentage mr-2 text-green-600"></i>
+                        Win Rate Analysis
+                    </h5>
+                </div>
+                <div class="p-6">
+                    <canvas id="winRateComparisonChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div>
+            <div class="bg-white rounded-xl shadow-lg">
+                <div class="border-b border-gray-200 px-6 py-4">
+                    <h5 class="text-lg font-semibold text-gray-900 flex items-center">
+                        <i class="fas fa-exchange-alt mr-2 text-purple-600"></i>
+                        Trading Activity
+                    </h5>
+                </div>
+                <div class="p-6">
+                    <canvas id="tradingActivityChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mb-8">
+        <div class="bg-white rounded-xl shadow-lg">
+            <div class="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+                <h5 class="text-lg font-semibold text-gray-900 flex items-center">
+                    <i class="fas fa-table mr-2 text-blue-600"></i>
+                    Detailed Comparison
+                </h5>
+                <div class="flex bg-gray-100 rounded-lg p-1">
+                    <button class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 bg-blue-600 text-white" onclick="showTable('summary')">Summary</button>
+                    <button class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 text-gray-600 hover:text-blue-600" onclick="showTable('detailed')">Detailed</button>
+                </div>
+            </div>
+            <div class="p-6">
+                <div id="comparisonTable">
+                    <!-- Comparison table will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="loadingSpinner" class="text-center" style="display: none;">
+    <div class="loading">
+        <i class="fas fa-spinner"></i>
+        <p>Loading comparison data...</p>
+    </div>
+</div>
+
+<div id="noDataMessage" class="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center" style="display: none;">
+    <i class="fas fa-info-circle mr-2 text-blue-600"></i>
+    <span class="text-blue-800">Select an analysis date and click "Load Comparison" to view results.</span>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let comparisonData = {};
+let currentView = 'summary';
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('noDataMessage').style.display = 'block';
+});
+
+async function loadComparison() {
+    const date = document.getElementById('comparisonDate').value;
+    const strategy = document.getElementById('comparisonStrategy').value;
+    
+    if (!date) {
+        alert('Please select an analysis date');
+        return;
+    }
+    
+    // Show loading
+    document.getElementById('loadingSpinner').style.display = 'block';
+    document.getElementById('comparisonResults').style.display = 'none';
+    document.getElementById('noDataMessage').style.display = 'none';
+    
+    try {
+        const response = await fetch(`/api/compare/${date}`);
+        if (!response.ok) {
+            throw new Error('Failed to load comparison data');
+        }
+        
+        comparisonData = await response.json();
+        
+        // Filter by strategy if specified
+        if (strategy !== 'all') {
+            filterDataByStrategy(strategy);
+        }
+        
+        renderComparison();
+        
+    } catch (error) {
+        console.error('Error loading comparison:', error);
+        showError('loadingSpinner', 'Error loading comparison data');
+    }
+}
+
+function filterDataByStrategy(strategyName) {
+    for (const symbol in comparisonData) {
+        if (comparisonData[symbol].strategies) {
+            const filteredStrategies = {};
+            if (comparisonData[symbol].strategies[strategyName]) {
+                filteredStrategies[strategyName] = comparisonData[symbol].strategies[strategyName];
+            }
+            comparisonData[symbol].strategies = filteredStrategies;
+        }
+    }
+}
+
+function renderComparison() {
+    document.getElementById('loadingSpinner').style.display = 'none';
+    document.getElementById('comparisonResults').style.display = 'block';
+    
+    renderComparisonChart();
+    renderWinRateComparisonChart();
+    renderTradingActivityChart();
+    renderTopPerformers();
+    renderComparisonTable();
+}
+
+function renderComparisonChart() {
+    const ctx = document.getElementById('comparisonChart').getContext('2d');
+    const symbols = Object.keys(comparisonData);
+    
+    // Get all unique strategies
+    const allStrategies = new Set();
+    symbols.forEach(symbol => {
+        if (comparisonData[symbol].strategies) {
+            Object.keys(comparisonData[symbol].strategies).forEach(strategy => {
+                allStrategies.add(strategy);
+            });
+        }
+    });
+    
+    const strategies = Array.from(allStrategies);
+    const colors = ['#3b82f6', '#dc2626', '#059669', '#d97706', '#8b5cf6'];  // blue-500, red-600, emerald-600, amber-600, violet-500
+    
+    const datasets = strategies.map((strategy, index) => ({
+        label: strategy,
+        data: symbols.map(symbol => {
+            const strategyData = comparisonData[symbol].strategies?.[strategy];
+            return strategyData ? strategyData.total_returns : 0;
+        }),
+        backgroundColor: colors[index % colors.length] + '80',
+        borderColor: colors[index % colors.length],
+        borderWidth: 1
+    }));
+    
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: symbols,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Returns (%)'
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Symbols'
+                    }
+                }
+            },
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Strategy Performance by Symbol'
+                },
+                legend: {
+                    position: 'top'
+                }
+            }
+        }
+    });
+}
+
+function renderWinRateComparisonChart() {
+    const ctx = document.getElementById('winRateComparisonChart').getContext('2d');
+    const symbols = Object.keys(comparisonData);
+    
+    // Calculate average win rate per symbol
+    const winRateData = symbols.map(symbol => {
+        const strategies = comparisonData[symbol].strategies || {};
+        const winRates = Object.values(strategies).map(s => s.win_rate || 0);
+        return winRates.length > 0 ? 
+            winRates.reduce((a, b) => a + b, 0) / winRates.length * 100 : 0;
+    });
+    
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: symbols,
+            datasets: [{
+                label: 'Average Win Rate (%)',
+                data: winRateData,
+                borderColor: '#059669',  // emerald-600
+                backgroundColor: '#059669',  // emerald-600 with opacity
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    title: {
+                        display: true,
+                        text: 'Win Rate (%)'
+                    }
+                }
+            },
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Average Win Rate by Symbol'
+                },
+                legend: {
+                    display: false
+                }
+            }
+        }
+    });
+}
+
+function renderTradingActivityChart() {
+    const ctx = document.getElementById('tradingActivityChart').getContext('2d');
+    const symbols = Object.keys(comparisonData);
+    
+    // Calculate total trades per symbol
+    const tradesData = symbols.map(symbol => {
+        const strategies = comparisonData[symbol].strategies || {};
+        return Object.values(strategies).reduce((total, s) => total + (s.total_trades || 0), 0);
+    });
+    
+    new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: symbols,
+            datasets: [{
+                data: tradesData,
+                backgroundColor: [
+                    '#3b82f6', '#dc2626', '#059669', '#d97706', '#8b5cf6',  // blue-500, red-600, emerald-600, amber-600, violet-500
+                    '#06b6d4', '#374151', '#ea580c', '#6b7280', '#7c3aed'   // cyan-500, gray-700, orange-600, gray-500, violet-600
+                ]
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Trading Activity Distribution'
+                },
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+}
+
+function renderTopPerformers() {
+    const container = document.getElementById('topPerformers');
+    
+    // Calculate best performing strategy for each symbol
+    const performers = [];
+    
+    Object.entries(comparisonData).forEach(([symbol, data]) => {
+        const strategies = data.strategies || {};
+        let bestStrategy = null;
+        let bestReturn = -Infinity;
+        
+        Object.entries(strategies).forEach(([strategyName, strategyData]) => {
+            if (strategyData.total_returns > bestReturn) {
+                bestReturn = strategyData.total_returns;
+                bestStrategy = {
+                    symbol,
+                    strategy: strategyName,
+                    return: bestReturn,
+                    winRate: strategyData.win_rate
+                };
+            }
+        });
+        
+        if (bestStrategy) {
+            performers.push(bestStrategy);
+        }
+    });
+    
+    // Sort by return
+    performers.sort((a, b) => b.return - a.return);
+    
+    const html = performers.slice(0, 5).map((perf, index) => `
+        <div class="flex justify-between items-center mb-3 p-3 rounded-lg ${index === 0 ? 'bg-yellow-50 border border-yellow-200' : 'hover:bg-gray-50'}">
+            <div>
+                <div class="font-semibold text-gray-900">${perf.symbol}</div>
+                <div class="text-sm text-gray-500">${perf.strategy}</div>
+            </div>
+            <div class="text-right">
+                <div class="${getPerformanceClass(perf.return)}">${formatPercentage(perf.return / 100)}</div>
+                <div class="text-sm text-gray-500">Win: ${formatPercentage(perf.winRate)}</div>
+            </div>
+        </div>
+    `).join('');
+    
+    container.innerHTML = html || '<p class="text-gray-500">No performance data available</p>';
+}
+
+function renderComparisonTable() {
+    const container = document.getElementById('comparisonTable');
+    const symbols = Object.keys(comparisonData);
+    
+    if (currentView === 'summary') {
+        renderSummaryTable(container, symbols);
+    } else {
+        renderDetailedTable(container, symbols);
+    }
+}
+
+function renderSummaryTable(container, symbols) {
+    const html = `
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-200">
+                        <th class="text-left py-3 px-4 font-semibold text-gray-900">Symbol</th>
+                        <th class="text-left py-3 px-4 font-semibold text-gray-900">Best Strategy</th>
+                        <th class="text-left py-3 px-4 font-semibold text-gray-900">Best Return</th>
+                        <th class="text-left py-3 px-4 font-semibold text-gray-900">Avg Win Rate</th>
+                        <th class="text-left py-3 px-4 font-semibold text-gray-900">Total Trades</th>
+                        <th class="text-left py-3 px-4 font-semibold text-gray-900">Recommendations</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${symbols.map(symbol => {
+                        const data = comparisonData[symbol];
+                        const strategies = data.strategies || {};
+                        
+                        // Find best strategy
+                        let bestStrategy = 'N/A';
+                        let bestReturn = 0;
+                        let totalTrades = 0;
+                        let winRates = [];
+                        
+                        Object.entries(strategies).forEach(([name, strategyData]) => {
+                            if (strategyData.total_returns > bestReturn) {
+                                bestReturn = strategyData.total_returns;
+                                bestStrategy = name;
+                            }
+                            totalTrades += strategyData.total_trades || 0;
+                            if (strategyData.win_rate !== undefined) {
+                                winRates.push(strategyData.win_rate);
+                            }
+                        });
+                        
+                        const avgWinRate = winRates.length > 0 ? 
+                            winRates.reduce((a, b) => a + b, 0) / winRates.length : 0;
+                        
+                        const recommendations = data.recommendations || [];
+                        
+                        return `
+                            <tr class="border-b border-gray-100 hover:bg-blue-50">
+                                <td class="py-3 px-4"><strong>${symbol}</strong></td>
+                                <td class="py-3 px-4">${bestStrategy}</td>
+                                <td class="py-3 px-4 ${getPerformanceClass(bestReturn)}">
+                                    ${formatPercentage(bestReturn / 100)}
+                                </td>
+                                <td class="py-3 px-4">${formatPercentage(avgWinRate)}</td>
+                                <td class="py-3 px-4">${totalTrades}</td>
+                                <td class="py-3 px-4">
+                                    ${recommendations.length > 0 ? 
+                                        `<span class="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">${recommendations.length}</span>` : 
+                                        '<span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">0</span>'
+                                    }
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+}
+
+function renderDetailedTable(container, symbols) {
+    // Create detailed view with all strategies
+    const allStrategies = new Set();
+    symbols.forEach(symbol => {
+        Object.keys(comparisonData[symbol].strategies || {}).forEach(strategy => {
+            allStrategies.add(strategy);
+        });
+    });
+    
+    const strategies = Array.from(allStrategies);
+    
+    const html = `
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-gray-200">
+                        <th rowspan="2" class="text-left py-3 px-4 font-semibold text-gray-900">Symbol</th>
+                        ${strategies.map(strategy => `
+                            <th colspan="3" class="text-center py-3 px-4 font-semibold text-gray-900 border-l border-gray-200">${strategy}</th>
+                        `).join('')}
+                    </tr>
+                    <tr class="border-b border-gray-200">
+                        ${strategies.map(() => `
+                            <th class="text-center py-2 px-2 text-xs font-medium text-gray-600 border-l border-gray-200">Return</th>
+                            <th class="text-center py-2 px-2 text-xs font-medium text-gray-600">Win Rate</th>
+                            <th class="text-center py-2 px-2 text-xs font-medium text-gray-600">Trades</th>
+                        `).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${symbols.map(symbol => {
+                        const data = comparisonData[symbol];
+                        const symbolStrategies = data.strategies || {};
+                        
+                        return `
+                            <tr class="border-b border-gray-100 hover:bg-blue-50">
+                                <td class="py-3 px-4 font-semibold">${symbol}</td>
+                                ${strategies.map(strategy => {
+                                    const strategyData = symbolStrategies[strategy];
+                                    if (strategyData) {
+                                        return `
+                                            <td class="py-3 px-2 text-center border-l border-gray-200 ${getPerformanceClass(strategyData.total_returns)}">
+                                                ${formatPercentage(strategyData.total_returns / 100)}
+                                            </td>
+                                            <td class="py-3 px-2 text-center">${formatPercentage(strategyData.win_rate)}</td>
+                                            <td class="py-3 px-2 text-center">${strategyData.total_trades || 0}</td>
+                                        `;
+                                    } else {
+                                        return '<td class="py-3 px-2 text-center border-l border-gray-200 text-gray-400">-</td><td class="py-3 px-2 text-center text-gray-400">-</td><td class="py-3 px-2 text-center text-gray-400">-</td>';
+                                    }
+                                }).join('')}
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+}
+
+function showTable(view) {
+    currentView = view;
+    
+    // Update button states
+    document.querySelectorAll('.btn-group .btn').forEach(btn => {
+        btn.classList.remove('bg-blue-600', 'text-white');
+        btn.classList.add('text-gray-600', 'hover:text-blue-600');
+    });
+    event.target.classList.remove('text-gray-600', 'hover:text-blue-600');
+    event.target.classList.add('bg-blue-600', 'text-white');
+    
+    renderComparisonTable();
+}
+
+function exportResults() {
+    // TODO: Implement export functionality
+    alert('Export functionality coming soon!');
+}
+</script>
+{% endblock %}

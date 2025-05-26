@@ -1,0 +1,25 @@
+# SSH Configuration for PythonAnywhere
+# Add this to your ~/.ssh/config file
+
+Host pythonanywhere
+    HostName ssh.pythonanywhere.com
+    User yourusername
+    Port 22
+    IdentityFile ~/.ssh/id_rsa
+    ServerAliveInterval 60
+    ServerAliveCountMax 120
+    # Compression yes
+    # ForwardAgent yes
+
+# Alternative configuration for multiple PythonAnywhere accounts
+Host pa-main
+    HostName ssh.pythonanywhere.com
+    User yourmainusername
+    Port 22
+    IdentityFile ~/.ssh/id_rsa
+
+Host pa-dev
+    HostName ssh.pythonanywhere.com
+    User yourdevusername
+    Port 22
+    IdentityFile ~/.ssh/id_rsa_dev

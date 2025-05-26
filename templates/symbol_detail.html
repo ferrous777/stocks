@@ -1,0 +1,484 @@
+{% extends "base.html" %}
+
+{% block title %}{{ symbol }} - Analysis Details{% endblock %}
+
+{% block content %}
+<div class="mb-8">
+    <div class="w-full">
+        <div class="flex flex-col lg:flex-row lg:justify-between lg:items-center space-y-4 lg:space-y-0">
+            <div>
+                <h2 class="text-3xl font-bold text-gray-900 flex items-center">
+                    <i class="fas fa-chart-area mr-3 text-blue-600"></i>
+                    {{ symbol }} Analysis
+                </h2>
+                <p class="text-gray-600 mt-1">Analysis Date: {{ date }}</p>
+            </div>
+            <div class="flex flex-wrap gap-3">
+                <a href="/" class="border border-gray-300 text-gray-700 px-6 py-2 rounded-full hover:bg-gray-50 transition-all duration-300 flex items-center space-x-2">
+                    <i class="fas fa-arrow-left"></i>
+                    <span>Back to Dashboard</span>
+                </a>
+                <div class="relative">
+                    <button class="bg-gradient-primary text-white px-6 py-2 rounded-full hover:shadow-lg transition-all duration-300 flex items-center space-x-2" onclick="toggleDateDropdown()">
+                        <i class="fas fa-calendar"></i>
+                        <span>Change Date</span>
+                    </button>
+                    <div id="dateDropdown" class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-10 hidden">
+                        {% for d in available_dates %}
+                        <a class="block px-4 py-2 text-gray-700 hover:bg-blue-50 {% if d == date %}bg-blue-100 text-blue-600 font-medium{% endif %} {% if loop.first %}rounded-t-lg{% endif %} {% if loop.last %}rounded-b-lg{% endif %}" 
+                           href="/symbol/{{ symbol }}/{{ d }}">{{ d }}</a>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if recommendations %}
+<div class="mb-8">
+    <div class="w-full">
+        <div class="bg-white rounded-xl shadow-lg">
+            <div class="border-b border-gray-200 px-6 py-4">
+                <h5 class="text-lg font-semibold text-gray-900 flex items-center">
+                    <i class="fas fa-lightbulb mr-2 text-yellow-500"></i>
+                    Current Recommendations
+                </h5>
+            </div>
+            <div class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {% for rec in recommendations %}
+                    <div class="bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl border-l-4 border-blue-500">
+                        <div class="p-6">
+                            <h6 class="text-lg font-semibold text-gray-900 mb-3">{{ rec.strategy }}</h6>
+                            <div class="space-y-3">
+                                <div>
+                                    <span class="text-sm font-medium text-gray-700">Action:</span>
+                                    <span class="ml-2 px-3 py-1 rounded-full text-sm font-medium {% if rec.recommendation == 'BUY' %}bg-green-100 text-green-800{% elif rec.recommendation == 'SELL' %}bg-red-100 text-red-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                                        {{ rec.recommendation }}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span class="text-sm font-medium text-gray-700">Confidence:</span>
+                                    <span class="ml-2 text-gray-900">{{ (rec.confidence * 100)|round(1) }}%</span>
+                                </div>
+                                {% if rec.reason %}
+                                <div>
+                                    <p class="text-sm text-gray-600 italic">{{ rec.reason }}</p>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if backtest_results %}
+<div class="mb-8">
+    <div class="w-full">
+        <div class="bg-white rounded-xl shadow-lg">
+            <div class="border-b border-gray-200 px-6 py-4">
+                <h5 class="text-lg font-semibold text-gray-900 flex items-center">
+                    <i class="fas fa-chart-bar mr-2 text-blue-600"></i>
+                    Strategy Performance Overview
+                </h5>
+            </div>
+            <div class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="strategyOverview">
+                    <!-- Strategy cards will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+    <div class="lg:col-span-2">
+        <div class="bg-white rounded-xl shadow-lg">
+            <div class="border-b border-gray-200 px-6 py-4">
+                <h5 class="text-lg font-semibold text-gray-900 flex items-center">
+                    <i class="fas fa-chart-line mr-2 text-green-600"></i>
+                    Performance Comparison
+                </h5>
+            </div>
+            <div class="p-6">
+                <canvas id="performanceChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div>
+        <div class="bg-white rounded-xl shadow-lg">
+            <div class="border-b border-gray-200 px-6 py-4">
+                <h5 class="text-lg font-semibold text-gray-900 flex items-center">
+                    <i class="fas fa-percentage mr-2 text-purple-600"></i>
+                    Win Rates
+                </h5>
+            </div>
+            <div class="p-6">
+                <canvas id="winRateChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mb-8">
+    <div class="w-full">
+        <div class="bg-white rounded-xl shadow-lg">
+            <div class="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+                <h5 class="text-lg font-semibold text-gray-900 flex items-center">
+                    <i class="fas fa-table mr-2 text-blue-600"></i>
+                    Detailed Strategy Results
+                </h5>
+                <div class="flex bg-gray-100 rounded-lg p-1">
+                    <button id="summaryViewBtn" class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 bg-blue-600 text-white" onclick="showView('summary')">Summary</button>
+                    <button id="tradesViewBtn" class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 text-gray-600 hover:text-blue-600" onclick="showView('trades')">Trades</button>
+                </div>
+            </div>
+            <div class="p-6">
+                <div id="summaryTable">
+                    <!-- Summary table will be populated here -->
+                </div>
+                <div id="tradesTable" style="display: none;">
+                    <!-- Trades table will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if not backtest_results %}
+<div class="mb-8">
+    <div class="w-full">
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center">
+            <i class="fas fa-exclamation-triangle mr-2 text-yellow-600"></i>
+            <span class="text-yellow-800">No backtest results available for {{ symbol }} on {{ date }}.</span>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const backtestData = {{ backtest_results | tojson if backtest_results else '{}' }};
+const symbol = '{{ symbol }}';
+const analysisDate = '{{ date }}';
+
+// Add dropdown toggle functionality
+function toggleDateDropdown() {
+    const dropdown = document.getElementById('dateDropdown');
+    dropdown.classList.toggle('hidden');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(event) {
+    const dropdown = document.getElementById('dateDropdown');
+    const button = event.target.closest('button');
+    if (!button || !button.onclick) {
+        dropdown.classList.add('hidden');
+    }
+});
+
+// View switching functionality
+function showView(viewName) {
+    // Update button states
+    document.getElementById('summaryViewBtn').classList.remove('bg-blue-600', 'text-white');
+    document.getElementById('summaryViewBtn').classList.add('text-gray-600', 'hover:text-blue-600');
+    document.getElementById('tradesViewBtn').classList.remove('bg-blue-600', 'text-white');
+    document.getElementById('tradesViewBtn').classList.add('text-gray-600', 'hover:text-blue-600');
+    
+    // Update active button
+    const activeBtn = document.getElementById(viewName + 'ViewBtn');
+    activeBtn.classList.remove('text-gray-600', 'hover:text-blue-600');
+    activeBtn.classList.add('bg-blue-600', 'text-white');
+    
+    // Show/hide tables
+    if (viewName === 'summary') {
+        document.getElementById('summaryTable').style.display = 'block';
+        document.getElementById('tradesTable').style.display = 'none';
+    } else {
+        document.getElementById('summaryTable').style.display = 'none';
+        document.getElementById('tradesTable').style.display = 'block';
+        renderTradesTable();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    if (Object.keys(backtestData).length > 0) {
+        renderStrategyOverview();
+        renderPerformanceChart();
+        renderWinRateChart();
+        renderSummaryTable();
+    }
+});
+
+function renderStrategyOverview() {
+    const container = document.getElementById('strategyOverview');
+    const strategies = Object.entries(backtestData).filter(([name, data]) => 
+        data && typeof data === 'object' && data.total_returns !== undefined
+    );
+    
+    const cards = strategies.map(([name, data]) => {
+        const returnClass = getPerformanceClass(data.total_returns);
+        const winRateClass = data.win_rate >= 0.5 ? 'text-green-600' : 'text-red-600';
+        
+        return `
+            <div class="bg-gradient-to-br from-blue-600 to-purple-700 rounded-xl p-6 text-white">
+                <h6 class="text-lg font-semibold mb-4">${name}</h6>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <div class="text-2xl font-bold ${returnClass}">${formatPercentage(data.total_returns / 100)}</div>
+                        <div class="text-blue-200 text-sm">Total Return</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold ${winRateClass}">${formatPercentage(data.win_rate)}</div>
+                        <div class="text-blue-200 text-sm">Win Rate</div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4 mt-4">
+                    <div>
+                        <div class="text-xl font-semibold">${data.total_trades}</div>
+                        <div class="text-blue-200 text-sm">Total Trades</div>
+                    </div>
+                    <div>
+                        <div class="text-xl font-semibold">${formatCurrency(data.final_balance)}</div>
+                        <div class="text-blue-200 text-sm">Final Balance</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = cards;
+}
+    
+    container.innerHTML = cards;
+}
+
+function renderPerformanceChart() {
+    const ctx = document.getElementById('performanceChart').getContext('2d');
+    const strategies = Object.entries(backtestData).filter(([name, data]) => 
+        data && typeof data === 'object' && data.total_returns !== undefined
+    );
+    
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: strategies.map(([name]) => name),
+            datasets: [{
+                label: 'Total Returns (%)',
+                data: strategies.map(([, data]) => data.total_returns),
+                backgroundColor: strategies.map(([, data]) => 
+                    data.total_returns > 0 ? 'rgba(39, 174, 96, 0.8)' : 'rgba(231, 76, 60, 0.8)'
+                ),
+                borderColor: strategies.map(([, data]) => 
+                    data.total_returns > 0 ? 'rgba(39, 174, 96, 1)' : 'rgba(231, 76, 60, 1)'
+                ),
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Returns (%)'
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                title: {
+                    display: true,
+                    text: 'Strategy Performance Comparison'
+                }
+            }
+        }
+    });
+}
+
+function renderWinRateChart() {
+    const ctx = document.getElementById('winRateChart').getContext('2d');
+    const strategies = Object.entries(backtestData).filter(([name, data]) => 
+        data && typeof data === 'object' && data.win_rate !== undefined
+    );
+    
+    new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: strategies.map(([name]) => name),
+            datasets: [{
+                data: strategies.map(([, data]) => (data.win_rate * 100).toFixed(1)),
+                backgroundColor: [
+                    '#3b82f6',  // blue-500
+                    '#dc2626',  // red-600
+                    '#059669',  // emerald-600
+                    '#d97706',  // amber-600
+                    '#8b5cf6'   // violet-500
+                ]
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                },
+                title: {
+                    display: true,
+                    text: 'Win Rate Distribution'
+                }
+            }
+        }
+    });
+}
+
+function renderSummaryTable() {
+    const container = document.getElementById('summaryTable');
+    const strategies = Object.entries(backtestData).filter(([name, data]) => 
+        data && typeof data === 'object' && data.total_returns !== undefined
+    );
+    
+    const tableHTML = `
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Strategy</th>
+                        <th>Total Return</th>
+                        <th>Win Rate</th>
+                        <th>Total Trades</th>
+                        <th>Winning Trades</th>
+                        <th>Final Balance</th>
+                        <th>Sharpe Ratio</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${strategies.map(([name, data]) => `
+                        <tr>
+                            <td><strong>${name}</strong></td>
+                            <td class="${getPerformanceClass(data.total_returns)}">
+                                ${formatPercentage(data.total_returns / 100)}
+                            </td>
+                            <td class="${data.win_rate >= 0.5 ? 'positive' : 'negative'}">
+                                ${formatPercentage(data.win_rate)}
+                            </td>
+                            <td>${data.total_trades || 0}</td>
+                            <td>${data.winning_trades || 0}</td>
+                            <td>${formatCurrency(data.final_balance)}</td>
+                            <td>${(data.sharpe_ratio || 0).toFixed(2)}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    container.innerHTML = tableHTML;
+}
+
+function renderTradesTable() {
+    const container = document.getElementById('tradesTable');
+    const strategies = Object.entries(backtestData).filter(([name, data]) => 
+        data && typeof data === 'object' && data.trades !== undefined
+    );
+    
+    if (strategies.length === 0) {
+        container.innerHTML = '<div class="alert alert-info">No trade data available</div>';
+        return;
+    }
+    
+    // Create tabs for each strategy
+    const tabsHTML = `
+        <ul class="nav nav-tabs" id="strategyTabs" role="tablist">
+            ${strategies.map(([name], index) => `
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link ${index === 0 ? 'active' : ''}" 
+                            id="${name.replace(/\s+/g, '')}-tab" 
+                            data-bs-toggle="tab" 
+                            data-bs-target="#${name.replace(/\s+/g, '')}" 
+                            type="button" role="tab">
+                        ${name}
+                    </button>
+                </li>
+            `).join('')}
+        </ul>
+        <div class="tab-content" id="strategyTabContent">
+            ${strategies.map(([name, data], index) => `
+                <div class="tab-pane fade ${index === 0 ? 'show active' : ''}" 
+                     id="${name.replace(/\s+/g, '')}" role="tabpanel">
+                    <div class="table-responsive mt-3">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Entry Date</th>
+                                    <th>Exit Date</th>
+                                    <th>Type</th>
+                                    <th>Entry Price</th>
+                                    <th>Exit Price</th>
+                                    <th>P&L</th>
+                                    <th>Return %</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${(data.trades || []).slice(0, 50).map(trade => `
+                                    <tr>
+                                        <td>${trade.entry_date || 'N/A'}</td>
+                                        <td>${trade.exit_date || 'N/A'}</td>
+                                        <td>
+                                            <span class="badge ${trade.type === 'long' ? 'bg-success' : 'bg-danger'}">
+                                                ${(trade.type || 'N/A').toUpperCase()}
+                                            </span>
+                                        </td>
+                                        <td>${formatCurrency(trade.entry_price)}</td>
+                                        <td>${formatCurrency(trade.exit_price)}</td>
+                                        <td class="${getPerformanceClass(trade.pnl)}">
+                                            ${formatCurrency(trade.pnl)}
+                                        </td>
+                                        <td class="${getPerformanceClass(trade.return_pct)}">
+                                            ${formatPercentage(trade.return_pct)}
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                        ${(data.trades || []).length > 50 ? 
+                            `<p class="text-muted">Showing first 50 of ${data.trades.length} trades</p>` : 
+                            ''}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    
+    container.innerHTML = tabsHTML;
+}
+
+function setupViewModeToggle() {
+    document.querySelectorAll('input[name="viewMode"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            if (this.id === 'summaryView') {
+                document.getElementById('summaryTable').style.display = 'block';
+                document.getElementById('tradesTable').style.display = 'none';
+            } else if (this.id === 'tradesView') {
+                document.getElementById('summaryTable').style.display = 'none';
+                document.getElementById('tradesTable').style.display = 'block';
+                renderTradesTable(); // Lazy load trades
+            }
+        });
+    });
+}
+</script>
+{% endblock %}

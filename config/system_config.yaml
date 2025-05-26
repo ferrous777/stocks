@@ -1,0 +1,169 @@
+data_source:
+  backup_sources:
+  - alpha_vantage
+  cache_duration_hours: 24
+  cache_enabled: true
+  primary_source: yahoo
+  rate_limit_per_minute: 60
+database:
+  backup_enabled: true
+  backup_frequency: daily
+  compression_enabled: true
+  db_path: data/timeseries.db
+  retention_days: 365
+debug_mode: false
+environment: development
+log_file: logs/system.log
+log_level: INFO
+notifications:
+  alert_thresholds:
+    confidence_threshold: 0.8
+    price_change_threshold: 0.05
+  email_enabled: false
+  email_recipients: null
+  enabled: false
+  summary_frequency: daily
+scheduling:
+  analysis_time: '17:00'
+  enabled: true
+  market_data_time: '16:30'
+  skip_holidays: true
+  skip_weekends: true
+  timezone: US/Eastern
+strategies:
+- enabled: true
+  min_data_points: 60
+  name: moving_average_crossover
+  parameters:
+    long_period: 50
+    short_period: 20
+  weight: 1.0
+- enabled: true
+  min_data_points: 30
+  name: rsi_divergence
+  parameters:
+    overbought: 70
+    oversold: 30
+    period: 14
+  weight: 0.8
+- enabled: true
+  min_data_points: 35
+  name: macd
+  parameters:
+    fast: 12
+    signal: 9
+    slow: 26
+  weight: 0.9
+- enabled: true
+  min_data_points: 20
+  name: volume_price
+  parameters:
+    price_threshold: 0.02
+    volume_threshold: 2.0
+  weight: 0.7
+symbols:
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: AAPL
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: MSFT
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: GOOGL
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: AMZN
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Technology
+  symbol: NVDA
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: Consumer
+  symbol: COST
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: QQQ
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: VUG
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: IWF
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: SPYG
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: VGT
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: FDN
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: VEA
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: VWO
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: FEZ
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: EWJ
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: MCHI
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: INDA
+- custom_params: null
+  enabled: true
+  priority: 2
+  sector: ETF
+  symbol: EWZ
+- custom_params: null
+  enabled: true
+  priority: 3
+  sector: Mutual Fund
+  symbol: KMKNX
+- custom_params: null
+  enabled: true
+  priority: 3
+  sector: Mutual Fund
+  symbol: FDEGX

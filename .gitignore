@@ -36,6 +36,7 @@ ENV/
 
 # Project specific
 cache/
+results/
 logs/
 *.log
 .env
@@ -62,4 +63,4 @@ var/
 wheels/
 *.egg-info/
 .installed.cfg
-*.egg 
+*.egg

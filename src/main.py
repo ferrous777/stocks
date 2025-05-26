@@ -11,6 +11,7 @@ from tabulate import tabulate
 from market_data.market_data import MarketData
 from typing import Dict, List
 from recommendations.recommendation_engine import RecommendationEngine
+from utils.results_manager import ResultsManager
 
 DEFAULT_SYMBOLS_FILE = "src/data/default_symbols.json"
 
@@ -26,11 +27,7 @@ def ensure_data_dir():
             "GOOGL",
             "AMZN",
             "NVDA",
-            "HALO",
-            "CPRX",
-            "CORT",
-            "EXEL",
-            "LGND"
+            "COST"
         ]
         with open(DEFAULT_SYMBOLS_FILE, 'w') as f:
             json.dump(default_symbols, f, indent=4)
@@ -38,7 +35,7 @@ def ensure_data_dir():
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Stock Market Analysis Tool')
-    parser.add_argument('--source', type=str, help='JSON file with symbols to analyze')
+    parser.add_argument('--source', type=str, default='src/data/default_symbols.json', help='JSON file with symbols to analyze')
     parser.add_argument('--symbol', type=str, help='Individual stock symbol(s) (e.g., AAPL or AAPL MSFT)')
     parser.add_argument('--start', type=str, help='Start date (YYYY-MM-DD)', 
                        default=(datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d'))
@@ -54,6 +51,7 @@ def parse_args():
     parser.add_argument('--verbose', action='store_true', help='Show detailed output')
     parser.add_argument('--grouped', action='store_true', help='Group results by symbol instead of strategy')
     parser.add_argument('--recommendations', action='store_true', help='Get latest trading recommendations')
+    parser.add_argument('--keep-all-results', action='store_true', help='Keep all results, do not archive old ones')
     return parser.parse_args()
 
 def debug_print(msg: str, debug: bool = False):
@@ -319,6 +317,17 @@ def process_group(group_name: str, symbols_data: Dict[str, Dict], args: argparse
     analysis_results = {}
     backtest_results = {}
     
+    # Create combined results dictionary for each symbol
+    combined_results = {symbol: {
+        "symbol": symbol,
+        "date_run": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "period": {
+            "start": args.start,
+            "end": args.end
+        },
+        "strategies": {}
+    } for symbol in symbols_data.keys()}
+    
     # Run each strategy
     for strategy in strategies:
         if args.verbose:
@@ -333,18 +342,101 @@ def process_group(group_name: str, symbols_data: Dict[str, Dict], args: argparse
             analysis_results[strategy.name] = strategy.analyze()
             
         # Run backtest if requested
-        if args.backtest or args.recommendations:
+        if args.backtest:
             raw_results = strategy.backtest(
                 start_date=datetime.strptime(args.start, '%Y-%m-%d'),
                 end_date=datetime.strptime(args.end, '%Y-%m-%d')
             )
-            # Convert BacktestResult objects to dictionaries
+            
+            # Convert BacktestResult objects to dictionaries for display
             backtest_results[strategy.name] = {
                 symbol: convert_backtest_result(result)
                 for symbol, result in raw_results.items()
             }
+            
+            # Process each symbol's results for JSON storage
+            for symbol, result in raw_results.items():
+                trades_list = []
+                for trade in result.trades:
+                    trade_dict = {
+                        "entry_date": trade.entry_date.strftime('%Y-%m-%d') if trade.entry_date else None,
+                        "exit_date": trade.exit_date.strftime('%Y-%m-%d') if trade.exit_date else None,
+                        "entry_price": float(trade.entry_price),
+                        "exit_price": float(trade.exit_price) if trade.exit_price else None,
+                        "type": trade.type,
+                        "size": int(trade.size),
+                        "pnl": float(trade.pnl) if trade.pnl else None,
+                        "return_pct": float(trade.return_pct) if trade.return_pct else None
+                    }
+                    trades_list.append(trade_dict)
+                
+                # Calculate metrics
+                winning_trades = sum(1 for t in trades_list if t["pnl"] and t["pnl"] > 0)
+                losing_trades = sum(1 for t in trades_list if t["pnl"] and t["pnl"] < 0)
+                total_trades = winning_trades + losing_trades
+                win_rate = round(winning_trades / total_trades, 3) if total_trades > 0 else 0
+                
+                # Add strategy results to combined results
+                combined_results[symbol]["strategies"][strategy.name] = {
+                    "total_returns": round(result.strategy_returns.total_return * 100, 2),
+                    "total_trades": len(trades_list),
+                    "winning_trades": winning_trades,
+                    "losing_trades": losing_trades,
+                    "win_rate": win_rate,
+                    "final_balance": round(result.strategy_returns.total_return * 10000 + 10000, 2),
+                    "max_drawdown": round(result.strategy_returns.max_drawdown * 100, 2) if hasattr(result.strategy_returns, 'max_drawdown') else 0,
+                    "sharpe_ratio": round(result.strategy_returns.sharpe_ratio, 2) if hasattr(result.strategy_returns, 'sharpe_ratio') else 0,
+                    "first_price": round(float(symbols_data[symbol]['historical'].data_points[0].close), 2),
+                    "last_price": round(float(symbols_data[symbol]['historical'].data_points[-1].close), 2),
+                    "trades": trades_list
+                }
     
-    # Display results
+    # Display and save backtest results if requested
+    if args.backtest:
+        # Display results
+        if args.grouped:
+            for symbol in symbols_data.keys():
+                print(format_grouped_table(backtest_results, symbol))
+        else:
+            for strategy_name, results in backtest_results.items():
+                print(format_backtest_table(results, strategy_name))
+        
+        # Save results
+        for symbol, results in combined_results.items():
+            today = datetime.now().strftime('%Y%m%d')
+            filename = f"{symbol}_backtest_{today}.json"
+            filepath = os.path.join("results", filename)
+            
+            with open(filepath, 'w') as f:
+                json.dump(results, f, indent=2)
+            print(f"\nBacktest results saved to: {filepath}")
+    
+    # Display and save recommendations if requested
+    if args.recommendations:
+        recommendations = engine.generate_recommendations(
+            symbols_data.keys(),
+            analysis_results,
+            backtest_results
+        )
+        
+        # Display recommendations
+        print(format_recommendations_table(recommendations))
+        
+        # Save recommendations
+        for symbol, rec in recommendations.items():
+            today = datetime.now().strftime('%Y%m%d')
+            filename = f"{symbol}_recommendations_{today}.json"
+            filepath = os.path.join("results", filename)
+            
+            with open(filepath, 'w') as f:
+                json.dump({
+                    "symbol": symbol,
+                    "date_run": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "recommendations": rec
+                }, f, indent=2)
+            print(f"\nRecommendations saved to: {filepath}")
+    
+    # Display analysis results if requested
     if args.analyze:
         if args.grouped:
             for symbol in symbols_data.keys():
@@ -352,27 +444,14 @@ def process_group(group_name: str, symbols_data: Dict[str, Dict], args: argparse
         else:
             for strategy_name, results in analysis_results.items():
                 print(format_analysis_table(results, strategy_name))
-    
-    if args.backtest:
-        if args.grouped:
-            for symbol in symbols_data.keys():
-                print(format_grouped_table(backtest_results, symbol))
-        else:
-            for strategy_name, results in backtest_results.items():
-                print(format_backtest_table(results, strategy_name))
-    
-    # Generate and display recommendations if requested
-    if args.recommendations:
-        recommendations = engine.generate_recommendations(
-            symbols_data.keys(),
-            analysis_results,
-            backtest_results
-        )
-        print(format_recommendations_table(recommendations))
 
 def main():
     args = parse_args()
     debug = args.debug
+    
+    # Ensure results directory exists
+    results_dir = "results"
+    os.makedirs(results_dir, exist_ok=True)
     
     # Get symbols either from command line or file
     if args.symbol:
@@ -387,23 +466,34 @@ def main():
     if args.verbose:
         print(f"\nProcessing {len(symbols)} symbol(s)...")
     
-    # Initialize market data
+    # Initialize market data with cache directory
     market = MarketData(cache_dir=args.cache_dir)
     
-    # Load market data
-    historical_data = {}
-    fundamental_data = {}
-    
-    for symbol in symbols:
-        if args.verbose:
-            print(f"\nProcessing {symbol}:")
-        historical_data[symbol], fundamental_data[symbol] = market.get_data(
-            symbol=symbol,
+    # Load market data in batches
+    symbols_data = {}
+    try:
+        batch_data = market.get_batch_data(
+            symbols=symbols,
             start_date=datetime.strptime(args.start, '%Y-%m-%d'),
             end_date=datetime.strptime(args.end, '%Y-%m-%d'),
-            include_fundamentals=args.fundamentals,
             force_refresh=args.force
         )
+        
+        for symbol, historical in batch_data.items():
+            fundamental = None
+            if args.fundamentals:
+                try:
+                    fundamental = market._get_fundamental_data(symbol, args.force)
+                except Exception as e:
+                    print(f"Warning: Could not fetch fundamentals for {symbol}: {e}")
+            
+            symbols_data[symbol] = {
+                'historical': historical,
+                'fundamental': fundamental
+            }
+    except Exception as e:
+        print(f"Error fetching market data: {e}")
+        return 1
     
     # Load strategies
     strategies = load_strategies()
@@ -415,21 +505,6 @@ def main():
     engine = None
     if args.analyze and args.backtest or args.recommendations:
         engine = RecommendationEngine()
-    
-    # Process all symbols
-    symbols_data = {}
-    for symbol in symbols:
-        historical, fundamental = market.get_data(
-            symbol=symbol,
-            start_date=datetime.strptime(args.start, '%Y-%m-%d'),
-            end_date=datetime.strptime(args.end, '%Y-%m-%d'),
-            include_fundamentals=args.fundamentals,
-            force_refresh=args.force
-        )
-        symbols_data[symbol] = {
-            'historical': historical,
-            'fundamental': fundamental
-        }
     
     # Process the group
     process_group("All Symbols", symbols_data, args, market, strategies, engine)
