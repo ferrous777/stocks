@@ -20,7 +20,7 @@ from typing import Optional, List
 import logging
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from market_calendar.market_calendar import is_trading_day, MarketType
 from config.config_manager import ConfigManager
