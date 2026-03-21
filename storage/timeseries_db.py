@@ -81,12 +81,79 @@ class TimeSeriesDB:
                 )
             """)
             
+            # ──── Portfolio / Plaid tables ────────────────────────────────────
+            # One row per connected Plaid Item (brokerage account link)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS plaid_items (
+                    item_id TEXT PRIMARY KEY,
+                    access_token_encrypted TEXT NOT NULL,
+                    institution_id TEXT,
+                    institution_name TEXT,
+                    created_at TEXT NOT NULL,
+                    last_synced_at TEXT
+                )
+            """)
+
+            # One row per account within a Plaid Item
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS plaid_accounts (
+                    account_id TEXT PRIMARY KEY,
+                    item_id TEXT NOT NULL,
+                    name TEXT,
+                    type TEXT,
+                    subtype TEXT,
+                    balance_current REAL,
+                    balance_available REAL,
+                    synced_at TEXT NOT NULL,
+                    FOREIGN KEY (item_id) REFERENCES plaid_items(item_id)
+                )
+            """)
+
+            # Current equity holdings (one row per account+symbol)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS portfolio_positions (
+                    account_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    quantity REAL NOT NULL DEFAULT 0,
+                    cost_basis REAL,
+                    institution_price REAL,
+                    institution_value REAL,
+                    unrealized_pnl REAL,
+                    unrealized_pnl_pct REAL,
+                    -- JSON snapshot of the Recommendation active when position was first detected
+                    entry_rec_snapshot TEXT,
+                    first_detected_at TEXT NOT NULL,
+                    last_synced_at TEXT NOT NULL,
+                    PRIMARY KEY (account_id, symbol)
+                )
+            """)
+
+            # Every investment transaction (buy/sell/dividend/etc.)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS investment_transactions (
+                    transaction_id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL,
+                    symbol TEXT,
+                    date TEXT NOT NULL,
+                    type TEXT,
+                    quantity REAL,
+                    price REAL,
+                    amount REAL,
+                    fees REAL DEFAULT 0,
+                    synced_at TEXT NOT NULL
+                )
+            """)
+
             # Create indexes for better query performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_date ON daily_snapshots(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_symbol ON daily_snapshots(symbol)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_strategy_perf_symbol ON strategy_performance(symbol)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_comparison_date ON comparison_metrics(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_projections_target ON projections(target_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_positions_symbol ON portfolio_positions(symbol)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_inv_tx_symbol ON investment_transactions(symbol)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_inv_tx_date ON investment_transactions(date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_plaid_accounts_item ON plaid_accounts(item_id)")
             
             conn.commit()
             logger.info("Database initialized successfully")
@@ -389,9 +456,193 @@ class TimeSeriesDB:
                 
                 cursor.execute("SELECT COUNT(*) as count FROM projections")
                 stats['total_projections'] = cursor.fetchone()['count']
+
+                cursor.execute("SELECT COUNT(*) as count FROM portfolio_positions")
+                stats['total_positions'] = cursor.fetchone()['count']
+
+                cursor.execute("SELECT COUNT(*) as count FROM investment_transactions")
+                stats['total_transactions'] = cursor.fetchone()['count']
                 
                 return stats
                 
         except Exception as e:
             logger.error(f"Error getting database stats: {e}")
             return {}
+
+    # ──── Portfolio / Plaid Operations ────────────────────────────────────────
+
+    def upsert_plaid_item(self, item_id: str, access_token_encrypted: str,
+                          institution_id: str = None, institution_name: str = None) -> bool:
+        """Store or update a Plaid Item (access token encrypted via Fernet)."""
+        try:
+            now = datetime.now().isoformat()
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO plaid_items (item_id, access_token_encrypted, institution_id, institution_name, created_at, last_synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(item_id) DO UPDATE SET
+                        access_token_encrypted = excluded.access_token_encrypted,
+                        institution_id = excluded.institution_id,
+                        institution_name = excluded.institution_name,
+                        last_synced_at = excluded.last_synced_at
+                """, (item_id, access_token_encrypted, institution_id, institution_name, now, now))
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error upserting plaid item {item_id}: {e}")
+            return False
+
+    def get_plaid_items(self) -> List[Dict[str, Any]]:
+        """Return all stored Plaid items."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM plaid_items ORDER BY created_at")
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting plaid items: {e}")
+            return []
+
+    def upsert_plaid_account(self, account_id: str, item_id: str, name: str = None,
+                              type_: str = None, subtype: str = None,
+                              balance_current: float = None, balance_available: float = None) -> bool:
+        """Store or update a Plaid account."""
+        try:
+            now = datetime.now().isoformat()
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO plaid_accounts (account_id, item_id, name, type, subtype, balance_current, balance_available, synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(account_id) DO UPDATE SET
+                        name = excluded.name,
+                        type = excluded.type,
+                        subtype = excluded.subtype,
+                        balance_current = excluded.balance_current,
+                        balance_available = excluded.balance_available,
+                        synced_at = excluded.synced_at
+                """, (account_id, item_id, name, type_, subtype, balance_current, balance_available, now))
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error upserting plaid account {account_id}: {e}")
+            return False
+
+    def get_plaid_accounts(self) -> List[Dict[str, Any]]:
+        """Return all synced Plaid accounts."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM plaid_accounts ORDER BY account_id")
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting plaid accounts: {e}")
+            return []
+
+    def upsert_portfolio_position(self, account_id: str, symbol: str, quantity: float,
+                                   cost_basis: float = None, institution_price: float = None,
+                                   institution_value: float = None, entry_rec_snapshot: dict = None) -> bool:
+        """Insert or update a portfolio holding. Preserves entry_rec_snapshot on subsequent updates."""
+        try:
+            now = datetime.now().isoformat()
+            snap_json = json.dumps(entry_rec_snapshot) if entry_rec_snapshot else None
+            unrealized_pnl = None
+            unrealized_pnl_pct = None
+            if institution_value is not None and cost_basis is not None and cost_basis > 0:
+                unrealized_pnl = institution_value - cost_basis
+                unrealized_pnl_pct = unrealized_pnl / cost_basis
+
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                # On conflict: update market values but never overwrite entry_rec_snapshot
+                # (it anchors drift detection back to the original trade context)
+                cursor.execute("""
+                    INSERT INTO portfolio_positions
+                        (account_id, symbol, quantity, cost_basis, institution_price, institution_value,
+                         unrealized_pnl, unrealized_pnl_pct, entry_rec_snapshot, first_detected_at, last_synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(account_id, symbol) DO UPDATE SET
+                        quantity = excluded.quantity,
+                        cost_basis = excluded.cost_basis,
+                        institution_price = excluded.institution_price,
+                        institution_value = excluded.institution_value,
+                        unrealized_pnl = excluded.unrealized_pnl,
+                        unrealized_pnl_pct = excluded.unrealized_pnl_pct,
+                        last_synced_at = excluded.last_synced_at
+                """, (account_id, symbol, quantity, cost_basis, institution_price, institution_value,
+                      unrealized_pnl, unrealized_pnl_pct, snap_json, now, now))
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error upserting portfolio position {symbol}: {e}")
+            return False
+
+    def get_portfolio_positions(self, account_id: str = None) -> List[Dict[str, Any]]:
+        """Return current portfolio positions, optionally filtered by account."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                if account_id:
+                    cursor.execute("SELECT * FROM portfolio_positions WHERE account_id = ? ORDER BY symbol", (account_id,))
+                else:
+                    cursor.execute("SELECT * FROM portfolio_positions ORDER BY symbol")
+                rows = []
+                for row in cursor.fetchall():
+                    d = dict(row)
+                    if d.get('entry_rec_snapshot'):
+                        try:
+                            d['entry_rec_snapshot'] = json.loads(d['entry_rec_snapshot'])
+                        except Exception:
+                            pass
+                    rows.append(d)
+                return rows
+        except Exception as e:
+            logger.error(f"Error getting portfolio positions: {e}")
+            return []
+
+    def upsert_investment_transaction(self, transaction_id: str, account_id: str, symbol: str,
+                                       date: str, type_: str, quantity: float = None,
+                                       price: float = None, amount: float = None, fees: float = 0) -> bool:
+        """Store an investment transaction (idempotent)."""
+        try:
+            now = datetime.now().isoformat()
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR IGNORE INTO investment_transactions
+                        (transaction_id, account_id, symbol, date, type, quantity, price, amount, fees, synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (transaction_id, account_id, symbol, date, type_, quantity, price, amount, fees, now))
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error upserting investment transaction {transaction_id}: {e}")
+            return False
+
+    def get_investment_transactions(self, symbol: str = None, account_id: str = None,
+                                     start_date: str = None, end_date: str = None) -> List[Dict[str, Any]]:
+        """Return investment transactions with optional filters."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                query = "SELECT * FROM investment_transactions WHERE 1=1"
+                params: List[Any] = []
+                if symbol:
+                    query += " AND symbol = ?"
+                    params.append(symbol)
+                if account_id:
+                    query += " AND account_id = ?"
+                    params.append(account_id)
+                if start_date:
+                    query += " AND date >= ?"
+                    params.append(start_date)
+                if end_date:
+                    query += " AND date <= ?"
+                    params.append(end_date)
+                query += " ORDER BY date DESC"
+                cursor.execute(query, params)
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting investment transactions: {e}")
+            return []

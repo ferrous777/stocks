@@ -5,6 +5,64 @@ data_source:
   cache_enabled: true
   primary_source: yahoo
   rate_limit_per_minute: 60
+
+# ── Plaid configuration ──────────────────────────────────────────────────────
+# Credentials: store client_id, secret, and fernet_key as env vars in production
+# PLAID_CLIENT_ID, PLAID_SECRET, PLAID_FERNET_KEY
+# environment: sandbox | development | production
+plaid:
+  client_id: null
+  secret: null
+  environment: sandbox
+  fernet_key: null
+  # Products we request access to
+  products:
+  - investments
+  # Auto-add new equity tickers found in Plaid holdings to the tracked symbol list
+  auto_add_symbols: true
+  # Default priority for symbols auto-added from Plaid
+  auto_add_priority: 2
+
+# ── Alert configuration ───────────────────────────────────────────────────────
+alerts:
+  enabled: false
+  # Confidence floor for new-prediction alerts
+  prediction_confidence_threshold: 0.80
+  # Fire POSITION_PARAMS_CHANGED when stop/target moves more than this fraction
+  parameter_change_pct: 0.05
+  # Fire POSITION_PARAMS_CHANGED when confidence drops by more than this (absolute)
+  confidence_drop_threshold: 0.15
+
+  email:
+    enabled: false
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    smtp_user: null
+    smtp_password: null
+    # Credentials can also be set via ALERT_SMTP_USER / ALERT_SMTP_PASSWORD env vars
+    from_address: null
+    recipients: []
+    # urgent_only: if true, only URGENT severity alerts are emailed immediately;
+    # INFO-level alerts are batched into a daily digest
+    urgent_immediate: true
+
+  sms:
+    enabled: false
+    # Set via TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER env vars
+    twilio_account_sid: null
+    twilio_auth_token: null
+    from_number: null
+    recipients: []
+    # SMS channel only fires URGENT alerts (stop-loss breach, take-profit reached)
+    urgent_only: true
+
+  telegram:
+    enabled: false
+    # Set via TELEGRAM_BOT_TOKEN env var
+    bot_token: null
+    # List of chat IDs (integer) to send messages to
+    chat_ids: []
+
 database:
   backup_enabled: true
   backup_frequency: daily

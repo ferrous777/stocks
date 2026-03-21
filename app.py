@@ -1038,6 +1038,188 @@ def health():
         'available_dates': len(get_available_dates())
     })
 
+
+# ════════════════════════════════════════════════════════════════════════
+#  Plaid Integration Routes
+# ════════════════════════════════════════════════════════════════════════
+
+def _get_plaid_client():
+    """Return a configured PlaidClientWrapper or raise RuntimeError."""
+    from config.config_manager import ConfigManager
+    from plaid_integration.plaid_client import get_plaid_client
+    cfg = ConfigManager().get_config()
+    return get_plaid_client(cfg.plaid)
+
+
+@app.route('/plaid/link-token', methods=['GET'])
+def plaid_link_token():
+    """
+    Create a Plaid Link Token.
+    The browser uses this to initialise the Plaid Link widget.
+    GET /plaid/link-token  →  { "link_token": "..." }
+    """
+    try:
+        client = _get_plaid_client()
+        # Use a stable user identifier; here we use a static app-level user.
+        user_id = os.environ.get("PLAID_USER_ID", "stock-analyzer-user-1")
+        link_token = client.create_link_token(user_id=user_id)
+        return jsonify({"link_token": link_token})
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": f"Failed to create link token: {exc}"}), 500
+
+
+@app.route('/plaid/exchange-token', methods=['POST'])
+def plaid_exchange_token():
+    """
+    Exchange a Plaid public_token (returned by the Link widget) for an access_token.
+    Stores the encrypted access_token in the database.
+
+    POST /plaid/exchange-token
+    Body (JSON): { "public_token": "...", "institution_id": "...", "institution_name": "..." }
+    Response:    { "item_id": "...", "institution_name": "..." }
+    """
+    data = request.get_json(silent=True) or {}
+    public_token = data.get("public_token")
+    if not public_token:
+        return jsonify({"error": "public_token is required"}), 400
+
+    try:
+        client = _get_plaid_client()
+        exchange = client.exchange_public_token(public_token)
+        access_token = exchange["access_token"]
+        item_id      = exchange["item_id"]
+
+        encrypted = client.encrypt_token(access_token)
+
+        from storage.timeseries_db import TimeSeriesDB
+        db = TimeSeriesDB()
+        db.upsert_plaid_item(
+            item_id=item_id,
+            access_token_encrypted=encrypted,
+            institution_id=data.get("institution_id"),
+            institution_name=data.get("institution_name"),
+        )
+
+        return jsonify({
+            "item_id": item_id,
+            "institution_name": data.get("institution_name"),
+            "status": "connected",
+        })
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": f"Token exchange failed: {exc}"}), 500
+
+
+@app.route('/plaid/sync', methods=['POST'])
+def plaid_sync():
+    """
+    Manually trigger a Plaid sync (accounts + holdings + transactions).
+    POST /plaid/sync  →  { "accounts": N, "positions": N, "new_symbols": [...], "new_transactions": N }
+    """
+    try:
+        from config.config_manager import ConfigManager
+        from storage.timeseries_db import TimeSeriesDB
+        from plaid_integration.plaid_client import get_plaid_client
+        from plaid_integration.accounts import sync_accounts
+        from plaid_integration.transactions import sync_transactions
+
+        config = ConfigManager().get_config()
+        client = get_plaid_client(config.plaid)
+        db = TimeSeriesDB()
+
+        sync_result  = sync_accounts(db, client, config_manager=ConfigManager())
+        new_tx       = sync_transactions(db, client)
+
+        return jsonify({
+            "accounts":         len(sync_result["accounts"]),
+            "positions":        len(sync_result["positions"]),
+            "new_symbols":      sync_result["new_symbols"],
+            "new_transactions": len(new_tx),
+        })
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": f"Sync failed: {exc}"}), 500
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Portfolio API Routes
+# ════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/portfolio')
+def api_portfolio():
+    """
+    Return current portfolio positions with the latest model recommendation overlaid.
+    GET /api/portfolio?account_id=<optional>
+    """
+    try:
+        from storage.timeseries_db import TimeSeriesDB
+        import json
+
+        account_id = request.args.get("account_id")
+        db = TimeSeriesDB()
+        positions = db.get_portfolio_positions(account_id=account_id)
+
+        # Enrich with latest prediction
+        for pos in positions:
+            symbol = pos.get("symbol")
+            try:
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT data FROM projections
+                        WHERE symbol = ?
+                        ORDER BY projection_date DESC
+                        LIMIT 1
+                    """, (symbol,))
+                    row = cursor.fetchone()
+                    if row:
+                        rec = json.loads(row["data"])
+                        pos["current_rec_action"]     = rec.get("action")
+                        pos["current_rec_confidence"] = rec.get("confidence")
+                        pos["current_rec_stop_loss"]  = rec.get("stop_loss")
+                        pos["current_rec_take_profit"] = rec.get("take_profit")
+            except Exception:
+                pass
+
+        return jsonify({"positions": positions, "count": len(positions)})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/portfolio/transactions')
+def api_portfolio_transactions():
+    """
+    Return investment transactions.
+    GET /api/portfolio/transactions?symbol=AAPL&start_date=2026-01-01
+    """
+    try:
+        from storage.timeseries_db import TimeSeriesDB
+        db = TimeSeriesDB()
+        txs = db.get_investment_transactions(
+            symbol=request.args.get("symbol"),
+            account_id=request.args.get("account_id"),
+            start_date=request.args.get("start_date"),
+            end_date=request.args.get("end_date"),
+        )
+        return jsonify({"transactions": txs, "count": len(txs)})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/portfolio/accounts')
+def api_portfolio_accounts():
+    """Return all synced Plaid accounts."""
+    try:
+        from storage.timeseries_db import TimeSeriesDB
+        db = TimeSeriesDB()
+        return jsonify({"accounts": db.get_plaid_accounts()})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
 @app.errorhandler(404)
 def not_found(error):
     return render_template('error.html', message="Page not found"), 404

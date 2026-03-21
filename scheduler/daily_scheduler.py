@@ -25,6 +25,73 @@ from analysis.aggregation import DataAggregator
 from market_calendar.market_calendar import MarketCalendar, MarketType, is_trading_day
 from market_data.market_data import MarketData
 
+# Plaid + alert integrations (imported lazily inside the workflow so missing
+# packages only raise errors when Plaid/alerts are actually enabled)
+def _try_plaid_sync(db, config):
+    """Sync Plaid accounts/holdings if Plaid is configured."""
+    try:
+        plaid_cfg = config.plaid
+        if not plaid_cfg or not plaid_cfg.client_id:
+            return {"accounts": [], "positions": [], "new_symbols": []}
+
+        from plaid_integration.plaid_client import get_plaid_client
+        from plaid_integration.accounts import sync_accounts
+        from config.config_manager import ConfigManager as _CM
+
+        client = get_plaid_client(plaid_cfg)
+        cm = _CM()
+        result = sync_accounts(db, client, config_manager=cm)
+        logger.info(
+            f"Plaid sync: {len(result['accounts'])} accounts, "
+            f"{len(result['positions'])} positions, "
+            f"{len(result['new_symbols'])} new symbols"
+        )
+        return result
+    except Exception as exc:
+        logger.error(f"Plaid account sync failed: {exc}")
+        return {"accounts": [], "positions": [], "new_symbols": []}
+
+
+def _try_plaid_transactions(db, config):
+    """Sync recent Plaid investment transactions if Plaid is configured."""
+    try:
+        plaid_cfg = config.plaid
+        if not plaid_cfg or not plaid_cfg.client_id:
+            return []
+
+        from plaid_integration.plaid_client import get_plaid_client
+        from plaid_integration.transactions import sync_transactions
+
+        client = get_plaid_client(plaid_cfg)
+        new_tx = sync_transactions(db, client)
+        logger.info(f"Plaid transactions: {len(new_tx)} new transaction(s)")
+        return new_tx
+    except Exception as exc:
+        logger.error(f"Plaid transaction sync failed: {exc}")
+        return []
+
+
+def _try_dispatch_alerts(db, config, new_predictions, new_transactions,
+                          include_daily_summary=False):
+    """Run the alert engine if alerts are enabled in config."""
+    try:
+        alerts_cfg = config.alerts
+        if not alerts_cfg or not alerts_cfg.enabled:
+            return []
+
+        from alerts.alert_engine import AlertEngine
+        engine = AlertEngine(db, config)
+        fired = engine.run(
+            new_predictions=new_predictions,
+            new_transactions=new_transactions,
+            include_daily_summary=include_daily_summary,
+        )
+        logger.info(f"Alert engine: {len(fired)} alert(s) dispatched.")
+        return fired
+    except Exception as exc:
+        logger.error(f"Alert dispatch failed: {exc}")
+        return []
+
 # Ensure logs directory exists
 os.makedirs('logs', exist_ok=True)
 
@@ -880,6 +947,30 @@ class DailyReportGenerator:
         return report_content
 
 
+def _extract_predictions(strategies_results: dict) -> list:
+    """
+    Convert the scheduler's strategy results dict into a list of prediction dicts
+    suitable for the AlertEngine.  Each entry has the fields expected by Alert.high_confidence().
+    """
+    predictions = []
+    for symbol, strategies in strategies_results.items():
+        for strategy_name, result in strategies.items():
+            signal = (result.get("signal") or "").upper()
+            if signal not in ("BUY", "SELL", "SHORT"):
+                continue
+            predictions.append({
+                "symbol": symbol,
+                "action": signal,
+                "confidence": result.get("confidence", 0.0),
+                "entry_price": result.get("entry_price") or result.get("metrics", {}).get("close", 0.0),
+                "stop_loss": result.get("stop_loss", 0.0),
+                "take_profit": result.get("take_profit", 0.0),
+                "supporting_strategies": [strategy_name],
+                "details": result.get("details", ""),
+            })
+    return predictions
+
+
 class DailyScheduler:
     """Main scheduler class that orchestrates daily data collection and analysis"""
     
@@ -958,7 +1049,32 @@ class DailyScheduler:
             logger.info("Step 4: Generating daily report")
             report_content = self.report_generator.generate_daily_summary(date, results)
             results['report'] = report_content
-            
+
+            # Step 5: Sync Plaid accounts + holdings
+            logger.info("Step 5: Syncing Plaid portfolio data")
+            plaid_result = _try_plaid_sync(self.data_collector.db, config)
+            results['plaid_sync'] = plaid_result
+
+            # Step 6: Sync Plaid investment transactions (last 30 days)
+            logger.info("Step 6: Syncing Plaid investment transactions")
+            new_transactions = _try_plaid_transactions(self.data_collector.db, config)
+            results['new_transactions'] = new_transactions
+
+            # Step 7: Collect today's new high-confidence predictions from strategy results
+            new_predictions = _extract_predictions(results.get('strategies', {}))
+
+            # Step 8: Dispatch alerts (position-level + new predictions)
+            # Also include daily summary on a full trading-day run
+            logger.info("Step 8: Dispatching alerts")
+            alerts = _try_dispatch_alerts(
+                self.data_collector.db,
+                config,
+                new_predictions=new_predictions,
+                new_transactions=new_transactions,
+                include_daily_summary=is_trading_day,
+            )
+            results['alerts_fired'] = len(alerts)
+
             logger.info("Daily workflow completed successfully")
             
         except Exception as e:

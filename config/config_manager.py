@@ -63,6 +63,97 @@ class NotificationConfig:
     alert_thresholds: Dict[str, float] = None
     summary_frequency: str = "daily"  # daily, weekly, monthly
 
+
+@dataclass
+class PlaidConfig:
+    """Plaid API configuration"""
+    client_id: Optional[str] = None
+    secret: Optional[str] = None
+    environment: str = "sandbox"  # sandbox | development | production
+    fernet_key: Optional[str] = None
+    products: List[str] = None
+    auto_add_symbols: bool = True
+    auto_add_priority: int = 2
+
+    def __post_init__(self):
+        # Environment variables override YAML values (never commit secrets)
+        import os
+        self.client_id = os.environ.get("PLAID_CLIENT_ID") or self.client_id
+        self.secret = os.environ.get("PLAID_SECRET") or self.secret
+        self.fernet_key = os.environ.get("PLAID_FERNET_KEY") or self.fernet_key
+        if self.products is None:
+            self.products = ["investments"]
+
+
+@dataclass
+class AlertEmailConfig:
+    enabled: bool = False
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    from_address: Optional[str] = None
+    recipients: List[str] = None
+    urgent_immediate: bool = True
+
+    def __post_init__(self):
+        import os
+        self.smtp_user = os.environ.get("ALERT_SMTP_USER") or self.smtp_user
+        self.smtp_password = os.environ.get("ALERT_SMTP_PASSWORD") or self.smtp_password
+        if self.recipients is None:
+            self.recipients = []
+
+
+@dataclass
+class AlertSmsConfig:
+    enabled: bool = False
+    twilio_account_sid: Optional[str] = None
+    twilio_auth_token: Optional[str] = None
+    from_number: Optional[str] = None
+    recipients: List[str] = None
+    urgent_only: bool = True
+
+    def __post_init__(self):
+        import os
+        self.twilio_account_sid = os.environ.get("TWILIO_ACCOUNT_SID") or self.twilio_account_sid
+        self.twilio_auth_token = os.environ.get("TWILIO_AUTH_TOKEN") or self.twilio_auth_token
+        self.from_number = os.environ.get("TWILIO_FROM_NUMBER") or self.from_number
+        if self.recipients is None:
+            self.recipients = []
+
+
+@dataclass
+class AlertTelegramConfig:
+    enabled: bool = False
+    bot_token: Optional[str] = None
+    chat_ids: List[int] = None
+
+    def __post_init__(self):
+        import os
+        self.bot_token = os.environ.get("TELEGRAM_BOT_TOKEN") or self.bot_token
+        if self.chat_ids is None:
+            self.chat_ids = []
+
+
+@dataclass
+class AlertConfig:
+    """Alert delivery configuration"""
+    enabled: bool = False
+    prediction_confidence_threshold: float = 0.80
+    parameter_change_pct: float = 0.05
+    confidence_drop_threshold: float = 0.15
+    email: AlertEmailConfig = None
+    sms: AlertSmsConfig = None
+    telegram: AlertTelegramConfig = None
+
+    def __post_init__(self):
+        if self.email is None:
+            self.email = AlertEmailConfig()
+        if self.sms is None:
+            self.sms = AlertSmsConfig()
+        if self.telegram is None:
+            self.telegram = AlertTelegramConfig()
+
 @dataclass
 class SystemConfig:
     """Main system configuration"""
@@ -72,12 +163,20 @@ class SystemConfig:
     scheduling: SchedulingConfig
     data_source: DataSourceConfig
     notifications: NotificationConfig
-    
+    plaid: PlaidConfig = None
+    alerts: AlertConfig = None
+
     # Environment settings
     environment: str = "development"  # development, production
     debug_mode: bool = False
     log_level: str = "INFO"
     log_file: Optional[str] = "logs/system.log"
+
+    def __post_init__(self):
+        if self.plaid is None:
+            self.plaid = PlaidConfig()
+        if self.alerts is None:
+            self.alerts = AlertConfig()
 
 class ConfigManager:
     """Manage system configuration"""
@@ -208,6 +307,25 @@ class ConfigManager:
         data_source = DataSourceConfig(**data.get('data_source', {}))
         notifications = NotificationConfig(**data.get('notifications', {}))
         
+        # Plaid config
+        plaid_data = data.get('plaid', {})
+        plaid = PlaidConfig(**plaid_data) if plaid_data else PlaidConfig()
+
+        # Alert config — handle nested sub-configs
+        alerts_data = data.get('alerts', {})
+        if alerts_data:
+            email_data = alerts_data.pop('email', {})
+            sms_data = alerts_data.pop('sms', {})
+            telegram_data = alerts_data.pop('telegram', {})
+            alerts = AlertConfig(
+                **alerts_data,
+                email=AlertEmailConfig(**email_data) if email_data else AlertEmailConfig(),
+                sms=AlertSmsConfig(**sms_data) if sms_data else AlertSmsConfig(),
+                telegram=AlertTelegramConfig(**telegram_data) if telegram_data else AlertTelegramConfig(),
+            )
+        else:
+            alerts = AlertConfig()
+
         return SystemConfig(
             symbols=symbols,
             strategies=strategies,
@@ -215,6 +333,8 @@ class ConfigManager:
             scheduling=scheduling,
             data_source=data_source,
             notifications=notifications,
+            plaid=plaid,
+            alerts=alerts,
             environment=data.get('environment', 'development'),
             debug_mode=data.get('debug_mode', False),
             log_level=data.get('log_level', 'INFO'),

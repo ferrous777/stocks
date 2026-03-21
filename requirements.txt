@@ -8,3 +8,10 @@ tabulate==0.9.0
 requests==2.31.0
 PyYAML>=6.0.0
 pytz>=2023.3
+# Plaid integration
+plaid-python>=18.1.0
+# Encryption for access token storage
+cryptography>=41.0.0
+# Alert delivery
+twilio>=8.10.0
+python-telegram-bot>=20.7
