@@ -314,11 +314,13 @@ class PythonAnywhereSchedulerHook:
             from strategies.trend import TrendFollowingStrategy
             from strategies.momentum import MomentumStrategy
             from strategies.mean_reversion import MeanReversionStrategy
+            from strategies.bollinger import BollingerBandsStrategy
             
             strategies = {
                 'trend_following': TrendFollowingStrategy,
                 'momentum': MomentumStrategy,
-                'mean_reversion': MeanReversionStrategy
+                'mean_reversion': MeanReversionStrategy,
+                'bollinger': BollingerBandsStrategy
             }
             
             for period_name, start_date in backtest_periods.items():
@@ -353,8 +355,13 @@ class PythonAnywhereSchedulerHook:
                                 )
                         
                         if historical_data:
-                            # Initialize strategy with data
-                            strategy = strategy_class(list(historical_data.keys()), historical_data)
+                            # Initialize strategy with data (some strategies take constructor args, others do not)
+                            try:
+                                strategy = strategy_class(list(historical_data.keys()), historical_data)
+                            except TypeError:
+                                strategy = strategy_class()
+                                for symbol_key, symbol_hist in historical_data.items():
+                                    strategy.add_data(symbol_key, symbol_hist)
                             
                             # Run backtest
                             backtest_results = strategy.backtest(start_date, end_date)

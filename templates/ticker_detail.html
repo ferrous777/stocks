@@ -644,7 +644,7 @@
         </details>
     </div>
 
-    <!-- Investment Projection Section (only shown for BUY/SELL signals) -->
+    <!-- Investment Projection Section (shown for BUY signals) -->
     <div id="investmentProjection" class="bg-white rounded-lg shadow-md border border-gray-200 mb-6 hidden">
         <div class="bg-gradient-to-r from-green-600 to-emerald-500 text-white px-4 py-2 rounded-t-lg flex items-center justify-between">
             <h2 class="text-base font-bold flex items-center">
@@ -658,28 +658,33 @@
                 <!-- ROI Calculator - Compact -->
                 <div class="bg-green-50 rounded-lg p-3 border border-green-200">
                     <h3 class="font-semibold text-sm text-green-800 mb-2 flex items-center">
-                        <i class="fas fa-dollar-sign mr-1 text-xs"></i>$1,000 Investment
+                        <i class="fas fa-dollar-sign mr-1 text-xs"></i>1 Share Scenario
                     </h3>
+                    <div id="projScenarioNote" class="text-xs text-gray-500 mb-2 hidden"></div>
                     <div class="space-y-1 text-sm">
                         <div class="flex justify-between">
                             <span class="text-gray-600">Target</span>
                             <span class="font-bold text-green-600" id="projTargetReturn">+10%</span>
                         </div>
                         <div class="flex justify-between">
-                            <span class="text-gray-600">Profit</span>
+                            <span class="text-gray-600">Profit / share</span>
                             <span class="font-bold text-green-600" id="projPotentialProfit">+$100</span>
                         </div>
                         <div class="flex justify-between">
-                            <span class="text-gray-600">Value</span>
+                            <span class="text-gray-600">Target price</span>
                             <span class="font-bold" id="projPortfolioValue">$1,100</span>
                         </div>
                         <div class="flex justify-between bg-red-50 -mx-2 px-2 py-0.5 rounded">
-                            <span class="text-gray-600">Risk</span>
+                            <span class="text-gray-600">Risk / share</span>
                             <span class="font-bold text-red-600" id="projRiskAmount">-$50</span>
                         </div>
                         <div class="flex justify-between pt-1 border-t border-green-200">
                             <span class="text-gray-600">R:R</span>
                             <span class="font-bold" id="projRiskReward">2:1</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Risk level</span>
+                            <span class="font-bold" id="projRiskLevel">--</span>
                         </div>
                     </div>
                 </div>
@@ -713,7 +718,7 @@
                         </div>
                     </div>
                     <div id="noTimeEstimate" class="text-center py-2 text-gray-400 text-xs hidden">
-                        <i class="fas fa-info-circle"></i> N/A for HOLD
+                        <i class="fas fa-info-circle"></i> N/A for this recommendation
                     </div>
                 </div>
                 
@@ -774,7 +779,7 @@
         
         <div class="p-4">
             <!-- Strategy Cards - Horizontal layout -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
                 <!-- Trend Following -->
                 <div class="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
                     <div class="flex items-center justify-between mb-2">
@@ -787,7 +792,7 @@
                     <p class="text-xs text-gray-500 mb-2">Follows sustained price movements</p>
                     <div class="grid grid-cols-2 gap-2 text-xs">
                         <div title="% of trades that were profitable">
-                            <span class="text-gray-500">Win:</span>
+                            <span class="text-gray-500">Conf:</span>
                             <span class="font-semibold" id="trendWinRate">--</span>
                         </div>
                         <div title="Strategy return for the selected backtest window">
@@ -795,6 +800,7 @@
                             <span class="font-semibold" id="trendSharpe">--</span>
                         </div>
                     </div>
+                    <div class="mt-2 text-xs text-gray-500" id="trendDetail">--</div>
                 </div>
                 
                 <!-- Momentum -->
@@ -809,7 +815,7 @@
                     <p class="text-xs text-gray-500 mb-2">Captures rapid price acceleration</p>
                     <div class="grid grid-cols-2 gap-2 text-xs">
                         <div title="% of trades that were profitable">
-                            <span class="text-gray-500">Win:</span>
+                            <span class="text-gray-500">Conf:</span>
                             <span class="font-semibold" id="momentumWinRate">--</span>
                         </div>
                         <div title="Strategy return for the selected backtest window">
@@ -817,6 +823,7 @@
                             <span class="font-semibold" id="momentumSharpe">--</span>
                         </div>
                     </div>
+                    <div class="mt-2 text-xs text-gray-500" id="momentumDetail">--</div>
                 </div>
                 
                 <!-- Mean Reversion -->
@@ -831,7 +838,7 @@
                     <p class="text-xs text-gray-500 mb-2">Bets on return to average price</p>
                     <div class="grid grid-cols-2 gap-2 text-xs">
                         <div title="% of trades that were profitable">
-                            <span class="text-gray-500">Win:</span>
+                            <span class="text-gray-500">Conf:</span>
                             <span class="font-semibold" id="meanReversionWinRate">--</span>
                         </div>
                         <div title="Strategy return for the selected backtest window">
@@ -839,6 +846,30 @@
                             <span class="font-semibold" id="meanReversionSharpe">--</span>
                         </div>
                     </div>
+                    <div class="mt-2 text-xs text-gray-500" id="meanReversionDetail">--</div>
+                </div>
+
+                <!-- Bollinger Bands -->
+                <div class="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center">
+                            <i class="fas fa-wave-square text-orange-500 mr-2 text-sm"></i>
+                            <span class="font-semibold text-sm">Bollinger</span>
+                        </div>
+                        <span class="px-2 py-0.5 rounded text-xs font-bold" id="bollingerStatus">--</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-2">Mean + volatility bands (20d, 2σ)</p>
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                        <div title="Signal confidence from the latest Bollinger reading">
+                            <span class="text-gray-500">Conf:</span>
+                            <span class="font-semibold" id="bollingerWinRate">--</span>
+                        </div>
+                        <div title="Strategy return for the selected backtest window">
+                            <span class="text-gray-500">Return:</span>
+                            <span class="font-semibold" id="bollingerSharpe">--</span>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-500" id="bollingerDetail">--</div>
                 </div>
             </div>
             
@@ -853,6 +884,7 @@
                     <div><strong>Trend Strategy:</strong> Buys when price is rising, sells when falling. Works best in trending markets.</div>
                     <div><strong>Momentum Strategy:</strong> Buys stocks accelerating upward. Higher risk/reward, shorter timeframe.</div>
                     <div><strong>Mean Reversion:</strong> Buys oversold stocks expecting bounce back. Works when prices deviate from average.</div>
+                    <div><strong>Bollinger:</strong> Uses distance from upper/lower volatility bands to flag stretched prices.</div>
                     <div><strong>BUY/SELL/HOLD:</strong> Current signal from each strategy based on latest data.</div>
                 </div>
             </details>
@@ -1009,7 +1041,8 @@ let LATEST_HISTORICAL = null;
 let ALGORITHM_DATA = {
     'trend_following': { '30d': null, '90d': null, '1y': null },
     'momentum': { '30d': null, '90d': null, '1y': null },
-    'mean_reversion': { '30d': null, '90d': null, '1y': null }
+    'mean_reversion': { '30d': null, '90d': null, '1y': null },
+    'bollinger': { '30d': null, '90d': null, '1y': null }
 };
 const SYMBOL = '{{ symbol }}';
 
@@ -1058,7 +1091,7 @@ async function loadTickerData() {
 }
 
 async function loadAlgorithmData(latestDate) {
-    const algorithms = ['trend_following', 'momentum', 'mean_reversion'];
+    const algorithms = ['trend_following', 'momentum', 'mean_reversion', 'bollinger'];
     const timeframes = ['30d', '90d', '1y'];
     
     for (const algorithm of algorithms) {
@@ -1218,36 +1251,79 @@ function renderCurrentRecommendation() {
 function updateInvestmentProjection(rec) {
     const projSection = document.getElementById('investmentProjection');
     const action = rec.action || 'HOLD';
+    const scenarioNote = document.getElementById('projScenarioNote');
     
-    // Show section for BUY/SELL, hide for HOLD
-    if (action === 'HOLD') {
-        projSection.classList.add('hidden');
+    // Keep this section visible; only ROI card values are action-dependent.
+    projSection.classList.remove('hidden');
+
+    if (action !== 'BUY' && action !== 'SELL') {
+        if (scenarioNote) {
+            scenarioNote.textContent = `Scenario applies to BUY and SELL only. Current action: ${action}.`;
+            scenarioNote.classList.remove('hidden');
+        }
+        document.getElementById('projTargetReturn').textContent = 'N/A';
+        document.getElementById('projPotentialProfit').textContent = 'N/A';
+        document.getElementById('projPortfolioValue').textContent = 'N/A';
+        document.getElementById('projRiskAmount').textContent = 'N/A';
+        document.getElementById('projRiskReward').textContent = 'N/A';
+        document.getElementById('projRiskLevel').textContent = rec.risk_level || 'N/A';
+
+        // Still refresh other projection sub-sections.
+        updateTimeEstimate(rec);
+        updateStrategySignals(rec);
+        updateBenchmarkComparison(rec);
         return;
     }
-    projSection.classList.remove('hidden');
+
+    if (scenarioNote) {
+        scenarioNote.classList.add('hidden');
+    }
     
-    // Calculate ROI projections
-    const entryPrice = rec.entry_price || 100;
-    const takeProfit = rec.take_profit || entryPrice * 1.1;
-    const stopLoss = rec.stop_loss || entryPrice * 0.95;
-    const investment = 1000;
-    
-    // Calculate returns
-    const targetReturnPct = ((takeProfit - entryPrice) / entryPrice) * 100;
-    const potentialProfit = investment * (targetReturnPct / 100);
-    const portfolioValue = investment + potentialProfit;
-    const riskPct = ((entryPrice - stopLoss) / entryPrice) * 100;
-    const riskAmount = investment * (riskPct / 100);
-    const riskRewardRatio = (targetReturnPct / riskPct).toFixed(1);
-    
-    // Update ROI elements
-    document.getElementById('projTargetReturn').textContent = `+${targetReturnPct.toFixed(1)}%`;
-    document.getElementById('projPotentialProfit').textContent = `+$${potentialProfit.toFixed(2)}`;
-    document.getElementById('projPortfolioValue').textContent = `$${portfolioValue.toFixed(2)}`;
-    document.getElementById('projRiskAmount').textContent = `-$${riskAmount.toFixed(2)}`;
-    document.getElementById('projRiskReward').textContent = `${riskRewardRatio}:1`;
+    // Calculate projections from actual recommendation levels only (no fabricated defaults).
+    const entryPrice = Number(rec.entry_price);
+    const takeProfit = Number(rec.take_profit);
+    const stopLoss = Number(rec.stop_loss);
+    const hasValidLevels = Number.isFinite(entryPrice) && Number.isFinite(takeProfit) && Number.isFinite(stopLoss) && entryPrice > 0;
+
+    if (!hasValidLevels) {
+        if (scenarioNote) {
+            scenarioNote.textContent = 'Missing entry/target/stop data for BUY scenario.';
+            scenarioNote.classList.remove('hidden');
+        }
+        document.getElementById('projTargetReturn').textContent = 'N/A';
+        document.getElementById('projPotentialProfit').textContent = 'N/A';
+        document.getElementById('projPortfolioValue').textContent = 'N/A';
+        document.getElementById('projRiskAmount').textContent = 'N/A';
+        document.getElementById('projRiskReward').textContent = 'N/A';
+        document.getElementById('projRiskLevel').textContent = 'N/A';
+        return;
+    }
+
+    const isBuy = action === 'BUY';
+    const targetDelta = isBuy ? (takeProfit - entryPrice) : (entryPrice - takeProfit);
+    const riskDelta = isBuy ? Math.max(entryPrice - stopLoss, 0) : Math.max(stopLoss - entryPrice, 0);
+    const targetReturnPct = (targetDelta / entryPrice) * 100;
+    const riskPct = (riskDelta / entryPrice) * 100;
+    const riskRewardRatio = riskPct > 0 ? (Math.abs(targetReturnPct) / riskPct).toFixed(1) : 'N/A';
+
+    document.getElementById('projTargetReturn').textContent = `${targetReturnPct >= 0 ? '+' : ''}${targetReturnPct.toFixed(1)}%`;
+    document.getElementById('projPotentialProfit').textContent = `${targetDelta >= 0 ? '+' : ''}$${targetDelta.toFixed(2)}`;
+    document.getElementById('projPortfolioValue').textContent = `$${takeProfit.toFixed(2)}`;
+    document.getElementById('projRiskAmount').textContent = `-$${riskDelta.toFixed(2)}`;
+    document.getElementById('projRiskReward').textContent = riskRewardRatio === 'N/A' ? 'N/A' : `${riskRewardRatio}:1`;
+    document.getElementById('projRiskLevel').textContent = rec.risk_level || 'N/A';
     
     // Update time estimate
+    updateTimeEstimate(rec);
+
+    // Update strategy signals breakdown
+    updateStrategySignals(rec);
+    
+    // Update benchmark comparison
+    updateBenchmarkComparison(rec);
+}
+
+function updateTimeEstimate(rec) {
     const timeEstimate = rec.time_estimate;
     const timeContent = document.getElementById('timeEstimateContent');
     const noTimeMsg = document.getElementById('noTimeEstimate');
@@ -1283,13 +1359,8 @@ function updateInvestmentProjection(rec) {
     } else {
         timeContent.classList.add('hidden');
         noTimeMsg.classList.remove('hidden');
+        noTimeMsg.innerHTML = '<i class="fas fa-info-circle"></i> N/A for this recommendation';
     }
-    
-    // Update strategy signals breakdown
-    updateStrategySignals(rec);
-    
-    // Update benchmark comparison
-    updateBenchmarkComparison(rec);
 }
 
 function updateStrategySignals(rec) {
@@ -1337,36 +1408,72 @@ function formatStrategyName(name) {
 async function updateBenchmarkComparison(rec) {
     if ((rec.action || 'HOLD') === 'HOLD') {
         document.getElementById('projYourTarget').textContent = 'N/A';
+        document.getElementById('projSpyReturn').textContent = 'N/A';
         document.getElementById('projAlpha').textContent = 'N/A';
         document.getElementById('projOverallConf').textContent = `${Math.round((rec.confidence || 0) * 100)}%`;
+        document.getElementById('projStrategiesCount').textContent = 'N/A';
         return;
     }
 
-    // Get SPY benchmark data
+    // Compute target return from recommendation levels.
     const targetReturnPct = rec.take_profit && rec.entry_price 
         ? ((rec.take_profit - rec.entry_price) / rec.entry_price) * 100 
-        : 10;
+        : null;
     const confidence = rec.confidence || 0.5;
     const signals = rec.signals || [];
-    
-    // Estimate SPY return for similar timeframe (annualized ~10%, so for 30 days ~0.8%)
+
+    // Prefer persisted benchmark if present.
+    let spyReturnForPeriod = Number.isFinite(Number(rec?.benchmark?.spy_return_pct))
+        ? Number(rec.benchmark.spy_return_pct)
+        : null;
+
+    // Otherwise compute from real SPY historical data only.
     const timeEstimate = rec.time_estimate;
-    const days = timeEstimate?.days_to_target || 30;
-    const annualizedSpyReturn = 10.5; // S&P 500 historical average
-    const spyReturnForPeriod = (annualizedSpyReturn / 365) * days;
+    const days = timeEstimate?.days_to_target ? Math.max(2, Math.round(timeEstimate.days_to_target)) : null;
+    if (spyReturnForPeriod === null && days) {
+        try {
+            const spyResponse = await fetch('/api/historical/SPY');
+            if (spyResponse.ok) {
+                const spyData = await spyResponse.json();
+                const points = spyData?.data_points || spyData?.data || [];
+                if (points.length > days) {
+                    const sorted = [...points].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+                    const last = Number(sorted[sorted.length - 1]?.close);
+                    const prior = Number(sorted[Math.max(0, sorted.length - 1 - days)]?.close);
+                    if (Number.isFinite(last) && Number.isFinite(prior) && prior > 0) {
+                        spyReturnForPeriod = ((last - prior) / prior) * 100;
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('SPY benchmark unavailable:', error);
+        }
+    }
     
     // Update UI
     const spyEl = document.getElementById('projSpyReturn');
-    spyEl.textContent = `+${spyReturnForPeriod.toFixed(1)}%`;
-    spyEl.className = 'font-bold text-blue-600';
+    if (spyReturnForPeriod === null) {
+        spyEl.textContent = 'N/A';
+        spyEl.className = 'font-bold text-gray-500';
+    } else {
+        spyEl.textContent = `${spyReturnForPeriod >= 0 ? '+' : ''}${spyReturnForPeriod.toFixed(1)}%`;
+        spyEl.className = `font-bold ${spyReturnForPeriod >= 0 ? 'text-blue-600' : 'text-red-600'}`;
+    }
     
-    document.getElementById('projYourTarget').textContent = `+${targetReturnPct.toFixed(1)}%`;
+    document.getElementById('projYourTarget').textContent = targetReturnPct === null
+        ? 'N/A'
+        : `${targetReturnPct >= 0 ? '+' : ''}${targetReturnPct.toFixed(1)}%`;
     
     // Calculate alpha (excess return over benchmark)
-    const alpha = targetReturnPct - spyReturnForPeriod;
     const alphaEl = document.getElementById('projAlpha');
-    alphaEl.textContent = `${alpha > 0 ? '+' : ''}${alpha.toFixed(1)}%`;
-    alphaEl.className = `font-bold ${alpha > 0 ? 'text-green-600' : 'text-red-600'}`;
+    if (targetReturnPct === null || spyReturnForPeriod === null) {
+        alphaEl.textContent = 'N/A';
+        alphaEl.className = 'font-bold text-gray-500';
+    } else {
+        const alpha = targetReturnPct - spyReturnForPeriod;
+        alphaEl.textContent = `${alpha > 0 ? '+' : ''}${alpha.toFixed(1)}%`;
+        alphaEl.className = `font-bold ${alpha > 0 ? 'text-green-600' : 'text-red-600'}`;
+    }
     
     document.getElementById('projOverallConf').textContent = `${Math.round(confidence * 100)}%`;
     
@@ -1451,23 +1558,265 @@ function getStrategyStatus(summary) {
     return { label: 'FLAT', className: 'bg-gray-100 text-gray-700' };
 }
 
+function getDirectionalSignalForCard(prefix) {
+    const rec = LATEST_RECOMMENDATION?.recommendations || {};
+    const signals = rec.signals || [];
+    const keyMap = {
+        trend: ['trend_following', 'breakout_strategy'],
+        momentum: ['momentum', 'momentum_strategy'],
+        meanReversion: ['mean_reversion', 'mean_reversion_strategy'],
+        bollinger: ['bollinger', 'bollinger_strategy']
+    };
+
+    const keys = keyMap[prefix] || [];
+    const matched = signals.find(signal => keys.includes(signal.strategy));
+    if (!matched) {
+        return null;
+    }
+
+    return {
+        signal: matched.signal || 'HOLD',
+        confidence: Math.round((matched.confidence || 0) * 100),
+        details: matched.details || '',
+        metrics: matched.metrics || null
+    };
+}
+
+function escapeHtml(text) {
+    if (text === null || text === undefined) {
+        return '';
+    }
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatBollingerPosition(position) {
+    const map = {
+        above_upper: 'above upper band',
+        below_lower: 'below lower band',
+        inside_bands: 'inside bands',
+        center: 'near center line'
+    };
+    return map[position] || (position ? position.replace(/_/g, ' ') : 'unknown');
+}
+
+function parseLegacyBollingerDetails(detailsText) {
+    if (!detailsText || typeof detailsText !== 'string') {
+        return null;
+    }
+
+    const zMatch = detailsText.match(/z=([+-]?\d*\.?\d+)/i);
+    const bwMatch = detailsText.match(/bw=([+-]?\d*\.?\d+)%/i);
+    const posMatch = detailsText.match(/pos=([a-z_]+)/i);
+
+    if (!zMatch && !bwMatch && !posMatch) {
+        return null;
+    }
+
+    return {
+        z_score: zMatch ? Number(zMatch[1]) : null,
+        band_width_pct: bwMatch ? Number(bwMatch[1]) / 100 : null,
+        position: posMatch ? posMatch[1] : null
+    };
+}
+
+function parseLegacyMomentumDetails(detailsText) {
+    if (!detailsText || typeof detailsText !== 'string') {
+        return null;
+    }
+
+    const momMatch = detailsText.match(/mom=([+-]?\d*\.?\d+)%/i);
+    const avgMatch = detailsText.match(/avg20=\$([+-]?\d*\.?\d+)/i);
+    if (!momMatch && !avgMatch) {
+        return null;
+    }
+
+    return {
+        momentum_score: momMatch ? Number(momMatch[1]) / 100 : null,
+        avg_price: avgMatch ? Number(avgMatch[1]) : null
+    };
+}
+
+function parseLegacyMeanReversionDetails(detailsText) {
+    if (!detailsText || typeof detailsText !== 'string') {
+        return null;
+    }
+
+    const changeMatch = detailsText.match(/avg_change=([+-]?\d*\.?\d+)%/i);
+    if (!changeMatch) {
+        return null;
+    }
+
+    return {
+        avg_change: Number(changeMatch[1]) / 100
+    };
+}
+
+function parseLegacyTrendDetails(detailsText) {
+    if (!detailsText || typeof detailsText !== 'string') {
+        return null;
+    }
+
+    const highMatch = detailsText.match(/high20=\$([+-]?\d*\.?\d+)/i);
+    const lowMatch = detailsText.match(/low20=\$([+-]?\d*\.?\d+)/i);
+    if (!highMatch && !lowMatch) {
+        return null;
+    }
+
+    return {
+        recent_high: highMatch ? Number(highMatch[1]) : null,
+        recent_low: lowMatch ? Number(lowMatch[1]) : null
+    };
+}
+
+function resolveSignalMetrics(prefix, signalInfo) {
+    if (!signalInfo) {
+        return null;
+    }
+
+    if (signalInfo.metrics) {
+        return signalInfo.metrics;
+    }
+
+    if (prefix === 'momentum') {
+        return parseLegacyMomentumDetails(signalInfo.details);
+    }
+    if (prefix === 'meanReversion') {
+        return parseLegacyMeanReversionDetails(signalInfo.details);
+    }
+    if (prefix === 'trend') {
+        return parseLegacyTrendDetails(signalInfo.details);
+    }
+    if (prefix === 'bollinger') {
+        return parseLegacyBollingerDetails(signalInfo.details);
+    }
+
+    return null;
+}
+
+function getStrategyDetailBlock(prefix, signalInfo, summary) {
+    if (signalInfo && (signalInfo.details || signalInfo.metrics)) {
+        const metrics = resolveSignalMetrics(prefix, signalInfo);
+        const lines = [];
+
+        if (prefix === 'momentum' && metrics) {
+            if (metrics.momentum_score !== null && metrics.momentum_score !== undefined) {
+                const mom = Number(metrics.momentum_score);
+                const context = mom >= 0.02 ? 'bullish acceleration' : mom <= -0.02 ? 'bearish acceleration' : 'near neutral momentum';
+                lines.push(`Momentum vs 20d average: ${(mom * 100).toFixed(2)}% (${context})`);
+            }
+            if (metrics.avg_price !== null && metrics.avg_price !== undefined) {
+                lines.push(`20d average price: $${Number(metrics.avg_price).toFixed(2)}`);
+            }
+        }
+
+        if (prefix === 'meanReversion' && metrics) {
+            if (metrics.avg_change !== null && metrics.avg_change !== undefined) {
+                const change = Number(metrics.avg_change);
+                const context = change >= 0.01 ? 'overbought pressure' : change <= -0.01 ? 'oversold pressure' : 'near equilibrium';
+                lines.push(`Average daily change (20d): ${(change * 100).toFixed(2)}% (${context})`);
+            }
+        }
+
+        if (prefix === 'trend' && metrics) {
+            if (metrics.recent_high !== null && metrics.recent_high !== undefined) {
+                lines.push(`20d resistance: $${Number(metrics.recent_high).toFixed(2)}`);
+            }
+            if (metrics.recent_low !== null && metrics.recent_low !== undefined) {
+                lines.push(`20d support: $${Number(metrics.recent_low).toFixed(2)}`);
+            }
+        }
+
+        if (prefix === 'bollinger' && metrics) {
+            const positionText = formatBollingerPosition(metrics.position);
+            lines.push(`Position: ${positionText}`);
+
+            if (metrics.z_score !== null && metrics.z_score !== undefined) {
+                const zValue = Number(metrics.z_score);
+                const zContext = Math.abs(zValue) >= 2 ? 'extreme move' : Math.abs(zValue) >= 1 ? 'elevated move' : 'normal range';
+                lines.push(`Z-score: ${zValue.toFixed(2)} (${zContext})`);
+            }
+
+            if (metrics.band_width_pct !== null && metrics.band_width_pct !== undefined) {
+                lines.push(`Band width: ${(Number(metrics.band_width_pct) * 100).toFixed(2)}%`);
+            }
+
+            if (
+                metrics.lower_band !== null && metrics.lower_band !== undefined &&
+                metrics.middle_band !== null && metrics.middle_band !== undefined &&
+                metrics.upper_band !== null && metrics.upper_band !== undefined
+            ) {
+                lines.push(`Bands: L $${Number(metrics.lower_band).toFixed(2)} | M $${Number(metrics.middle_band).toFixed(2)} | U $${Number(metrics.upper_band).toFixed(2)}`);
+            }
+        }
+
+        if (lines.length > 0) {
+            return {
+                html: lines.map(line => `<div>${escapeHtml(line)}</div>`).join(''),
+                className: 'mt-2 text-xs text-gray-600 space-y-0.5'
+            };
+        }
+
+        return {
+            html: `<div>${escapeHtml(signalInfo.details)}</div>`,
+            className: 'mt-2 text-xs text-gray-600'
+        };
+    }
+
+    if (summary) {
+        const totalReturnPct = summary.totalTrades > 0 && summary.totalReturn !== null && summary.totalReturn !== undefined
+            ? `${(summary.totalReturn * 100).toFixed(1)}%`
+            : 'N/A';
+        const winRatePct = summary.winRate !== null && summary.winRate !== undefined
+            ? `${summary.winRate.toFixed(0)}%`
+            : 'N/A';
+        return {
+            html: `<div>${summary.timeframe} | trades=${summary.totalTrades} | win=${winRatePct} | ret=${totalReturnPct}</div>`,
+            className: 'mt-2 text-xs text-gray-500'
+        };
+    }
+
+    return {
+        html: '<div>No strategy diagnostics available</div>',
+        className: 'mt-2 text-xs text-gray-400'
+    };
+}
+
+function getSignalBadge(signal) {
+    const normalized = (signal || 'HOLD').toUpperCase();
+    if (normalized === 'BUY') {
+        return { label: 'BUY', className: 'bg-green-100 text-green-700' };
+    }
+    if (normalized === 'SELL') {
+        return { label: 'SELL', className: 'bg-red-100 text-red-700' };
+    }
+    return { label: 'HOLD', className: 'bg-gray-100 text-gray-600' };
+}
+
 function renderAlgorithmSections() {
     const strategySummaries = [
         ['trend', getAlgorithmSummary(ALGORITHM_DATA.trend_following)],
         ['momentum', getAlgorithmSummary(ALGORITHM_DATA.momentum)],
-        ['meanReversion', getAlgorithmSummary(ALGORITHM_DATA.mean_reversion)]
+        ['meanReversion', getAlgorithmSummary(ALGORITHM_DATA.mean_reversion)],
+        ['bollinger', getAlgorithmSummary(ALGORITHM_DATA.bollinger)]
     ];
 
     strategySummaries.forEach(([prefix, summary]) => {
-        updateStrategySection(prefix, summary);
+        const signalInfo = getDirectionalSignalForCard(prefix);
+        updateStrategySection(prefix, summary, signalInfo);
     });
 }
 
-function updateStrategySection(prefix, summary) {
+function updateStrategySection(prefix, summary, signalInfo) {
     const statusElement = document.getElementById(`${prefix}Status`);
     const winRateEl = document.getElementById(`${prefix}WinRate`);
     const returnEl = document.getElementById(`${prefix}Sharpe`);
-    const status = getStrategyStatus(summary);
+    const detailEl = document.getElementById(`${prefix}Detail`);
+    const status = signalInfo ? getSignalBadge(signalInfo.signal) : getStrategyStatus(summary);
 
     if (statusElement) {
         statusElement.textContent = status.label;
@@ -1475,7 +1824,10 @@ function updateStrategySection(prefix, summary) {
     }
 
     if (winRateEl) {
-        if (summary && summary.winRate !== null) {
+        if (signalInfo) {
+            winRateEl.textContent = `${signalInfo.confidence}%`;
+            winRateEl.className = `font-semibold ${signalInfo.confidence >= 50 ? 'text-green-600' : 'text-yellow-600'}`;
+        } else if (summary && summary.winRate !== null) {
             winRateEl.textContent = `${summary.winRate.toFixed(0)}%`;
             winRateEl.className = `font-semibold ${summary.winRate >= 50 ? 'text-green-600' : 'text-red-600'}`;
         } else {
@@ -1485,15 +1837,24 @@ function updateStrategySection(prefix, summary) {
     }
 
     if (returnEl) {
-        if (summary && summary.totalReturn !== null && summary.totalReturn !== undefined) {
+        if (summary && summary.totalTrades > 0 && summary.totalReturn !== null && summary.totalReturn !== undefined) {
             const totalReturnPct = summary.totalReturn * 100;
             const returnPrefix = totalReturnPct > 0 ? '+' : '';
             returnEl.textContent = `${returnPrefix}${totalReturnPct.toFixed(1)}%`;
             returnEl.className = `font-semibold ${getTailwindPerformanceClass(summary.totalReturn)}`;
+        } else if (summary && summary.totalTrades === 0) {
+            returnEl.textContent = 'No trades';
+            returnEl.className = 'font-semibold text-gray-500';
         } else {
             returnEl.textContent = 'N/A';
             returnEl.className = 'font-semibold text-gray-500';
         }
+    }
+
+    if (detailEl) {
+        const detailBlock = getStrategyDetailBlock(prefix, signalInfo, summary);
+        detailEl.innerHTML = detailBlock.html;
+        detailEl.className = detailBlock.className;
     }
 }
 
@@ -2036,7 +2397,8 @@ function refreshData() {
     ALGORITHM_DATA = {
         'trend_following': { '30d': null, '90d': null, '1y': null },
         'momentum': { '30d': null, '90d': null, '1y': null },
-        'mean_reversion': { '30d': null, '90d': null, '1y': null }
+        'mean_reversion': { '30d': null, '90d': null, '1y': null },
+        'bollinger': { '30d': null, '90d': null, '1y': null }
     };
     
     // Reload all data

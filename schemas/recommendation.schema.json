@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stocks/recommendation.schema.json",
+  "title": "Recommendation Payload",
+  "type": "object",
+  "required": ["symbol", "analysis_date", "recommendations"],
+  "properties": {
+    "symbol": { "type": "string", "minLength": 1 },
+    "analysis_date": { "type": "string", "minLength": 1 },
+    "recommendations": {
+      "type": "object",
+      "required": [
+        "action",
+        "confidence",
+        "entry_price",
+        "stop_loss",
+        "take_profit",
+        "risk_reward",
+        "risk_level",
+        "signals",
+        "details",
+        "time_estimate",
+        "benchmark",
+        "metrics"
+      ],
+      "properties": {
+        "action": { "type": "string", "enum": ["BUY", "SELL", "HOLD"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "entry_price": { "type": ["number", "null"] },
+        "stop_loss": { "type": ["number", "null"] },
+        "take_profit": { "type": ["number", "null"] },
+        "risk_reward": { "type": ["number", "null"] },
+        "risk_level": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "N/A"] },
+        "risk_pct": { "type": ["number", "null"] },
+        "reward_pct": { "type": ["number", "null"] },
+        "position_size": {},
+        "signals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["strategy", "signal", "confidence", "details", "metrics"],
+            "properties": {
+              "strategy": { "type": "string" },
+              "signal": { "type": "string", "enum": ["BUY", "SELL", "HOLD"] },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "details": { "type": "string" },
+              "metrics": { "type": "object", "additionalProperties": true }
+            },
+            "additionalProperties": false
+          }
+        },
+        "details": { "type": "string" },
+        "time_estimate": { "type": ["object", "null"], "additionalProperties": true },
+        "benchmark": {
+          "type": "object",
+          "required": ["spy_return_pct", "period_days"],
+          "properties": {
+            "spy_return_pct": { "type": ["number", "null"] },
+            "period_days": { "type": ["integer", "null"], "minimum": 1 }
+          },
+          "additionalProperties": true
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

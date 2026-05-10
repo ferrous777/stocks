@@ -125,6 +125,41 @@ stocks/
   - `take_profit` (float): Take profit target price
   - `reasoning` (string): Human-readable explanation
 
+### Trading Recommendations Contract (Current)
+
+The runtime contract used by the web app and API is now enforced through
+normalization and validation helpers in [utils/recommendation_contract.py](../utils/recommendation_contract.py)
+and mirrored in JSON Schema at [schemas/recommendation.schema.json](../schemas/recommendation.schema.json).
+
+Required top-level keys:
+
+```json
+{
+  "symbol": "AMD",
+  "analysis_date": "20260509",
+  "recommendations": { }
+}
+```
+
+Required `recommendations` keys:
+
+- `action`: `BUY | SELL | HOLD`
+- `confidence`: number in `[0, 1]`
+- `entry_price`, `stop_loss`, `take_profit`: number or `null`
+- `risk_reward`: number or `null`
+- `risk_level`: `LOW | MEDIUM | HIGH | N/A`
+- `signals`: array
+- `details`: string
+- `time_estimate`: object or `null`
+- `benchmark`: object with `spy_return_pct` and `period_days`
+- `metrics`: object (flexible key-value store)
+
+Contract rules:
+
+- HOLD recommendations are neutralized (`stop_loss == take_profit == entry_price` when entry exists).
+- No fabricated benchmark values are allowed; if unavailable, `spy_return_pct` must be `null`.
+- Flexible extension data must go into `recommendations.metrics` so new fields do not break consumers.
+
 ### Backtest Results Schema
 
 **File Pattern**: `results/{SYMBOL}_backtest_{YYYYMMDD}.json`

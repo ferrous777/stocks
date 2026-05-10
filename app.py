@@ -15,6 +15,10 @@ from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_cors import CORS
 import pandas as pd
 from analysis.fund_analyzer import FundAnalyzer
+from utils.recommendation_contract import (
+    normalize_recommendation_payload,
+    validate_recommendation_payload,
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -181,6 +185,71 @@ def generate_recommendations_from_strategies(symbol, strategy_results, date):
     """Generate recommendations from strategy results, including time estimates."""
     if not strategy_results:
         return None
+
+    def extract_strategy_metrics(strategy_name, result):
+        """Expose deterministic per-strategy metrics for richer UI diagnostics."""
+        if not isinstance(result, dict):
+            return {}
+
+        if strategy_name == 'momentum_strategy':
+            return {
+                'momentum_score': result.get('momentum_score'),
+                'avg_price': result.get('avg_price')
+            }
+
+        if strategy_name == 'mean_reversion_strategy':
+            return {
+                'avg_change': result.get('avg_change')
+            }
+
+        if strategy_name == 'breakout_strategy':
+            return {
+                'recent_high': result.get('recent_high'),
+                'recent_low': result.get('recent_low')
+            }
+
+        if strategy_name == 'bollinger_strategy':
+            return {
+                'z_score': result.get('z_score'),
+                'band_width_pct': result.get('band_width_pct'),
+                'position': result.get('position'),
+                'upper_band': result.get('upper_band'),
+                'middle_band': result.get('middle_band'),
+                'lower_band': result.get('lower_band')
+            }
+
+        return {}
+
+    def format_strategy_details(strategy_name, result):
+        """Build compact, deterministic detail text for per-strategy diagnostics."""
+        if not isinstance(result, dict):
+            return ''
+
+        if strategy_name == 'momentum_strategy':
+            momentum_score = result.get('momentum_score')
+            avg_price = result.get('avg_price')
+            if momentum_score is not None and avg_price is not None:
+                return f"Momentum vs 20d average: {momentum_score:+.2%}; 20d average price: ${avg_price:.2f}"
+
+        if strategy_name == 'mean_reversion_strategy':
+            avg_change = result.get('avg_change')
+            if avg_change is not None:
+                return f"Average daily change (20d): {avg_change:+.2%}"
+
+        if strategy_name == 'breakout_strategy':
+            recent_high = result.get('recent_high')
+            recent_low = result.get('recent_low')
+            if recent_high is not None and recent_low is not None:
+                return f"20d breakout range - resistance: ${recent_high:.2f}, support: ${recent_low:.2f}"
+
+        if strategy_name == 'bollinger_strategy':
+            z_score = result.get('z_score')
+            band_width = result.get('band_width_pct')
+            position = result.get('position')
+            if z_score is not None and band_width is not None and position is not None:
+                return f"Price is {position.replace('_', ' ')}, z-score {z_score:+.2f}, band width {band_width:.2%}"
+
+        return ''
     
     # Collect all signals
     signals = []
@@ -189,21 +258,26 @@ def generate_recommendations_from_strategies(symbol, strategy_results, date):
             signals.append({
                 'strategy': strategy_name,
                 'signal': result.get('signal', 'HOLD'),
-                'confidence': result.get('confidence', 0.5)
+                'confidence': result.get('confidence', 0.5),
+                'details': format_strategy_details(strategy_name, result),
+                'metrics': extract_strategy_metrics(strategy_name, result)
             })
     
     if not signals:
         return None
     
-    # Determine consensus action
-    buy_count = sum(1 for s in signals if s['signal'] == 'BUY')
-    sell_count = sum(1 for s in signals if s['signal'] == 'SELL')
+    # Determine consensus action using confidence-weighted scoring so strong
+    # directional signals win over a same-count but weaker opposing side.
+    buy_confidence = sum(s['confidence'] for s in signals if s['signal'] == 'BUY')
+    sell_confidence = sum(s['confidence'] for s in signals if s['signal'] == 'SELL')
     hold_count = sum(1 for s in signals if s['signal'] == 'HOLD')
-    
-    if buy_count > sell_count and buy_count > hold_count:
+
+    if buy_confidence > sell_confidence and buy_confidence > 0:
         action = 'BUY'
-    elif sell_count > buy_count and sell_count > hold_count:
+    elif sell_confidence > buy_confidence and sell_confidence > 0:
         action = 'SELL'
+    elif hold_count > 0:
+        action = 'HOLD'
     else:
         action = 'HOLD'
     
@@ -212,7 +286,7 @@ def generate_recommendations_from_strategies(symbol, strategy_results, date):
     
     # Get current price and historical data from cache
     cache_file = os.path.join(CACHE_DIR, f'{symbol}_historical.json')
-    current_price = 100.0  # default
+    current_price = None
     data_points = []
     if os.path.exists(cache_file):
         try:
@@ -223,28 +297,28 @@ def generate_recommendations_from_strategies(symbol, strategy_results, date):
                     # Sort by date and get latest
                     sorted_points = sorted(data_points, key=lambda x: x.get('date', ''))
                     if sorted_points:
-                        current_price = sorted_points[-1].get('close', 100.0)
+                        current_price = sorted_points[-1].get('close')
         except Exception as e:
             print(f"Error reading cache for {symbol}: {e}")
     
     # Calculate stop loss and take profit
-    if action == 'BUY':
+    if action == 'BUY' and current_price is not None:
         stop_loss = current_price * 0.95  # 5% below
         take_profit = current_price * 1.10  # 10% above
         direction = 'long'
-    elif action == 'SELL':
+    elif action == 'SELL' and current_price is not None:
         stop_loss = current_price * 1.05  # 5% above
         take_profit = current_price * 0.90  # 10% below
         direction = 'short'
     else:
-        # HOLD is neutral: no directional target should be implied.
+        # HOLD and missing prices should remain neutral/non-directional.
         stop_loss = current_price
         take_profit = current_price
         direction = 'neutral'
     
     # Generate time estimate
     time_estimate = None
-    if len(data_points) >= 30 and action != 'HOLD':
+    if len(data_points) >= 30 and action != 'HOLD' and current_price is not None and stop_loss is not None and take_profit is not None:
         try:
             from time_estimation import create_default_ensemble
             ensemble = create_default_ensemble()
@@ -259,8 +333,8 @@ def generate_recommendations_from_strategies(symbol, strategy_results, date):
                 time_estimate = estimate.to_dict()
         except Exception as e:
             print(f"Time estimation error for {symbol}: {e}")
-    
-    return {
+
+    raw_payload = {
         'action': action,
         'confidence': avg_confidence,
         'entry_price': current_price,
@@ -268,8 +342,24 @@ def generate_recommendations_from_strategies(symbol, strategy_results, date):
         'take_profit': take_profit,
         'signals': signals,
         'details': f'{action} signal based on {len(signals)} strategies',
-        'time_estimate': time_estimate
+        'time_estimate': time_estimate,
+        'benchmark': {
+            'spy_return_pct': None,
+            'period_days': round(time_estimate.get('days_to_target')) if isinstance(time_estimate, dict) and time_estimate.get('days_to_target') else None,
+        },
+        'metrics': {}
     }
+
+    normalized = normalize_recommendation_payload(
+        {'symbol': symbol, 'analysis_date': str(date), 'recommendations': raw_payload},
+        symbol=symbol,
+        analysis_date=str(date),
+        fallback_price=current_price,
+    )
+    valid, errors = validate_recommendation_payload(normalized)
+    if not valid:
+        print(f"Recommendation schema validation failed for {symbol}: {'; '.join(errors)}")
+    return normalized['recommendations']
 
 def load_config():
     """Load system configuration from YAML file."""
@@ -356,7 +446,7 @@ def get_available_dates():
 def load_backtest_results(symbol, date):
     """Load backtest results for a specific symbol and date."""
     # Check if this is an algorithm-specific request (contains algorithm and timeframe)
-    if '_' in symbol and any(alg in symbol for alg in ['trend_following', 'momentum', 'mean_reversion']):
+    if '_' in symbol and any(alg in symbol for alg in ['trend_following', 'momentum', 'mean_reversion', 'bollinger']):
         # This is an algorithm-specific request like "AAPL_trend_following_30d"
         # The file format is: AAPL_backtest_trend_following_30d_20250616.json
         # But the symbol comes in as: AAPL_trend_following_30d
@@ -402,24 +492,33 @@ def load_backtest_results(symbol, date):
 def load_recommendations(symbol, date):
     """Load recommendations for a specific symbol and date."""
 
-    def normalize_hold_payload(payload):
-        """Normalize HOLD recommendations to avoid implied directional targets."""
-        if not payload or 'recommendations' not in payload:
-            return payload
+    def get_latest_cached_close() -> float | None:
+        historical_data = load_historical_data(symbol)
+        if not historical_data:
+            return None
+        points = historical_data.get('data_points') or historical_data.get('data') or []
+        if not points:
+            return None
+        latest = points[-1] if isinstance(points[-1], dict) else None
+        if not latest:
+            return None
+        try:
+            return float(latest.get('close'))
+        except (TypeError, ValueError):
+            return None
 
-        recommendation = payload.get('recommendations') or {}
-        if (recommendation.get('action') or '').upper() != 'HOLD':
-            return payload
-
-        entry_price = recommendation.get('entry_price')
-        if entry_price is None:
-            return payload
-
-        recommendation['stop_loss'] = entry_price
-        recommendation['take_profit'] = entry_price
-        recommendation['risk_reward'] = 0
-        recommendation['position_size'] = 0
-        return payload
+    def normalize_payload(payload):
+        fallback_price = get_latest_cached_close()
+        normalized = normalize_recommendation_payload(
+            payload,
+            symbol=symbol,
+            analysis_date=str(date),
+            fallback_price=fallback_price,
+        )
+        valid, errors = validate_recommendation_payload(normalized)
+        if not valid:
+            print(f"Recommendation schema validation failed for {symbol} ({date}): {'; '.join(errors)}")
+        return normalized
 
     # Try individual symbol file first (old format)
     filename = f"{symbol}_recommendations_{date}.json"
@@ -427,7 +526,7 @@ def load_recommendations(symbol, date):
     
     if os.path.exists(filepath):
         with open(filepath, 'r') as f:
-            return normalize_hold_payload(json.load(f))
+            return normalize_payload(json.load(f))
     
     # Try combined recommendations file (new format)
     combined_filename = f"recommendations_{date}.json"
@@ -440,13 +539,7 @@ def load_recommendations(symbol, date):
                 symbol_data = data[symbol]
                 
                 # Get current price from historical data
-                historical_data = load_historical_data(symbol)
-                current_price = 0
-                if historical_data and (historical_data.get('data_points') or historical_data.get('data')):
-                    # Get the most recent price from either data_points or data
-                    price_data = historical_data.get('data_points') or historical_data.get('data')
-                    if price_data:
-                        current_price = price_data[-1].get('close', 0)
+                current_price = get_latest_cached_close() or 0
                 
                 # Determine the primary action based on strongest signal
                 strongest_signal = "HOLD"
@@ -499,7 +592,7 @@ def load_recommendations(symbol, date):
                     confidence = strategy_data.get('confidence', 0)
                     reasoning_parts.append(f"{strategy_name} ({signal}, {confidence:.1%}): {reason}")
                 
-                return normalize_hold_payload({
+                return normalize_payload({
                     "symbol": symbol,
                     "analysis_date": date,
                     "recommendations": {

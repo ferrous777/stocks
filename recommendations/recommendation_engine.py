@@ -71,21 +71,44 @@ class RecommendationEngine:
             if not signals:
                 continue
             
-            # Determine consensus action
+            # Determine consensus action using confidence-weighted directional score.
+            # This prevents strong bullish signals from being cancelled by an equal
+            # number of bearish signals with weaker confidence.
             long_signals = [s for s in signals if s["signal"] == "long"]
             short_signals = [s for s in signals if s["signal"] == "short"]
             exit_signals = [s for s in signals if s["signal"] == "exit"]
-            
-            if long_signals and len(long_signals) > len(short_signals):
+
+            weighted_score = sum(
+                s["confidence"] if s["signal"] == "long" else -s["confidence"] if s["signal"] == "short" else 0
+                for s in signals
+            )
+            total_directional_confidence = sum(
+                s["confidence"] for s in signals if s["signal"] in {"long", "short"}
+            )
+
+            action = "HOLD"
+            supporting_signals = []
+
+            # Require a clear directional edge, not just a tie-break by count.
+            directional_edge = abs(weighted_score)
+            min_edge = max(0.15, total_directional_confidence * 0.15)
+
+            if weighted_score > 0 and directional_edge >= min_edge and long_signals:
                 action = "BUY"
                 supporting_signals = long_signals
-            elif short_signals and len(short_signals) > len(long_signals):
+            elif weighted_score < 0 and directional_edge >= min_edge and short_signals:
                 action = "SELL"
                 supporting_signals = short_signals
-            elif exit_signals:
+            elif exit_signals and not long_signals and not short_signals:
+                action = "EXIT"
+                supporting_signals = exit_signals
+            elif abs(weighted_score) < min_edge and exit_signals:
+                # If the directional score is weak/neutral, prefer EXIT only when
+                # the strategies actually agree on exit instead of inventing BUY/SELL.
                 action = "EXIT"
                 supporting_signals = exit_signals
             else:
+                # Preserve HOLD explicitly when the signal set is conflicted.
                 continue
             
             # Calculate aggregate confidence

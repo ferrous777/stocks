@@ -721,6 +721,7 @@ class StrategyRunner:
         strategies_results.update(self._run_momentum_strategy(historical_data))
         strategies_results.update(self._run_mean_reversion_strategy(historical_data))
         strategies_results.update(self._run_breakout_strategy(historical_data))
+        strategies_results.update(self._run_bollinger_strategy(historical_data))
         
         return strategies_results
     
@@ -758,8 +759,10 @@ class StrategyRunner:
         price_changes = []
         
         for i in range(1, len(recent_data)):
-            change = recent_data[i].close - recent_data[i-1].close
-            price_changes.append(change)
+            prev_close = recent_data[i-1].close
+            if prev_close:
+                change_pct = (recent_data[i].close - prev_close) / prev_close
+                price_changes.append(change_pct)
         
         if not price_changes:
             return {}
@@ -813,6 +816,63 @@ class StrategyRunner:
                 'confidence': confidence,
                 'recent_high': recent_high,
                 'recent_low': recent_low
+            }
+        }
+
+    def _run_bollinger_strategy(self, data: List[DailySnapshot]) -> Dict[str, any]:
+        """Bollinger Bands strategy using 20-day SMA and 2 std-dev bands."""
+        if len(data) < 20:
+            return {}
+
+        closes = [d.close for d in data[-20:]]
+        current_price = closes[-1]
+        sma20 = sum(closes) / len(closes)
+        variance = sum((price - sma20) ** 2 for price in closes) / len(closes)
+        std_dev = variance ** 0.5
+
+        # Flat markets (std_dev ~ 0) provide no meaningful band signal.
+        if std_dev <= 0:
+            return {
+                'bollinger_strategy': {
+                    'signal': 'HOLD',
+                    'confidence': 0.1,
+                    'upper_band': sma20,
+                    'lower_band': sma20,
+                    'middle_band': sma20,
+                    'band_width_pct': 0.0,
+                    'z_score': 0.0,
+                    'position': 'center'
+                }
+            }
+
+        upper_band = sma20 + (2 * std_dev)
+        lower_band = sma20 - (2 * std_dev)
+        z_score = (current_price - sma20) / std_dev
+        band_width_pct = ((upper_band - lower_band) / sma20) if sma20 else 0.0
+
+        if current_price <= lower_band:
+            signal = 'BUY'
+            confidence = min(1.0, max(0.2, abs(z_score) / 2.5))
+            position = 'below_lower'
+        elif current_price >= upper_band:
+            signal = 'SELL'
+            confidence = min(1.0, max(0.2, abs(z_score) / 2.5))
+            position = 'above_upper'
+        else:
+            signal = 'HOLD'
+            confidence = 0.1
+            position = 'inside_bands'
+
+        return {
+            'bollinger_strategy': {
+                'signal': signal,
+                'confidence': confidence,
+                'upper_band': upper_band,
+                'lower_band': lower_band,
+                'middle_band': sma20,
+                'band_width_pct': band_width_pct,
+                'z_score': z_score,
+                'position': position
             }
         }
 

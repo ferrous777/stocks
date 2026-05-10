@@ -179,6 +179,24 @@ class Strategy(ABC):
             "buy_and_hold": buy_and_hold,
             "strategy_returns": strategy_returns
         }
+
+    def normalize_signal_for_backtest(self, signal: str) -> SignalType:
+        """Map strategy-specific signal labels to canonical backtest actions."""
+        if not signal:
+            return "hold"
+
+        mapped = signal.lower().strip()
+        alias_map = {
+            "buy": "long",
+            "sell": "short",
+            "close": "exit",
+            "flat": "exit"
+        }
+        normalized = alias_map.get(mapped, mapped)
+
+        if normalized in {"long", "short", "exit", "hold"}:
+            return normalized
+        return "hold"
     
     @abstractmethod
     def analyze(self, date: Optional[datetime] = None) -> Dict[str, Dict[str, any]]:
@@ -212,6 +230,7 @@ class Strategy(ABC):
                 current_close = point.close
                 
                 signal, confidence, details = self.generate_signals(data_points, i)
+                signal = self.normalize_signal_for_backtest(signal)
                 
                 # Handle entry signals
                 if position is None and signal in ['long', 'short']:

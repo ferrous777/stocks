@@ -12,9 +12,9 @@ class MomentumStrategy(Strategy):
         )
         self.rsi_period = 14
         self.roc_period = 10
-        self.rsi_oversold = 30
-        self.rsi_overbought = 70
-        self.min_momentum = 0.05
+        self.rsi_buy_threshold = 55
+        self.rsi_sell_threshold = 45
+        self.min_momentum = 0.02
         self.profit_target = 0.12
         self.stop_loss = 0.06
         
@@ -92,17 +92,20 @@ class MomentumStrategy(Strategy):
         
         current_price = prices[-1]
         
-        # Generate signals
-        if rsi < self.rsi_oversold and roc > self.min_momentum:
-            confidence = min(0.9, (self.rsi_oversold - rsi) / 20 + abs(roc) * 2)
-            return "buy", confidence, f"Oversold RSI ({rsi:.1f}) with positive momentum ({roc:.3f})"
-        
-        elif rsi > self.rsi_overbought and roc < -self.min_momentum:
-            confidence = min(0.9, (rsi - self.rsi_overbought) / 20 + abs(roc) * 2)
-            return "sell", confidence, f"Overbought RSI ({rsi:.1f}) with negative momentum ({roc:.3f})"
-        
-        else:
-            return "hold", 0.0, f"Neutral momentum: RSI {rsi:.1f}, ROC {roc:.3f}"
+        # Momentum entries: trend direction and velocity must align.
+        if rsi >= self.rsi_buy_threshold and roc >= self.min_momentum:
+            confidence = min(0.95, ((rsi - self.rsi_buy_threshold) / 35) + (abs(roc) * 2.5))
+            return "buy", confidence, f"Up-momentum: RSI {rsi:.1f}, ROC {roc:.3f}"
+
+        if rsi <= self.rsi_sell_threshold and roc <= -self.min_momentum:
+            confidence = min(0.95, ((self.rsi_sell_threshold - rsi) / 35) + (abs(roc) * 2.5))
+            return "sell", confidence, f"Down-momentum: RSI {rsi:.1f}, ROC {roc:.3f}"
+
+        # Exit when momentum fades near neutral range.
+        if abs(roc) < 0.005 and 47 <= rsi <= 53:
+            return "exit", 0.5, f"Momentum fading: RSI {rsi:.1f}, ROC {roc:.3f}"
+
+        return "hold", 0.0, f"Neutral momentum: RSI {rsi:.1f}, ROC {roc:.3f}"
     
     def get_min_required_points(self) -> int:
         return max(self.rsi_period, self.roc_period) + 1
