@@ -2,6 +2,7 @@ import argparse
 from datetime import datetime, timedelta
 import json
 import os
+import yaml
 from market_data.market_data import MarketData, FundamentalsError
 from market_data.market_data_storage import MarketDataStorage, CacheWriteError
 from strategies.strategy import Strategy
@@ -13,29 +14,17 @@ from typing import Dict, List
 from recommendations.recommendation_engine import RecommendationEngine
 from utils.results_manager import ResultsManager
 
-DEFAULT_SYMBOLS_FILE = "src/data/default_symbols.json"
-
-def ensure_data_dir():
-    """Ensure the data directory exists and create default symbols file if needed"""
-    os.makedirs(os.path.dirname(DEFAULT_SYMBOLS_FILE), exist_ok=True)
-    
-    # Create default symbols file if it doesn't exist
-    if not os.path.exists(DEFAULT_SYMBOLS_FILE):
-        default_symbols = [
-            "AAPL",
-            "MSFT",
-            "GOOGL",
-            "AMZN",
-            "NVDA",
-            "COST"
-        ]
-        with open(DEFAULT_SYMBOLS_FILE, 'w') as f:
-            json.dump(default_symbols, f, indent=4)
+DEFAULT_CONFIG_FILE = "config/system_config.yaml"
 
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Stock Market Analysis Tool')
-    parser.add_argument('--source', type=str, default='src/data/default_symbols.json', help='JSON file with symbols to analyze')
+    parser.add_argument(
+        '--source',
+        type=str,
+        default=DEFAULT_CONFIG_FILE,
+        help='Config source for symbols (YAML system config or JSON symbol list)'
+    )
     parser.add_argument('--symbol', type=str, help='Individual stock symbol(s) (e.g., AAPL or AAPL MSFT)')
     parser.add_argument('--start', type=str, help='Start date (YYYY-MM-DD)', 
                        default=(datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d'))
@@ -201,20 +190,36 @@ def format_grouped_table(all_results: Dict[str, Dict[str, Dict]], symbol: str) -
     return f"\n{symbol} Results:\n" + tabulate(rows, headers=headers, tablefmt="grid")
 
 def load_symbols(source_file: str) -> List[str]:
-    """Load symbols from JSON file"""
-    ensure_data_dir()
-    
+    """Load symbols from config YAML (preferred) or JSON list."""
     if not os.path.exists(source_file):
         raise FileNotFoundError(f"Symbols file not found: {source_file}")
-        
+
+    _, extension = os.path.splitext(source_file.lower())
+
+    if extension in {'.yaml', '.yml'}:
+        with open(source_file, 'r') as f:
+            try:
+                data = yaml.safe_load(f) or {}
+            except yaml.YAMLError as e:
+                raise ValueError(f"Invalid YAML in symbols config: {source_file}") from e
+
+        symbol_configs = data.get('symbols') if isinstance(data, dict) else None
+        if not isinstance(symbol_configs, list):
+            raise ValueError("YAML symbols config must contain a 'symbols' list")
+
+        symbols = [item.get('symbol') for item in symbol_configs if item.get('enabled', True) and item.get('symbol')]
+        if not symbols:
+            raise ValueError("No enabled symbols found in YAML config")
+        return symbols
+
     with open(source_file, 'r') as f:
         try:
             data = json.load(f)
             if not isinstance(data, list):
-                raise ValueError("Symbols file must contain a list of symbols")
+                raise ValueError("JSON symbols file must contain a list of symbols")
             return data
-        except json.JSONDecodeError:
-            raise ValueError(f"Invalid JSON in symbols file: {source_file}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in symbols file: {source_file}") from e
 
 def format_analysis_table(results: Dict[str, Dict], strategy_name: str) -> str:
     """Format analysis results as a table, grouped by strategy"""

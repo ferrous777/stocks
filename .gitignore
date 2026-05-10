@@ -59,6 +59,7 @@ data/test_timeseries.db
 deployment_manifest.json
 server_cleanup_report.md
 deployment_validation_report.md
+scripts/reports/*.md
 
 # Test artifacts
 *.pyc

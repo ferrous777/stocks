@@ -237,9 +237,10 @@ def generate_recommendations_from_strategies(symbol, strategy_results, date):
         take_profit = current_price * 0.90  # 10% below
         direction = 'short'
     else:
-        stop_loss = current_price * 0.97
-        take_profit = current_price * 1.03
-        direction = 'long'  # Default for HOLD
+        # HOLD is neutral: no directional target should be implied.
+        stop_loss = current_price
+        take_profit = current_price
+        direction = 'neutral'
     
     # Generate time estimate
     time_estimate = None
@@ -400,13 +401,33 @@ def load_backtest_results(symbol, date):
 
 def load_recommendations(symbol, date):
     """Load recommendations for a specific symbol and date."""
+
+    def normalize_hold_payload(payload):
+        """Normalize HOLD recommendations to avoid implied directional targets."""
+        if not payload or 'recommendations' not in payload:
+            return payload
+
+        recommendation = payload.get('recommendations') or {}
+        if (recommendation.get('action') or '').upper() != 'HOLD':
+            return payload
+
+        entry_price = recommendation.get('entry_price')
+        if entry_price is None:
+            return payload
+
+        recommendation['stop_loss'] = entry_price
+        recommendation['take_profit'] = entry_price
+        recommendation['risk_reward'] = 0
+        recommendation['position_size'] = 0
+        return payload
+
     # Try individual symbol file first (old format)
     filename = f"{symbol}_recommendations_{date}.json"
     filepath = os.path.join(RESULTS_DIR, filename)
     
     if os.path.exists(filepath):
         with open(filepath, 'r') as f:
-            return json.load(f)
+            return normalize_hold_payload(json.load(f))
     
     # Try combined recommendations file (new format)
     combined_filename = f"recommendations_{date}.json"
@@ -465,10 +486,10 @@ def load_recommendations(symbol, date):
                         stop_loss = current_price * 1.05  # 5% stop loss (price going up)
                         take_profit = current_price * 0.90  # 10% take profit (price going down)
                     else:  # HOLD
-                        # For hold signals: just set current price levels
+                        # For hold signals: no directional target should be implied
                         entry_price = current_price
-                        stop_loss = current_price * 0.90  # 10% stop loss
-                        take_profit = current_price * 1.15  # 15% take profit
+                        stop_loss = current_price
+                        take_profit = current_price
                 
                 # Build reasoning from all strategies
                 reasoning_parts = []
@@ -478,7 +499,7 @@ def load_recommendations(symbol, date):
                     confidence = strategy_data.get('confidence', 0)
                     reasoning_parts.append(f"{strategy_name} ({signal}, {confidence:.1%}): {reason}")
                 
-                return {
+                return normalize_hold_payload({
                     "symbol": symbol,
                     "analysis_date": date,
                     "recommendations": {
@@ -491,7 +512,7 @@ def load_recommendations(symbol, date):
                         "primary_strategy": primary_strategy,
                         "current_price": round(current_price, 2)
                     }
-                }
+                })
     
     return None
 

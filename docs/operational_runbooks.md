@@ -164,7 +164,7 @@ export FLASK_DEBUG=False
 
 #### Configuration Files
 - `config.py` - Flask application configuration
-- `src/data/default_symbols.json` - Default symbol list
+- `config/system_config.yaml` - Enabled symbol list for site and scheduler
 - `wsgi.py` - WSGI configuration for production
 
 ---
@@ -266,7 +266,7 @@ rsync -av results/ cache/ logs/ /backup/location/
 # Backup configuration files
 tar -czf config_backup_$(date +%Y%m%d).tar.gz \
   config.py wsgi.py requirements.txt \
-  src/data/default_symbols.json
+  config/system_config.yaml
 ```
 
 ### Recovery Procedures

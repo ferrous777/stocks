@@ -1154,8 +1154,8 @@ class PythonAnywhereSchedulerHook:
                 current_price = historical_data.data_points[-1].close if historical_data.data_points else 0
                 
                 # Risk management parameters
-                stop_loss_percent = 0.03  # 3% stop loss for HOLD positions
-                take_profit_percent = 0.08  # 8% take profit for HOLD positions
+                stop_loss_percent = 0.03
+                take_profit_percent = 0.08
                 
                 if final_action == "BUY":
                     stop_loss_percent = 0.025  # 2.5% for BUY signals
@@ -1165,24 +1165,30 @@ class PythonAnywhereSchedulerHook:
                     take_profit_percent = 0.10   # 10% for SELL signals
                 
                 # Calculate levels based on action type
-                if final_action == "SELL":
+                if final_action == "HOLD":
+                    # HOLD is neutral: do not imply a directional target.
+                    stop_loss = current_price
+                    take_profit = current_price
+                elif final_action == "SELL":
                     # For short positions
                     stop_loss = current_price * (1 + stop_loss_percent)
                     take_profit = current_price * (1 - take_profit_percent)
                 else:
-                    # For long positions (BUY and HOLD)
+                    # For long positions (BUY)
                     stop_loss = current_price * (1 - stop_loss_percent)
                     take_profit = current_price * (1 + take_profit_percent)
                 
                 # Calculate risk/reward ratio
                 risk = abs(current_price - stop_loss)
                 reward = abs(take_profit - current_price)
-                risk_reward = reward / risk if risk > 0 else 1.0
+                risk_reward = reward / risk if risk > 0 else 0.0
                 
                 # Calculate position size based on 2% account risk
                 account_risk = 10000 * 0.02  # $200 risk per trade on $10k account
-                position_size = int(account_risk / risk) if risk > 0 else 100
+                position_size = int(account_risk / risk) if risk > 0 else 0
                 position_size = max(1, min(position_size, 1000))  # Between 1 and 1000 shares
+                if final_action == "HOLD":
+                    position_size = 0
                 
                 return {
                     "action": final_action,
@@ -1202,29 +1208,24 @@ class PythonAnywhereSchedulerHook:
                 # Fallback recommendation with proper risk management
                 current_price = historical_data.data_points[-1].close if historical_data.data_points else 100
                 
-                # Conservative HOLD parameters for fallback
-                stop_loss_percent = 0.05  # 5% stop loss
-                take_profit_percent = 0.05  # 5% take profit
-                
-                stop_loss = current_price * (1 - stop_loss_percent)
-                take_profit = current_price * (1 + take_profit_percent)
+                # Conservative neutral HOLD parameters for fallback
+                stop_loss = current_price
+                take_profit = current_price
                 
                 # Calculate risk/reward ratio
                 risk = abs(current_price - stop_loss)
                 reward = abs(take_profit - current_price)
-                risk_reward = reward / risk if risk > 0 else 1.0
+                risk_reward = reward / risk if risk > 0 else 0.0
                 
-                # Conservative position size
-                account_risk = 10000 * 0.01  # $100 risk for fallback recommendations
-                position_size = int(account_risk / risk) if risk > 0 else 50
-                position_size = max(1, min(position_size, 500))  # Between 1 and 500 shares
+                # No active position for fallback HOLD
+                position_size = 0
                 
                 return {
                     "action": "HOLD",
                     "type": "HOLD",
                     "confidence": 0.5,
                     "supporting_strategies": [],
-                    "details": "No strategy analysis available - Conservative HOLD with risk management",
+                    "details": "No strategy analysis available - Neutral HOLD (no directional target)",
                     "entry_price": current_price,
                     "stop_loss": round(stop_loss, 2),
                     "take_profit": round(take_profit, 2),
@@ -1239,22 +1240,22 @@ class PythonAnywhereSchedulerHook:
             # Error fallback with basic risk management
             fallback_price = 100  # Default price if no data available
             
-            stop_loss = fallback_price * 0.95  # 5% below
-            take_profit = fallback_price * 1.05  # 5% above
+            stop_loss = fallback_price
+            take_profit = fallback_price
             risk = fallback_price - stop_loss
             reward = take_profit - fallback_price
-            risk_reward = reward / risk if risk > 0 else 1.0
+            risk_reward = reward / risk if risk > 0 else 0.0
             
             return {
                 "action": "HOLD",
                 "type": "HOLD",
                 "confidence": 0.5,
                 "supporting_strategies": [],
-                "details": f"Analysis failed: {e} - Conservative HOLD with risk management",
+                "details": f"Analysis failed: {e} - Neutral HOLD (no directional target)",
                 "entry_price": fallback_price,
                 "stop_loss": round(stop_loss, 2),
                 "take_profit": round(take_profit, 2),
-                "position_size": 50,  # Conservative size for error cases
+                "position_size": 0,
                 "order_type": "MARKET",
                 "risk_reward": round(risk_reward, 2),
                 "analysis_date": target_date.strftime('%Y-%m-%d')
@@ -1571,8 +1572,8 @@ class PythonAnywhereSchedulerHook:
                                     current_price = symbols_data[symbol].data_points[-1].close if symbols_data[symbol].data_points else 100
                                     
                                     # Risk management parameters
-                                    stop_loss_percent = 0.03  # 3% stop loss for HOLD positions
-                                    take_profit_percent = 0.08  # 8% take profit for HOLD positions
+                                    stop_loss_percent = 0.03
+                                    take_profit_percent = 0.08
                                     
                                     if final_action == "BUY":
                                         stop_loss_percent = 0.025  # 2.5% for BUY signals
@@ -1582,24 +1583,30 @@ class PythonAnywhereSchedulerHook:
                                         take_profit_percent = 0.10   # 10% for SELL signals
                                     
                                     # Calculate levels based on action type
-                                    if final_action == "SELL":
+                                    if final_action == "HOLD":
+                                        # HOLD is neutral: do not imply a directional target.
+                                        stop_loss = current_price
+                                        take_profit = current_price
+                                    elif final_action == "SELL":
                                         # For short positions
                                         stop_loss = current_price * (1 + stop_loss_percent)
                                         take_profit = current_price * (1 - take_profit_percent)
                                     else:
-                                        # For long positions (BUY and HOLD)
+                                        # For long positions (BUY)
                                         stop_loss = current_price * (1 - stop_loss_percent)
                                         take_profit = current_price * (1 + take_profit_percent)
                                     
                                     # Calculate risk/reward ratio
                                     risk = abs(current_price - stop_loss)
                                     reward = abs(take_profit - current_price)
-                                    risk_reward = reward / risk if risk > 0 else 1.0
+                                    risk_reward = reward / risk if risk > 0 else 0.0
                                     
                                     # Calculate position size based on 2% account risk
                                     account_risk = 10000 * 0.02  # $200 risk per trade on $10k account
-                                    position_size = int(account_risk / risk) if risk > 0 else 100
+                                    position_size = int(account_risk / risk) if risk > 0 else 0
                                     position_size = max(1, min(position_size, 1000))  # Between 1 and 1000 shares
+                                    if final_action == "HOLD":
+                                        position_size = 0
                                     
                                     # Create recommendation
                                     recommendation = {

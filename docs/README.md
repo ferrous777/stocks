@@ -45,7 +45,7 @@ Mutual funds for long-term analysis:
 
 The symbol configuration is managed through:
 - **System Config**: `/config/system_config.yaml` - Main configuration file
-- **Source Data**: `/src/data/default_symbols.json` - Symbol definitions
+- **Source Data**: `/config/system_config.yaml` - Enabled symbol definitions used by the site
 - **CLI Tool**: `config_cli.py` - Command-line interface for configuration management
 
 #### Using the Configuration CLI
@@ -64,7 +64,7 @@ python config_cli.py remove TSLA
 python config_cli.py enable AAPL
 python config_cli.py disable AAPL
 
-# Update symbols from default_symbols.json
+# Update symbols from system_config.yaml
 python update_symbols.py
 ```
 
