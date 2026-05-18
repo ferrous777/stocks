@@ -184,6 +184,62 @@ for failure_key, failure_error in load_result.failures.items():
   log_failure(failure_key, failure_error)
 ```
 
+## Recommendation Logic Design (Issue #8)
+
+Recommendation actions are derived from risk-adjusted backtest metrics using deterministic threshold rules.
+
+### Required input metrics
+
+Each recommendation evaluation requires:
+
+- `sharpe_ratio`
+- `calmar_ratio`
+- `max_drawdown`
+- `total_return`
+
+If any required metric is missing, evaluation should fail explicitly.
+
+### Action rules
+
+Given a selected risk profile:
+
+1. `buy` when Sharpe/Calmar exceed buy thresholds, drawdown is below limit, and total return is positive.
+2. `short` when Sharpe is below short ceiling, drawdown is above short floor, and total return is negative.
+3. `hold` when risk-adjusted profile is acceptable but does not qualify for buy/short.
+4. `avoid` when none of the above conditions are satisfied.
+
+### Risk profile thresholds
+
+#### Conservative
+
+- Buy: Sharpe >= 2.25, Calmar >= 2.25, max drawdown <= 0.12
+- Hold: Sharpe >= 1.00 and max drawdown <= 0.15
+- Short: Sharpe <= -0.25 and max drawdown >= 0.20
+
+#### Moderate
+
+- Buy: Sharpe >= 2.00, Calmar >= 2.00, max drawdown <= 0.15
+- Hold: Sharpe >= 0.75 and max drawdown <= 0.20
+- Short: Sharpe <= -0.40 and max drawdown >= 0.25
+
+#### Aggressive
+
+- Buy: Sharpe >= 1.60, Calmar >= 1.50, max drawdown <= 0.25
+- Hold: Sharpe >= 0.50 and max drawdown <= 0.30
+- Short: Sharpe <= -0.70 and max drawdown >= 0.30
+
+### Strategy-specific overrides
+
+The policy layer supports per-strategy threshold overrides so individual plugins can tune thresholds while still inheriting profile defaults.
+
+### Robustness checks
+
+Before promoting a recommendation policy to production:
+
+1. Validate results on out-of-sample windows.
+2. Re-run across alternate start dates/regimes.
+3. Compare recommendation stability across conservative/moderate/aggressive profiles.
+
 ## Usage
 
 ### Command Line
