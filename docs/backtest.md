@@ -130,6 +130,60 @@ Comparison focus: feature set, extensibility, and suitability for a plugin-orien
 2. Secondary candidate: VectorBT for research-scale sweeps and fast model exploration.
 3. Keep the repository-level plugin contract framework-agnostic so strategy modules can be adapted to either backend.
 
+## Plug-in Architecture Design (Issue #7)
+
+This section captures the strategy-module interface and manager design used by the repository foundation.
+
+### Interface contract
+
+Strategy plugins implement a shared lifecycle:
+
+1. `prepare_data(raw_data)`
+2. `run_backtest(prepared_data)`
+3. `compute_metrics(backtest_output)`
+4. `generate_recommendation(metrics, risk_profile)`
+
+Required metadata:
+
+- `name`
+- `version`
+- `supported_asset_classes`
+- `holding_horizon`
+
+### Manager responsibilities
+
+The plugin manager should:
+
+1. Discover strategy modules from a configured package path.
+2. Validate interface and metadata requirements.
+3. Prevent duplicate plugin names.
+4. Report import/load failures without crashing the full run.
+5. Instantiate valid plugins and return both `loaded` and `failures` maps.
+
+### Execution flow
+
+1. Discovery phase: scan modules and identify plugin classes.
+2. Validation phase: enforce metadata/interface constraints.
+3. Load phase: instantiate each plugin and collect failures.
+4. Runtime phase: execute plugin lifecycle per symbol/universe and aggregate comparable outputs.
+
+### Pseudocode
+
+```python
+manager = StrategyPluginManager(package="strategies")
+load_result = manager.load_plugins()
+
+for plugin_name, plugin in load_result.loaded.items():
+  prepared = plugin.prepare_data(raw_data)
+  backtest_output = plugin.run_backtest(prepared)
+  metrics = plugin.compute_metrics(backtest_output)
+  recommendation = plugin.generate_recommendation(metrics, risk_profile="moderate")
+  store_result(plugin_name, metrics, recommendation)
+
+for failure_key, failure_error in load_result.failures.items():
+  log_failure(failure_key, failure_error)
+```
+
 ## Usage
 
 ### Command Line
