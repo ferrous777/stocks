@@ -86,6 +86,14 @@ Results are saved to JSON files in the cache directory with the format:
 - `max_drawdown`: Largest peak-to-trough decline
 - `sharpe_ratio`: Risk-adjusted return metric
 
+### Extended Performance Metrics (Issue #3 foundation)
+- `annualized_return`: Compounded yearly return implied by periodic returns
+- `sortino_ratio`: Downside-volatility-adjusted return
+- `calmar_ratio`: Annualized return divided by max drawdown
+- `profit_factor`: Gross gains divided by gross losses
+- `volatility`: Annualized standard deviation of periodic returns
+- `drawdown_duration`: Longest consecutive drawdown period length
+
 ### Buy and Hold Performance
 - `initial_price`: Stock price at start of period
 - `final_price`: Stock price at end of period
@@ -102,3 +110,19 @@ Results are saved to JSON files in the cache directory with the format:
 - Results are automatically cached for future reference
 - Use `--force` flag to ignore cached data and run fresh backtest
 - Cache files include date in filename for tracking multiple runs 
+
+## Strategy Plugin Architecture
+
+The repository now includes a plugin contract for strategies:
+
+- Base contract: `strategies/plugin_contract.py`
+- Discovery/loader: `strategies/plugin_manager.py`
+
+Each plugin provides:
+
+1. Data preparation
+2. Backtest execution
+3. Metrics computation
+4. Recommendation generation
+
+Required plugin metadata includes strategy `name`, `version`, supported asset classes, and holding horizon.
