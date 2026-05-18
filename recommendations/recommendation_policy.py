@@ -71,10 +71,15 @@ class RecommendationPolicy:
     def evaluate(self, metrics: Mapping[str, float], risk_profile: str = "moderate", strategy_name: str | None = None) -> Dict[str, str]:
         thresholds = self.get_thresholds(risk_profile=risk_profile, strategy_name=strategy_name)
 
-        sharpe = float(metrics.get("sharpe_ratio", 0.0))
-        calmar = float(metrics.get("calmar_ratio", 0.0))
-        drawdown = abs(float(metrics.get("max_drawdown", 0.0)))
-        total_return = float(metrics.get("total_return", 0.0))
+        required_metrics = ["sharpe_ratio", "calmar_ratio", "max_drawdown", "total_return"]
+        missing = [name for name in required_metrics if name not in metrics]
+        if missing:
+            raise ValueError(f"Missing required metrics: {', '.join(missing)}")
+
+        sharpe = float(metrics["sharpe_ratio"])
+        calmar = float(metrics["calmar_ratio"])
+        drawdown = abs(float(metrics["max_drawdown"]))
+        total_return = float(metrics["total_return"])
 
         if (
             sharpe >= thresholds.min_buy_sharpe

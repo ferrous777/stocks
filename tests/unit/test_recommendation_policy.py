@@ -65,6 +65,11 @@ def test_unsupported_risk_profile_raises():
         evaluate_recommendation({}, risk_profile="unsupported")
 
 
+def test_missing_required_metrics_raise_value_error():
+    with pytest.raises(ValueError, match="Missing required metrics"):
+        evaluate_recommendation({"sharpe_ratio": 1.0}, risk_profile="moderate")
+
+
 def test_strategy_specific_override_changes_thresholds():
     policy = RecommendationPolicy(
         RecommendationPolicyConfig(

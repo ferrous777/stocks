@@ -76,8 +76,9 @@ def max_drawdown(returns: Iterable[float]) -> float:
 
 def calmar_ratio(returns: Iterable[float], periods_per_year: int = 252) -> float:
     """Compute the Calmar ratio using annualized return and max drawdown."""
-    ann_return = annualized_return(returns, periods_per_year=periods_per_year)
-    dd = max_drawdown(returns)
+    periodic_returns = _to_list(returns)
+    ann_return = annualized_return(periodic_returns, periods_per_year=periods_per_year)
+    dd = max_drawdown(periodic_returns)
     if dd == 0:
         return 0.0
     return ann_return / dd

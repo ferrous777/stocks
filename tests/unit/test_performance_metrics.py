@@ -58,6 +58,11 @@ def test_summary_honors_custom_periods_per_year():
     assert math.isfinite(summary["calmar_ratio"])
 
 
+def test_calmar_ratio_accepts_one_shot_iterables():
+    returns = (x for x in [0.01, -0.02, 0.03, 0.01])
+    assert math.isfinite(calmar_ratio(returns))
+
+
 def test_empty_returns_raise_value_error():
     with pytest.raises(ValueError):
         summarize_performance([])

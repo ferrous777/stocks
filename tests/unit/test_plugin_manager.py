@@ -138,3 +138,38 @@ def test_duplicate_plugin_name_raises(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="Duplicate plugin metadata.name"):
         manager.discover_plugin_classes(path=[str(package_dir)])
+
+
+def test_load_plugins_reports_import_failure_without_raising(tmp_path, monkeypatch):
+    package_name = "mixed_plugins"
+    package_dir = tmp_path / package_name
+    package_dir.mkdir()
+
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "good_plugin.py").write_text(
+        "\n".join(
+            [
+                "from strategies.plugin_contract import StrategyMetadata, StrategyPlugin",
+                "",
+                "class GoodPlugin(StrategyPlugin):",
+                "    metadata = StrategyMetadata('good', '1.0.0', ('equity',), 'medium')",
+                "    def prepare_data(self, raw_data): return {}",
+                "    def run_backtest(self, prepared_data): return {}",
+                "    def compute_metrics(self, backtest_output): return {}",
+                "    def generate_recommendation(self, metrics, risk_profile='moderate'): return {'action': 'hold'}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (package_dir / "broken_module.py").write_text(
+        "raise NameError('DataPoint is not defined')\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    manager = StrategyPluginManager(package=package_name)
+    result = manager.load_plugins(path=[str(package_dir)])
+
+    assert "good" in result.loaded
+    assert any("broken_module" in key for key in result.failures)
