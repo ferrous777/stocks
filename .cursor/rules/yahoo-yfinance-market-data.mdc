@@ -1,0 +1,15 @@
+---
+description: Yahoo Finance and yfetch patterns for market data. Applies when editing data fetching, Yahoo APIs, or yfinance usage.
+globs: market_data/**/*.py,scheduler/**/*.py,analysis/fund_analyzer.py,main.py
+alwaysApply: false
+---
+
+# Yahoo Finance / yfinance (stocks app)
+
+Before changing how this repo fetches or parses Yahoo Finance data, **read and follow** the project skill:
+
+`.cursor/skills/stocks-yahoo-yfinance/SKILL.md`
+
+Use `reference.md` in that folder for file maps and upstream module pointers.
+
+If the skill conflicts with a one-off user request, follow the user; otherwise default to the skill (prefer yfinance, avoid duplicate fragile raw HTTP paths, retries, timezone and adjusted-price consistency).

@@ -1352,7 +1352,7 @@ if __name__ == '__main__':
     
     # Development server only (PythonAnywhere will use WSGI)
     if os.environ.get('FLASK_ENV') != 'production':
-        app.run(host='0.0.0.0', port=8090, debug=True)
+        app.run(host='0.0.0.0', port=8000, debug=True)
     else:
         # Production - let WSGI handle this
         pass
