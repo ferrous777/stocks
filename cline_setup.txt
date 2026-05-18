@@ -1,5 +1,7 @@
 Cline workflow:
 - Work from issues
 - Use small pull requests
-- Run CI on every branch
+- Use project venv for Python deps (`python -m venv venv`, `source venv/bin/activate`, `pip install -r requirements.txt`)
+- Run local tests on every branch
+- Use CI as optional secondary verification
 - Repair failures iteratively
