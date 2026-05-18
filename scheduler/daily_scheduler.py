@@ -25,6 +25,14 @@ from analysis.aggregation import DataAggregator
 from market_calendar.market_calendar import MarketCalendar, MarketType, is_trading_day
 from market_data.market_data import MarketData
 
+
+def _format_date_key(value) -> str:
+    """Format a date or datetime as the scheduler's canonical YYYY-MM-DD key."""
+    if isinstance(value, str):
+        return value
+    return value.strftime('%Y-%m-%d')
+
+
 # Plaid + alert integrations (imported lazily inside the workflow so missing
 # packages only raise errors when Plaid/alerts are actually enabled)
 def _try_plaid_sync(db, config):
@@ -292,7 +300,7 @@ class MarketDataCollector:
             self._check_and_fill_data_gaps(symbol, date)
         
         # Check if we already have data for this date
-        date_str = date.strftime('%Y-%m-%d')
+        date_str = _format_date_key(date)
         existing_data = self.db.get_daily_snapshot(symbol, date_str)
         if existing_data and not prioritize_refresh:
             logger.info(f"💾 CACHE HIT: Data already exists for {symbol} on {date.date()}")
@@ -316,7 +324,7 @@ class MarketDataCollector:
                 if start_date > date:
                     logger.info(f"✅ UP TO DATE: {symbol} already has data through {latest_db_date}")
                     # Return the most recent data we have
-                    return self.db.get_daily_snapshot(symbol, latest_db_date)
+                    return self.db.get_daily_snapshot(symbol, _format_date_key(latest_db_date))
                 
                 logger.info(f"🎯 INCREMENTAL UPDATE: {symbol} fetching from {start_date.date()} to {date.date()} (last data: {latest_db_date})")
             else:
@@ -338,9 +346,7 @@ class MarketDataCollector:
                 
                 for data_point in historical_data[symbol].data_points:
                     # Only save points we don't already have
-                    point_date = data_point.date
-                    if isinstance(point_date, datetime):
-                        point_date = point_date.strftime('%Y-%m-%d')
+                    point_date = _format_date_key(data_point.date)
 
                     if not self.db.get_daily_snapshot(symbol, point_date):
                         daily_snapshot = DailySnapshot(
@@ -369,9 +375,7 @@ class MarketDataCollector:
                 else:
                     # Return existing data if no new points
                     last_date = historical_data[symbol].data_points[-1].date
-                    if isinstance(last_date, datetime):
-                        last_date = last_date.strftime('%Y-%m-%d')
-                    return self.db.get_daily_snapshot(symbol, last_date)
+                    return self.db.get_daily_snapshot(symbol, _format_date_key(last_date))
             else:
                 logger.warning(f"No data returned for {symbol}")
                 return None
@@ -716,8 +720,8 @@ class StrategyRunner:
         logger.info(f"Running strategies for {symbol} on {date.date()}")
         
         # Get recent historical data for strategy calculations
-        end_date = date.strftime('%Y-%m-%d')
-        start_date = (date - timedelta(days=100)).strftime('%Y-%m-%d')
+        end_date = _format_date_key(date)
+        start_date = _format_date_key(date - timedelta(days=100))
         historical_data = self.db.get_symbol_data(symbol, start_date, end_date)
         
         if not historical_data or len(historical_data) < 20:
@@ -933,7 +937,7 @@ class DailyReportGenerator:
         
         report_lines = []
         report_lines.append(f"# Daily Market Analysis Report")
-        report_lines.append(f"**Date:** {date.strftime('%Y-%m-%d')}")
+        report_lines.append(f"**Date:** {_format_date_key(date)}")
         report_lines.append(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         report_lines.append("")
         

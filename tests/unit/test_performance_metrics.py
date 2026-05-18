@@ -19,9 +19,11 @@ def test_summary_contains_expected_metric_keys():
     assert set(summary.keys()) == {
         "total_return",
         "annualized_return",
+        "volatility",
         "sharpe_ratio",
         "sortino_ratio",
         "max_drawdown",
+        "drawdown_duration",
         "calmar_ratio",
         "profit_factor",
         "win_rate",
@@ -32,6 +34,7 @@ def test_drawdown_and_win_rate_values():
     returns = [0.1, -0.2, 0.05, -0.1]
     assert max_drawdown(returns) > 0
     assert win_rate(returns) == 0.5
+    assert summarize_performance(returns)["drawdown_duration"] > 0
 
 
 def test_profit_factor_infinite_when_no_losses():
@@ -44,6 +47,15 @@ def test_ratios_are_numeric_for_mixed_returns():
     assert math.isfinite(sortino_ratio(returns))
     assert math.isfinite(calmar_ratio(returns))
     assert math.isfinite(annualized_return(returns))
+    assert math.isfinite(summarize_performance(returns, periods_per_year=52)["volatility"])
+
+
+def test_summary_honors_custom_periods_per_year():
+    returns = [0.01, 0.02, -0.01, 0.03]
+    summary = summarize_performance(returns, periods_per_year=12)
+    assert math.isfinite(summary["annualized_return"])
+    assert math.isfinite(summary["volatility"])
+    assert math.isfinite(summary["calmar_ratio"])
 
 
 def test_empty_returns_raise_value_error():
