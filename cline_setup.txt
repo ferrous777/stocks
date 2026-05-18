@@ -1,0 +1,5 @@
+Cline workflow:
+- Work from issues
+- Use small pull requests
+- Run CI on every branch
+- Repair failures iteratively
