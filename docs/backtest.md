@@ -87,6 +87,49 @@ This taxonomy focuses on medium- and long-horizon approaches requested for task 
 2. Require explicit transaction-cost and slippage assumptions before ranking strategies.
 3. Treat ML strategies as complements to factor/trend baselines, not replacements, unless robustness is demonstrated on holdout windows.
 
+## Framework Comparison (Issue #6)
+
+Comparison focus: feature set, extensibility, and suitability for a plugin-oriented architecture.
+
+### Backtesting.py
+
+- Strengths: lightweight API, quick iteration, easy strategy prototyping.
+- Weaknesses: less natural fit for multi-asset portfolio workflows and complex execution modeling.
+- Plugin suitability: good for simple strategy plugins; weaker for full lifecycle orchestration.
+- Live trading: primarily backtesting-focused.
+
+### Backtrader
+
+- Strengths: event-driven engine, analyzers/indicators/sizers, flexible broker/commission modeling.
+- Weaknesses: steeper learning curve, more boilerplate for clean architecture.
+- Plugin suitability: strong candidate; naturally maps to reusable strategy modules and lifecycle hooks.
+- Live trading: supports live integrations with supported brokers/stores.
+
+### PyAlgoTrade
+
+- Strengths: event-driven model with multiple order types and built-in performance tooling.
+- Weaknesses: comparatively older ecosystem and less active momentum than newer stacks.
+- Plugin suitability: moderate; supports modular strategies but less ecosystem depth for modern workflows.
+- Live trading: supports paper/live patterns depending on integrations.
+
+### VectorBT
+
+- Strengths: high-performance vectorized backtests, excellent parameter-sweep throughput, strong notebook analytics.
+- Weaknesses: vectorized paradigm can be less intuitive for event-driven execution logic.
+- Plugin suitability: strong for metric/optimizer plugins and signal pipelines; less natural for event-level broker simulation.
+- Live trading: generally research/backtest-oriented rather than full live execution.
+
+### Optional alternatives (future evaluation)
+
+- Zipline/Zipline-reloaded: historically influential but maintenance/integration trade-offs should be assessed.
+- QuantConnect Lean: strong production ecosystem but operational complexity is higher for local-first workflows.
+
+### Prioritized recommendation for this repository
+
+1. Primary candidate: Backtrader for plugin lifecycle alignment and event-driven realism.
+2. Secondary candidate: VectorBT for research-scale sweeps and fast model exploration.
+3. Keep the repository-level plugin contract framework-agnostic so strategy modules can be adapted to either backend.
+
 ## Usage
 
 ### Command Line
