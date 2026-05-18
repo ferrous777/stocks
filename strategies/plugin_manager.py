@@ -31,6 +31,9 @@ class StrategyPluginManager:
                 raise ValueError(f"Package '{self.package}' is not a package or has no __path__")
 
         for module_info in pkgutil.iter_modules(path):
+            if module_info.name.startswith("_"):
+                continue
+
             module_name = f"{self.package}.{module_info.name}"
             module = importlib.import_module(module_name)
 
@@ -41,6 +44,13 @@ class StrategyPluginManager:
                 if metadata is None or not getattr(metadata, "name", ""):
                     raise ValueError(
                         f"Plugin class {candidate.__name__} in {module_name} is missing metadata.name"
+                    )
+
+                existing = discovered.get(metadata.name)
+                if existing is not None and existing is not candidate:
+                    raise ValueError(
+                        f"Duplicate plugin metadata.name '{metadata.name}' found in {module_name} "
+                        f"and {existing.__module__}"
                     )
                 discovered[metadata.name] = candidate
 
