@@ -49,6 +49,44 @@ Interpretation guidance:
 4. Lo, A. W. (2002). The Statistics of Sharpe Ratios. Financial Analysts Journal.
 5. Arnott, R. D., Harvey, C. R., & Markowitz, H. (2019). A Backtesting Protocol in the Era of Machine Learning. Journal of Portfolio Management.
 
+## Strategy Taxonomy (Issue #5)
+
+This taxonomy focuses on medium- and long-horizon approaches requested for task 3.
+
+### 1) Factor-based strategies
+
+- Examples: value, quality, low-volatility, size, multi-factor ranking.
+- Pros: interpretable economic intuition, diversified signal sources, strong academic coverage.
+- Cons: factor crowding and long drawdown cycles, turnover sensitivity, regime dependence.
+- Data requirements: clean point-in-time fundamentals, corporate actions, universe membership history, benchmark series.
+
+### 2) Momentum and trend-following
+
+- Examples: cross-sectional momentum, time-series momentum, moving-average trend rules.
+- Pros: robust in persistent trends, simple implementation, broadly applicable across assets.
+- Cons: whipsaw risk in range-bound markets, crash sensitivity during sharp reversals.
+- Data requirements: adjusted OHLCV history, liquidity filters, transaction-cost model, regime segmentation windows.
+
+### 3) Volatility and risk-premium strategies
+
+- Examples: low-volatility tilt, volatility timing, risk-parity style allocations.
+- Pros: explicit risk targeting, often smoother drawdown profile, portfolio-construction friendly.
+- Cons: leverage and financing assumptions can dominate outcomes, tail shocks can break stability.
+- Data requirements: realized/implied volatility inputs, covariance estimates, rebalance frequency controls, financing assumptions.
+
+### 4) Machine-learning approaches
+
+- Examples: gradient-boosted trees, temporal models, ensemble forecasters.
+- Pros: can model nonlinear relationships and interactions beyond linear factor models.
+- Cons: high overfitting risk, weak interpretability, feature leakage risk if time alignment is poor.
+- Data requirements: strict point-in-time feature pipelines, leakage-safe train/validation/test splits, feature-store lineage, robust out-of-sample evaluation.
+
+### Selection guidance for medium/long horizons
+
+1. Prefer strategies with stable out-of-sample behavior across multiple market regimes.
+2. Require explicit transaction-cost and slippage assumptions before ranking strategies.
+3. Treat ML strategies as complements to factor/trend baselines, not replacements, unless robustness is demonstrated on holdout windows.
+
 ## Usage
 
 ### Command Line
