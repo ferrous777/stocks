@@ -3,6 +3,52 @@
 ## Overview
 The backtesting system allows you to test trading strategies against historical market data and compare their performance against a buy-and-hold strategy.
 
+## Literature Review (Issue #4)
+
+This section summarizes research findings for backtesting bias controls, evaluation horizons, and interpretation metrics.
+
+### Backtesting biases and mitigations
+
+- Survivorship bias: using only currently listed assets can overstate historical performance; include delisted assets and point-in-time universes where possible.
+- Look-ahead bias: features or labels must only use information available at each historical timestamp.
+- Data-snooping/overfitting: repeated strategy tuning on the same sample inflates in-sample performance and weakens out-of-sample reliability.
+
+Recommended controls:
+
+1. Split data into development/validation/test windows and reserve a true holdout period.
+2. Use walk-forward or rolling-window validation rather than one static split.
+3. Track all parameter searches and avoid selecting models solely on in-sample Sharpe.
+4. Use realistic trading assumptions (costs, slippage, liquidity constraints).
+
+### Evaluation horizons
+
+- For daily strategies, multi-year windows are generally required to cover different market regimes.
+- Weekly/monthly strategies should be evaluated across longer cycles (including at least one stress regime) before promoting to production.
+- Cross-regime robustness checks are required: re-run results across alternate start dates and subperiods, not just one backtest window.
+
+### Performance metric interpretation
+
+Core metrics for this repository are:
+
+- Return metrics: total and annualized returns.
+- Risk-adjusted metrics: Sharpe, Sortino, Calmar.
+- Drawdown metrics: max drawdown and drawdown duration.
+- Trade quality metrics: win rate and profit factor.
+
+Interpretation guidance:
+
+- Sharpe and Sortino should be interpreted with sample-length awareness; both are unstable on short windows.
+- Calmar should be paired with drawdown duration so short-lived and prolonged drawdowns are distinguished.
+- Metrics should be analyzed net of transaction costs/slippage to reduce optimistic bias.
+
+### References
+
+1. Bailey, D. H., Borwein, J. M., Lopez de Prado, M., & Zhu, Q. J. (2014). The Probability of Backtest Overfitting. Journal of Computational Finance.
+2. Brown, S. J., Goetzmann, W. N., Ibbotson, R. G., & Ross, S. A. (1992). Survivorship Bias in Performance Studies. Review of Financial Studies.
+3. Lo, A. W., & MacKinlay, A. C. (1990). Data-Snooping Biases in Tests of Financial Asset Pricing Models. Review of Financial Studies.
+4. Lo, A. W. (2002). The Statistics of Sharpe Ratios. Financial Analysts Journal.
+5. Arnott, R. D., Harvey, C. R., & Markowitz, H. (2019). A Backtesting Protocol in the Era of Machine Learning. Journal of Portfolio Management.
+
 ## Usage
 
 ### Command Line
