@@ -301,6 +301,11 @@ class MarketDataCollector:
         try:
             # Get the latest date we have in the database for this symbol
             latest_db_date = self.db.get_latest_date(symbol)
+
+            # Some callers/tests use mocks that can return non-string placeholders.
+            # Treat those as missing DB state so incremental fetch still works.
+            if latest_db_date and not isinstance(latest_db_date, str):
+                latest_db_date = None
             
             if latest_db_date:
                 # Only fetch from the day after our latest data
@@ -333,10 +338,14 @@ class MarketDataCollector:
                 
                 for data_point in historical_data[symbol].data_points:
                     # Only save points we don't already have
-                    if not self.db.get_daily_snapshot(symbol, data_point.date):
+                    point_date = data_point.date
+                    if isinstance(point_date, datetime):
+                        point_date = point_date.strftime('%Y-%m-%d')
+
+                    if not self.db.get_daily_snapshot(symbol, point_date):
                         daily_snapshot = DailySnapshot(
                             symbol=symbol,
-                            date=data_point.date,
+                            date=point_date,
                             open=data_point.open,
                             high=data_point.high,
                             low=data_point.low,
@@ -359,7 +368,10 @@ class MarketDataCollector:
                     return latest_snapshot
                 else:
                     # Return existing data if no new points
-                    return self.db.get_daily_snapshot(symbol, historical_data[symbol].data_points[-1].date)
+                    last_date = historical_data[symbol].data_points[-1].date
+                    if isinstance(last_date, datetime):
+                        last_date = last_date.strftime('%Y-%m-%d')
+                    return self.db.get_daily_snapshot(symbol, last_date)
             else:
                 logger.warning(f"No data returned for {symbol}")
                 return None

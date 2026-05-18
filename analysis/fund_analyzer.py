@@ -142,6 +142,16 @@ class FundAnalyzer:
         
         if len(period_data) < 20:
             return None
+
+        # Require meaningful coverage of the requested horizon to avoid
+        # overstating long-period metrics from short samples.
+        coverage_days = (
+            datetime.strptime(period_data[-1]['date'], '%Y-%m-%d')
+            - datetime.strptime(period_data[0]['date'], '%Y-%m-%d')
+        ).days
+        min_required_days = int(365 * years * 0.75)
+        if coverage_days < min_required_days:
+            return None
         
         # Calculate returns
         start_price = period_data[0]['close']
