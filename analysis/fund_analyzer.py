@@ -17,13 +17,6 @@ import math
 
 
 @dataclass
-class FundAnalyzerConfig:
-    """Configuration for FundAnalyzer behavior."""
-
-    min_period_coverage: float = 0.75
-
-
-@dataclass
 class PerformanceMetrics:
     """Performance metrics for a specific time period"""
     period_years: int
@@ -119,9 +112,8 @@ class FundAnalyzer:
     # Risk-free rate assumption (approximate annual)
     RISK_FREE_RATE = 0.045  # 4.5%
     
-    def __init__(self, cache_dir: str = "cache", config: Optional[FundAnalyzerConfig] = None):
+    def __init__(self, cache_dir: str = "cache"):
         self.cache_dir = cache_dir
-        self.config = config or FundAnalyzerConfig()
         os.makedirs(cache_dir, exist_ok=True)
     
     def calculate_period_performance(self, data_points: List[dict], years: int) -> Optional[PerformanceMetrics]:
@@ -149,16 +141,6 @@ class FundAnalyzer:
         period_data = [dp for dp in sorted_data if datetime.strptime(dp['date'], '%Y-%m-%d') >= target_start]
         
         if len(period_data) < 20:
-            return None
-
-        # Require meaningful coverage of the requested horizon to avoid
-        # overstating long-period metrics from short samples.
-        coverage_days = (
-            datetime.strptime(period_data[-1]['date'], '%Y-%m-%d')
-            - datetime.strptime(period_data[0]['date'], '%Y-%m-%d')
-        ).days
-        min_required_days = int(365 * years * self.config.min_period_coverage)
-        if coverage_days < min_required_days:
             return None
         
         # Calculate returns

@@ -91,38 +91,6 @@ stocks/
 └── tests/                    # Test suite
 ```
 
-## Strategy Plugins
-
-The Issue #3 foundation adds a plugin contract and loader for medium/long-horizon strategy workflows.
-
-### Implement a new strategy plugin
-
-1. Create a new module under `strategies/` (for example `strategies/my_strategy_plugin.py`).
-2. Define a class that inherits from `StrategyPlugin` in `strategies/plugin_contract.py`.
-3. Add a `metadata` field using `StrategyMetadata` with:
-  - `name`
-  - `version`
-  - `supported_asset_classes`
-  - `holding_horizon`
-4. Implement the required lifecycle methods:
-  - `prepare_data(raw_data)`
-  - `run_backtest(prepared_data)`
-  - `compute_metrics(backtest_output)`
-  - `generate_recommendation(metrics, risk_profile='moderate')`
-
-The strategy loader in `strategies/plugin_manager.py` discovers plugin classes dynamically from the strategies package and returns both successful loads and failures.
-
-## Local-First Validation With Minimal CI
-
-Development remains local-first:
-
-1. `python -m venv venv`
-2. `source venv/bin/activate`
-3. `pip install -r requirements.txt`
-4. Run local tests before push
-
-CI is retained as a lightweight regression guard (fast unit tests), not as the primary development loop.
-
 ## Web Interface
 
 ### Dashboard (`/`)

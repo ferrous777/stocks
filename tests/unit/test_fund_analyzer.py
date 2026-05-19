@@ -15,7 +15,7 @@ import math
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from analysis.fund_analyzer import FundAnalyzer, FundAnalyzerConfig, PerformanceMetrics, RiskMetrics, FundInfo
+from analysis.fund_analyzer import FundAnalyzer, PerformanceMetrics, RiskMetrics, FundInfo
 
 
 class TestPerformanceCalculations(unittest.TestCase):
@@ -81,15 +81,6 @@ class TestPerformanceCalculations(unittest.TestCase):
         result = self.analyzer.calculate_period_performance(data, 1)  # Need 365 days
         
         self.assertIsNone(result)
-
-    def test_custom_coverage_threshold_allows_shorter_window(self):
-        """Custom config should control the minimum coverage requirement"""
-        analyzer = FundAnalyzer(cache_dir='test_cache', config=FundAnalyzerConfig(min_period_coverage=0.1))
-        data = self.create_data_points(100, 110, 100)
-
-        result = analyzer.calculate_period_performance(data, 1)
-
-        self.assertIsNotNone(result)
     
     def test_all_periods_calculated(self):
         """calculate_all_periods should return dict with 1, 3, 5, 10 year results"""
