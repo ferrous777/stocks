@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from .recommendation import Recommendation, RecommendationType
+from .recommendation_policy import RecommendationPolicy, evaluate_recommendation
 from strategies.strategy import Strategy
 from market_data.market_data import MarketData
 
@@ -8,6 +9,23 @@ class RecommendationEngine:
     def __init__(self):
         self.min_confidence = 0.6
         self.account_size = 100000  # Default $100k account
+
+    def generate_metric_recommendations(
+        self,
+        strategy_metrics: Dict[str, Dict[str, float]],
+        risk_profile: str = "moderate",
+        policy: RecommendationPolicy | None = None,
+    ) -> Dict[str, Dict[str, str]]:
+        """Convert per-strategy backtest metrics into deterministic actions."""
+        output: Dict[str, Dict[str, str]] = {}
+        for strategy_name, metrics in strategy_metrics.items():
+            output[strategy_name] = evaluate_recommendation(
+                metrics,
+                risk_profile=risk_profile,
+                strategy_name=strategy_name,
+                policy=policy,
+            )
+        return output
     
     def generate_recommendations(
         self,
