@@ -126,7 +126,7 @@ crontab -l
 # (Via web interface)
 
 # Test manual execution
-python dev-tools/pythonanywhere_daily_hook.py --force
+python /home/ferrous77/pythonanywhere_daily_hook.py --force
 ```
 
 #### Solutions
@@ -137,7 +137,7 @@ python dev-tools/pythonanywhere_daily_hook.py --force
 crontab -e
 
 # Add correct job
-0 9 * * 1-5 cd /path/to/stocks && python dev-tools/pythonanywhere_daily_hook.py
+0 9 * * 1-5 cd /path/to/stocks && python /home/ferrous77/pythonanywhere_daily_hook.py
 
 # Check cron logs
 grep CRON /var/log/syslog | tail -10
@@ -152,7 +152,7 @@ grep CRON /var/log/syslog | tail -10
 3. **Permission Issues**
 ```bash
 # Fix file permissions
-chmod +x dev-tools/pythonanywhere_daily_hook.py
+chmod +x /home/ferrous77/pythonanywhere_daily_hook.py
 chmod -R 755 /path/to/stocks
 ```
 
@@ -656,7 +656,7 @@ worker_thread.start()
 cat /var/www/yourusername_pythonanywhere_com_wsgi.py
 
 # Verify file structure
-ls -la /home/yourusername/stocks/
+ls -la /home/ferrous77/
 
 # Check Python path
 python3.10 -c "import sys; print('\n'.join(sys.path))"
@@ -671,9 +671,11 @@ import sys
 import os
 
 # Add project directory to Python path
-project_home = '/home/yourusername/stocks'
+project_home = '/home/ferrous77'
 if project_home not in sys.path:
     sys.path.insert(0, project_home)
+
+os.chdir(project_home)
 
 # Set environment
 os.environ['FLASK_ENV'] = 'production'
@@ -684,11 +686,12 @@ from app import app as application
 
 2. **Fix File Permissions**
 ```bash
-# Make files readable
-chmod -R 755 /home/yourusername/stocks/
+# Check the affected application file, then repair only its permissions
+ls -l /home/ferrous77/app.py
+chmod u+rw /home/ferrous77/app.py
 
 # Make Python files executable
-chmod +x /home/yourusername/stocks/app.py
+chmod +x /home/ferrous77/app.py
 ```
 
 3. **Install Dependencies**
