@@ -606,7 +606,7 @@ def load_recommendations(symbol, date):
                         "current_price": round(current_price, 2)
                     }
                 })
-    
+
     return None
 
 def load_historical_data(symbol):
@@ -638,8 +638,19 @@ app.jinja_env.filters['percentage'] = format_percentage
 # Helper functions for ticker detail page
 def get_latest_recommendation(symbol):
     """Get the latest recommendation for a symbol."""
-    dates = get_available_dates()
-    for date in dates:  # dates are sorted newest first
+    # Recommendation dates can differ from the available backtest dates.
+    dates = set(get_available_dates())
+    for prefix in (f'{symbol}_recommendations_', 'recommendations_'):
+        for path in glob.glob(os.path.join(RESULTS_DIR, f'{prefix}*.json')):
+            file_date = os.path.basename(path)[len(prefix):-5]
+            if len(file_date) != 8 or not file_date.isdigit():
+                continue
+            try:
+                datetime.strptime(file_date, '%Y%m%d')
+            except ValueError:
+                continue
+            dates.add(file_date)
+    for date in sorted(dates, reverse=True):
         recommendations = load_recommendations(symbol, date)
         if recommendations:
             return recommendations, date

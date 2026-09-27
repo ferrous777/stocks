@@ -5,29 +5,36 @@ This guide explains how to deploy the stock analysis system to PythonAnywhere an
 ## Prerequisites
 
 - PythonAnywhere account (free or paid)
-- Access to the Tasks tab (available in paid accounts for full scheduling)
+- SSH access for the direct deployment script, plus local `ssh` and `rsync`
+- A configured web app and scheduled task using the required Python dependencies
 
 ## Deployment Steps
 
 ### 1. Upload Files to PythonAnywhere
 
-Upload all project files to your PythonAnywhere account. You can use:
-- The built-in file browser
-- Git clone (recommended)
-- File upload via the web interface
+From your local checkout, upload code to `/home/ferrous77`:
 
 ```bash
-# If using Git (recommended)
-git clone https://github.com/yourusername/stocks.git
-cd stocks
+bash deploy_clean.sh
 ```
+
+This replaces application code and `config/system_config.yaml`, backs up the existing
+WSGI file before configuring it for the home directory, and reloads the web app.
+Server-side `data/`, `cache/`, `results/`, `logs/`, and `reports/` are preserved.
+Only Python source is copied from `performance/`; its databases and reports are preserved.
+Back up any server-specific YAML settings before deploying.
+
+For offline upload, run `bash scripts/deploy_to_pythonanywhere.sh` locally. Upload
+`stocks-app.tar.gz`, extract it into a separate staging directory (not the home
+directory), and run `bash deploy_server.sh` there. Configure WSGI to import
+`app` from `/home/ferrous77`, then install dependencies and reload via the Web tab.
 
 ### 2. Install Dependencies
 
 In a PythonAnywhere Bash console:
 
 ```bash
-cd ~/stocks
+cd ~/
 pip3.10 install --user -r requirements.txt
 ```
 
@@ -38,9 +45,9 @@ Note: Replace `3.10` with your preferred Python version.
 Initialize the database and migrate existing data:
 
 ```bash
-cd ~/stocks
+cd ~/
 python3.10 -c "
-from src.storage.timeseries_db import TimeSeriesDB
+from storage.timeseries_db import TimeSeriesDB
 db = TimeSeriesDB()
 print('Database initialized successfully')
 "
@@ -51,8 +58,8 @@ print('Database initialized successfully')
 Update the configuration file if needed:
 
 ```bash
-cd ~/stocks
-python3.10 config_cli.py list-symbols
+cd ~/
+python3.10 -c "from config.config_manager import ConfigManager; print(ConfigManager().get_enabled_symbols())"
 ```
 
 ### 5. Test the Daily Hook
@@ -60,8 +67,8 @@ python3.10 config_cli.py list-symbols
 Test the PythonAnywhere hook script to ensure it works:
 
 ```bash
-cd ~/stocks
-python3.10 dev-tools/pythonanywhere_daily_hook.py --force
+cd ~/
+python3.10 /home/ferrous77/pythonanywhere_daily_hook.py --force
 ```
 
 This will run the daily workflow regardless of whether it's a trading day.
@@ -76,7 +83,7 @@ This will run the daily workflow regardless of whether it's a trading day.
 
 **Command:**
 ```bash
-/home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py
+python3.10 /home/ferrous77/pythonanywhere_daily_hook.py
 ```
 
 **Time:** 
@@ -94,7 +101,7 @@ Free accounts can set up one daily task. Use the same command as above.
 If you need a specific Python version:
 
 ```bash
-python3.9 /home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py
+python3.10 /home/ferrous77/pythonanywhere_daily_hook.py
 ```
 
 ### Using Virtual Environment
@@ -102,18 +109,18 @@ python3.9 /home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py
 If you're using a virtual environment:
 
 ```bash
-source virtualenvwrapper.sh && workon myenv && python /home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py
+source virtualenvwrapper.sh && workon myenv && python /home/ferrous77/pythonanywhere_daily_hook.py
 ```
 
 Or using the direct path to the venv python:
 
 ```bash
-/home/yourusername/.virtualenvs/myenv/bin/python /home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py
+/home/ferrous77/.virtualenvs/myenv/bin/python /home/ferrous77/pythonanywhere_daily_hook.py
 ```
 
 ## Features of the PythonAnywhere Hook
 
-The `dev-tools/pythonanywhere_daily_hook.py` script includes:
+The `/home/ferrous77/pythonanywhere_daily_hook.py` script includes:
 
 ### Market Calendar Integration
 - Automatically skips weekends and holidays
@@ -165,8 +172,8 @@ PythonAnywhere provides logs for each task execution. Check these if there are i
 You can always run the script manually to test:
 
 ```bash
-cd ~/stocks
-python3.10 dev-tools/pythonanywhere_daily_hook.py --force
+cd ~/
+python3.10 /home/ferrous77/pythonanywhere_daily_hook.py --force
 ```
 
 ### Log Files
@@ -195,7 +202,7 @@ Check the following log files for detailed information:
 ### Force Execution
 To run on non-trading days:
 ```bash
-python3.10 dev-tools/pythonanywhere_daily_hook.py --force
+python3.10 /home/ferrous77/pythonanywhere_daily_hook.py --force
 ```
 
 ### Different Time Zones

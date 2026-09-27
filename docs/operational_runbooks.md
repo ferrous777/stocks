@@ -122,7 +122,9 @@ python app.py
 
 #### Initial Deployment
 ```bash
-# 1. Upload files to PythonAnywhere
+# 1. Run bash deploy_clean.sh from the local checkout
+# Then, in the PythonAnywhere console:
+cd /home/ferrous77
 # 2. Create virtual environment
 mkvirtualenv stocks --python=python3.10
 
@@ -134,13 +136,13 @@ pip install -r requirements.txt
 
 # 5. Set up scheduled task
 # Add to PythonAnywhere Tasks tab:
-# cd /home/yourusername/stocks && python3.10 dev-tools/pythonanywhere_daily_hook.py
+# cd /home/ferrous77 && python3.10 pythonanywhere_daily_hook.py
 ```
 
 #### Deployment Validation
 ```bash
 # Test manual execution
-python3.10 dev-tools/pythonanywhere_daily_hook.py --force
+python3.10 /home/ferrous77/pythonanywhere_daily_hook.py --force
 
 # Verify web interface
 curl https://yourusername.pythonanywhere.com/health
@@ -328,12 +330,12 @@ python detect_gaps.py --start 2024-01-01
 tail -50 logs/pythonanywhere_daily.log
 
 # Test manual execution
-python dev-tools/pythonanywhere_daily_hook.py --force
+python /home/ferrous77/pythonanywhere_daily_hook.py --force
 ```
 
 **Solutions**:
 1. Check internet connectivity and API access
-2. Verify file permissions: `chmod -R 755 ~/stocks`
+2. Check the failing file with `ls -l` and repair only its required permissions. Do not recursively change permissions on the home directory or `.ssh`.
 3. Check disk space: `df -h`
 4. Restart scheduled task
 

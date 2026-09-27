@@ -159,6 +159,11 @@ symbols:
 - custom_params: null
   enabled: true
   priority: 1
+  sector: Technology
+  symbol: MU
+- custom_params: null
+  enabled: true
+  priority: 1
   sector: Consumer
   symbol: COST
 - custom_params: null
@@ -166,6 +171,11 @@ symbols:
   priority: 2
   sector: ETF
   symbol: QQQ
+- custom_params: null
+  enabled: true
+  priority: 1
+  sector: ETF
+  symbol: QQQM
 - custom_params: null
   enabled: true
   priority: 2

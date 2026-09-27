@@ -9,38 +9,6 @@
 
 The system uses a configuration-based approach to manage trading symbols with priority-based categorization. This allows for efficient resource allocation and focused analysis on the most important symbols.
 
-### Symbol Priority Levels
-
-#### Priority 1 (High Priority)
-Focus symbols for active trading and detailed analysis:
-- **AAPL** - Apple Inc. (Technology)
-- **MSFT** - Microsoft Corporation (Technology)
-- **GOOGL** - Alphabet Inc. (Technology)
-- **AMZN** - Amazon.com Inc. (Technology)
-- **NVDA** - NVIDIA Corporation (Technology)
-- **COST** - Costco Wholesale Corporation (Consumer Staples)
-
-#### Priority 2 (Medium Priority)
-ETFs for diversified exposure and market tracking:
-- **QQQ** - Invesco QQQ Trust (NASDAQ-100 ETF)
-- **VUG** - Vanguard Growth ETF
-- **IWF** - iShares Russell 1000 Growth ETF
-- **SPYG** - SPDR Portfolio S&P 500 Growth ETF
-- **VGT** - Vanguard Information Technology ETF
-- **FDN** - First Trust Dow Jones Internet Index Fund
-- **VEA** - Vanguard Developed Markets Index Fund
-- **VWO** - Vanguard Emerging Markets Stock Index Fund
-- **FEZ** - SPDR EURO STOXX 50 ETF
-- **EWJ** - iShares MSCI Japan ETF
-- **MCHI** - iShares MSCI China ETF
-- **INDA** - iShares MSCI India Small-Cap ETF
-- **EWZ** - iShares MSCI Brazil ETF
-
-#### Priority 3 (Low Priority)
-Mutual funds for long-term analysis:
-- **KMKNX** - Kinetics Market Opportunities Fund
-- **FDEGX** - Fidelity Emerging Markets Fund
-
 ### Configuration Management
 
 The symbol configuration is managed through:
@@ -266,24 +234,25 @@ This system is optimized for automated deployment on PythonAnywhere with daily s
 
 1. **Upload Code to PythonAnywhere:**
    ```bash
-   # Via Git (recommended)
-   git clone https://github.com/yourusername/stocks.git
-   cd stocks
+   # From the local repository; deploys to /home/ferrous77
+   bash deploy_clean.sh
    ```
 
 2. **Install Dependencies:**
    ```bash
+   # In the PythonAnywhere console
+   cd /home/ferrous77
    pip3.10 install --user -r requirements.txt
    ```
 
 3. **Test the System:**
    ```bash
-   python3.10 dev-tools/pythonanywhere_daily_hook.py --force
+   python3.10 /home/ferrous77/pythonanywhere_daily_hook.py --force
    ```
 
 4. **Schedule Daily Task:**
    - Go to PythonAnywhere Dashboard → **Tasks** tab
-   - Command: `/home/yourusername/stocks/dev-tools/pythonanywhere_daily_hook.py`
+   - Command: `python3.10 /home/ferrous77/pythonanywhere_daily_hook.py`
    - Schedule: Daily at 6:00 PM EST (after market close)
 
 ### What Happens Daily
@@ -316,7 +285,7 @@ reports/
 ### Monitoring & Testing
 ```bash
 # Test manual run
-python3.10 dev-tools/pythonanywhere_daily_hook.py --force
+python3.10 /home/ferrous77/pythonanywhere_daily_hook.py --force
 
 # Check recent logs
 tail -f logs/pythonanywhere_daily.log
@@ -329,7 +298,7 @@ python3.10 update_symbols.py
 ```
 
 ### Key Files
-- `dev-tools/pythonanywhere_daily_hook.py` - Main scheduler hook (executable)
+- `/home/ferrous77/pythonanywhere_daily_hook.py` - Main scheduler hook (executable)
 - `PYTHONANYWHERE_SETUP.md` - Comprehensive deployment guide
 - `docs/pythonanywhere_deployment.md` - Detailed technical documentation
 
@@ -339,4 +308,4 @@ python3.10 update_symbols.py
 
 ---
 
-See individual component documentation for detailed usage. 
+See individual component documentation for detailed usage.
