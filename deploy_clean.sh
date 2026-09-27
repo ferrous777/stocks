@@ -19,8 +19,11 @@ rsync -az scripts/pythonanywhere_daily_hook.py scripts/pythonanywhere_daily_hook
 echo "Uploading application directories..."
 rsync -az --exclude="__pycache__" --exclude="*.pyc" \
   alerts analysis config market_calendar market_data plaid_integration recommendations \
-  scheduler static storage strategies templates time_estimation utils \
+  scheduler storage strategies templates time_estimation utils \
   "$REMOTE:~/"
+if [ -d static ]; then
+    rsync -az static "$REMOTE:~/"
+fi
 
 echo "Uploading performance modules (preserving runtime data)..."
 rsync -az --include="*/" --include="*.py" --exclude="*" performance "$REMOTE:~/"

@@ -12,7 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 CODE_DIRS = (
     'analysis', 'config', 'market_calendar', 'market_data', 'recommendations',
-    'scheduler', 'static', 'storage', 'strategies', 'templates', 'utils', 'performance',
+    'scheduler', 'storage', 'strategies', 'templates', 'utils', 'performance',
     'alerts', 'plaid_integration', 'time_estimation',
 )
 ROOT_FILES = ('app.py', 'main.py', 'wsgi.py', 'requirements.txt', 'version.py', '__init__.py')
@@ -70,10 +70,14 @@ if command == 'rsync':
     return remote, commands
 
 
+@pytest.mark.parametrize('with_static', [False, True])
 def test_direct_deploy_preserves_runtime_files_and_includes_hook_imports(
-    deployment_checkout, isolated_remote, tmp_path
+    deployment_checkout, isolated_remote, tmp_path, with_static
 ):
     remote, commands = isolated_remote
+    if with_static:
+        (deployment_checkout / 'static').mkdir()
+        (deployment_checkout / 'static' / 'asset.css').write_text('/* asset sentinel */')
     for name in ('data', 'cache', 'results', 'logs', 'reports', 'performance'):
         (remote / name).mkdir()
         (remote / name / 'preserve.txt').write_text('server runtime sentinel')
@@ -86,6 +90,7 @@ def test_direct_deploy_preserves_runtime_files_and_includes_hook_imports(
         assert (remote / name).is_file(), name
     for name in ('data', 'cache', 'results', 'logs', 'reports', 'performance'):
         assert (remote / name / 'preserve.txt').read_text() == 'server runtime sentinel'
+    assert (remote / 'static' / 'asset.css').exists() == with_static
     calls = [json.loads(line) for line in commands.read_text().splitlines()]
     assert calls[-1]['command'] == 'ssh'
     assert calls[-1]['args'][-1].startswith('touch ')
@@ -112,7 +117,11 @@ def test_failed_upload_stops_before_wsgi_changes(deployment_checkout, isolated_r
     assert [call['command'] for call in calls] == ['rsync']
 
 
-def test_offline_package_contains_code_without_runtime_data(deployment_checkout, tmp_path):
+@pytest.mark.parametrize('with_static', [False, True])
+def test_offline_package_contains_code_without_runtime_data(deployment_checkout, tmp_path, with_static):
+    if with_static:
+        (deployment_checkout / 'static').mkdir()
+        (deployment_checkout / 'static' / 'asset.css').write_text('/* asset sentinel */')
     subprocess.run(['bash', str(deployment_checkout / 'scripts/deploy_to_pythonanywhere.sh')],
                    cwd=tmp_path, check=True, capture_output=True, text=True)
     with tarfile.open(deployment_checkout / 'stocks-app.tar.gz') as archive:
@@ -144,3 +153,4 @@ def test_offline_package_contains_code_without_runtime_data(deployment_checkout,
     assert (target / 'unrelated' / 'app.py').read_text() == '# unrelated application\n'
     assert (target / 'pythonanywhere_daily_hook.py').is_file()
     assert (target / 'performance' / 'prediction_tracker.py').is_file()
+    assert (target / 'static' / 'asset.css').exists() == with_static

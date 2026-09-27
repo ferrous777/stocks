@@ -10,7 +10,10 @@ rsync -a app.py main.py wsgi.py requirements.txt version.py __init__.py "$DEPLOY
 rsync -a scripts/pythonanywhere_daily_hook.py scripts/pythonanywhere_daily_hook_server.py "$DEPLOY_DIR/"
 rsync -a --exclude="__pycache__" --exclude="*.pyc" \
     alerts analysis config market_calendar market_data plaid_integration recommendations \
-    scheduler static storage strategies templates time_estimation utils "$DEPLOY_DIR/"
+    scheduler storage strategies templates time_estimation utils "$DEPLOY_DIR/"
+if [ -d static ]; then
+    rsync -a static "$DEPLOY_DIR/"
+fi
 rsync -a --include="*/" --include="*.py" --exclude="*" performance "$DEPLOY_DIR/"
 
 cat > "$DEPLOY_DIR/deploy_server.sh" <<'SERVER_SCRIPT'
@@ -29,7 +32,10 @@ rsync -a app.py main.py wsgi.py requirements.txt version.py __init__.py \
     pythonanywhere_daily_hook.py pythonanywhere_daily_hook_server.py "$APP_DIR/"
 rsync -a --exclude="__pycache__" --exclude="*.pyc" \
     alerts analysis config market_calendar market_data plaid_integration recommendations \
-    scheduler static storage strategies templates time_estimation utils "$APP_DIR/"
+    scheduler storage strategies templates time_estimation utils "$APP_DIR/"
+if [ -d static ]; then
+    rsync -a static "$APP_DIR/"
+fi
 rsync -a --include="*/" --include="*.py" --exclude="*" performance "$APP_DIR/"
 
 echo "Code deployed to $APP_DIR. Install requirements and reload the web app in the Web tab."
