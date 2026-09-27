@@ -3,6 +3,243 @@
 ## Overview
 The backtesting system allows you to test trading strategies against historical market data and compare their performance against a buy-and-hold strategy.
 
+## Literature Review (Issue #4)
+
+This section summarizes research findings for backtesting bias controls, evaluation horizons, and interpretation metrics.
+
+### Backtesting biases and mitigations
+
+- Survivorship bias: using only currently listed assets can overstate historical performance; include delisted assets and point-in-time universes where possible.
+- Look-ahead bias: features or labels must only use information available at each historical timestamp.
+- Data-snooping/overfitting: repeated strategy tuning on the same sample inflates in-sample performance and weakens out-of-sample reliability.
+
+Recommended controls:
+
+1. Split data into development/validation/test windows and reserve a true holdout period.
+2. Use walk-forward or rolling-window validation rather than one static split.
+3. Track all parameter searches and avoid selecting models solely on in-sample Sharpe.
+4. Use realistic trading assumptions (costs, slippage, liquidity constraints).
+
+### Evaluation horizons
+
+- For daily strategies, multi-year windows are generally required to cover different market regimes.
+- Weekly/monthly strategies should be evaluated across longer cycles (including at least one stress regime) before promoting to production.
+- Cross-regime robustness checks are required: re-run results across alternate start dates and subperiods, not just one backtest window.
+
+### Performance metric interpretation
+
+Core metrics for this repository are:
+
+- Return metrics: total and annualized returns.
+- Risk-adjusted metrics: Sharpe, Sortino, Calmar.
+- Drawdown metrics: max drawdown and drawdown duration.
+- Trade quality metrics: win rate and profit factor.
+
+Interpretation guidance:
+
+- Sharpe and Sortino should be interpreted with sample-length awareness; both are unstable on short windows.
+- Calmar should be paired with drawdown duration so short-lived and prolonged drawdowns are distinguished.
+- Metrics should be analyzed net of transaction costs/slippage to reduce optimistic bias.
+
+### References
+
+1. Bailey, D. H., Borwein, J. M., Lopez de Prado, M., & Zhu, Q. J. (2014). The Probability of Backtest Overfitting. Journal of Computational Finance.
+2. Brown, S. J., Goetzmann, W. N., Ibbotson, R. G., & Ross, S. A. (1992). Survivorship Bias in Performance Studies. Review of Financial Studies.
+3. Lo, A. W., & MacKinlay, A. C. (1990). Data-Snooping Biases in Tests of Financial Asset Pricing Models. Review of Financial Studies.
+4. Lo, A. W. (2002). The Statistics of Sharpe Ratios. Financial Analysts Journal.
+5. Arnott, R. D., Harvey, C. R., & Markowitz, H. (2019). A Backtesting Protocol in the Era of Machine Learning. Journal of Portfolio Management.
+
+## Strategy Taxonomy (Issue #5)
+
+This taxonomy focuses on medium- and long-horizon approaches requested for task 3.
+
+### 1) Factor-based strategies
+
+- Examples: value, quality, low-volatility, size, multi-factor ranking.
+- Pros: interpretable economic intuition, diversified signal sources, strong academic coverage.
+- Cons: factor crowding and long drawdown cycles, turnover sensitivity, regime dependence.
+- Data requirements: clean point-in-time fundamentals, corporate actions, universe membership history, benchmark series.
+
+### 2) Momentum and trend-following
+
+- Examples: cross-sectional momentum, time-series momentum, moving-average trend rules.
+- Pros: robust in persistent trends, simple implementation, broadly applicable across assets.
+- Cons: whipsaw risk in range-bound markets, crash sensitivity during sharp reversals.
+- Data requirements: adjusted OHLCV history, liquidity filters, transaction-cost model, regime segmentation windows.
+
+### 3) Volatility and risk-premium strategies
+
+- Examples: low-volatility tilt, volatility timing, risk-parity style allocations.
+- Pros: explicit risk targeting, often smoother drawdown profile, portfolio-construction friendly.
+- Cons: leverage and financing assumptions can dominate outcomes, tail shocks can break stability.
+- Data requirements: realized/implied volatility inputs, covariance estimates, rebalance frequency controls, financing assumptions.
+
+### 4) Machine-learning approaches
+
+- Examples: gradient-boosted trees, temporal models, ensemble forecasters.
+- Pros: can model nonlinear relationships and interactions beyond linear factor models.
+- Cons: high overfitting risk, weak interpretability, feature leakage risk if time alignment is poor.
+- Data requirements: strict point-in-time feature pipelines, leakage-safe train/validation/test splits, feature-store lineage, robust out-of-sample evaluation.
+
+### Selection guidance for medium/long horizons
+
+1. Prefer strategies with stable out-of-sample behavior across multiple market regimes.
+2. Require explicit transaction-cost and slippage assumptions before ranking strategies.
+3. Treat ML strategies as complements to factor/trend baselines, not replacements, unless robustness is demonstrated on holdout windows.
+
+## Framework Comparison (Issue #6)
+
+Comparison focus: feature set, extensibility, and suitability for a plugin-oriented architecture.
+
+### Backtesting.py
+
+- Strengths: lightweight API, quick iteration, easy strategy prototyping.
+- Weaknesses: less natural fit for multi-asset portfolio workflows and complex execution modeling.
+- Plugin suitability: good for simple strategy plugins; weaker for full lifecycle orchestration.
+- Live trading: primarily backtesting-focused.
+
+### Backtrader
+
+- Strengths: event-driven engine, analyzers/indicators/sizers, flexible broker/commission modeling.
+- Weaknesses: steeper learning curve, more boilerplate for clean architecture.
+- Plugin suitability: strong candidate; naturally maps to reusable strategy modules and lifecycle hooks.
+- Live trading: supports live integrations with supported brokers/stores.
+
+### PyAlgoTrade
+
+- Strengths: event-driven model with multiple order types and built-in performance tooling.
+- Weaknesses: comparatively older ecosystem and less active momentum than newer stacks.
+- Plugin suitability: moderate; supports modular strategies but less ecosystem depth for modern workflows.
+- Live trading: supports paper/live patterns depending on integrations.
+
+### VectorBT
+
+- Strengths: high-performance vectorized backtests, excellent parameter-sweep throughput, strong notebook analytics.
+- Weaknesses: vectorized paradigm can be less intuitive for event-driven execution logic.
+- Plugin suitability: strong for metric/optimizer plugins and signal pipelines; less natural for event-level broker simulation.
+- Live trading: generally research/backtest-oriented rather than full live execution.
+
+### Optional alternatives (future evaluation)
+
+- Zipline/Zipline-reloaded: historically influential but maintenance/integration trade-offs should be assessed.
+- QuantConnect Lean: strong production ecosystem but operational complexity is higher for local-first workflows.
+
+### Prioritized recommendation for this repository
+
+1. Primary candidate: Backtrader for plugin lifecycle alignment and event-driven realism.
+2. Secondary candidate: VectorBT for research-scale sweeps and fast model exploration.
+3. Keep the repository-level plugin contract framework-agnostic so strategy modules can be adapted to either backend.
+
+## Plug-in Architecture Design (Issue #7)
+
+This section captures the strategy-module interface and manager design used by the repository foundation.
+
+### Interface contract
+
+Strategy plugins implement a shared lifecycle:
+
+1. `prepare_data(raw_data)`
+2. `run_backtest(prepared_data)`
+3. `compute_metrics(backtest_output)`
+4. `generate_recommendation(metrics, risk_profile)`
+
+Required metadata:
+
+- `name`
+- `version`
+- `supported_asset_classes`
+- `holding_horizon`
+
+### Manager responsibilities
+
+The plugin manager should:
+
+1. Discover strategy modules from a configured package path.
+2. Validate interface and metadata requirements.
+3. Prevent duplicate plugin names.
+4. Report import/load failures without crashing the full run.
+5. Instantiate valid plugins and return both `loaded` and `failures` maps.
+
+### Execution flow
+
+1. Discovery phase: scan modules and identify plugin classes.
+2. Validation phase: enforce metadata/interface constraints.
+3. Load phase: instantiate each plugin and collect failures.
+4. Runtime phase: execute plugin lifecycle per symbol/universe and aggregate comparable outputs.
+
+### Pseudocode
+
+```python
+manager = StrategyPluginManager(package="strategies")
+load_result = manager.load_plugins()
+
+for plugin_name, plugin in load_result.loaded.items():
+  prepared = plugin.prepare_data(raw_data)
+  backtest_output = plugin.run_backtest(prepared)
+  metrics = plugin.compute_metrics(backtest_output)
+  recommendation = plugin.generate_recommendation(metrics, risk_profile="moderate")
+  store_result(plugin_name, metrics, recommendation)
+
+for failure_key, failure_error in load_result.failures.items():
+  log_failure(failure_key, failure_error)
+```
+
+## Recommendation Logic Design (Issue #8)
+
+Recommendation actions are derived from risk-adjusted backtest metrics using deterministic threshold rules.
+
+### Required input metrics
+
+Each recommendation evaluation requires:
+
+- `sharpe_ratio`
+- `calmar_ratio`
+- `max_drawdown`
+- `total_return`
+
+If any required metric is missing, evaluation should fail explicitly.
+
+### Action rules
+
+Given a selected risk profile:
+
+1. `buy` when Sharpe/Calmar exceed buy thresholds, drawdown is below limit, and total return is positive.
+2. `short` when Sharpe is below short ceiling, drawdown is above short floor, and total return is negative.
+3. `hold` when risk-adjusted profile is acceptable but does not qualify for buy/short.
+4. `avoid` when none of the above conditions are satisfied.
+
+### Risk profile thresholds
+
+#### Conservative
+
+- Buy: Sharpe >= 2.25, Calmar >= 2.25, max drawdown <= 0.12
+- Hold: Sharpe >= 1.00 and max drawdown <= 0.15
+- Short: Sharpe <= -0.25 and max drawdown >= 0.20
+
+#### Moderate
+
+- Buy: Sharpe >= 2.00, Calmar >= 2.00, max drawdown <= 0.15
+- Hold: Sharpe >= 0.75 and max drawdown <= 0.20
+- Short: Sharpe <= -0.40 and max drawdown >= 0.25
+
+#### Aggressive
+
+- Buy: Sharpe >= 1.60, Calmar >= 1.50, max drawdown <= 0.25
+- Hold: Sharpe >= 0.50 and max drawdown <= 0.30
+- Short: Sharpe <= -0.70 and max drawdown >= 0.30
+
+### Strategy-specific overrides
+
+The policy layer supports per-strategy threshold overrides so individual plugins can tune thresholds while still inheriting profile defaults.
+
+### Robustness checks
+
+Before promoting a recommendation policy to production:
+
+1. Validate results on out-of-sample windows.
+2. Re-run across alternate start dates/regimes.
+3. Compare recommendation stability across conservative/moderate/aggressive profiles.
+
 ## Usage
 
 ### Command Line
