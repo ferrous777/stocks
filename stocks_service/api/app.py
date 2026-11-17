@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pymongo.database import Database
 
 from .. import __version__
@@ -39,6 +39,11 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
     app.state.api_keys = keys
     app.state.db = db
     app.state.fetcher = fetcher or YahooChartClient(settings.yahoo_user_agent, settings.yahoo_timeout_seconds)
+
+    @app.get("/", include_in_schema=False)
+    def root():
+        # No website pages yet (plan phase 4); send visitors to the interactive API docs.
+        return RedirectResponse("/docs", status_code=307)
 
     @app.get("/health")
     def health(request: Request):
