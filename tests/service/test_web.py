@@ -14,9 +14,10 @@ UTC = dt.timezone.utc
 SECRET = "s" * 40
 
 
-def _client(db, password="pw-123"):
-    s = Settings(mongo_url="mongodb://unused", api_keys="k", admin_password=password, session_secret=SECRET if password else "")
-    return TestClient(create_app(s, db=db))
+def _client(db, password="pw-123", https_only=True):
+    s = Settings(mongo_url="mongodb://unused", api_keys="k", admin_password=password,
+                 session_secret=SECRET if password else "", session_https_only=https_only)
+    return TestClient(create_app(s, db=db), base_url="https://testserver" if https_only else "http://testserver")
 
 
 def _login(c, password="pw-123"):
@@ -81,3 +82,28 @@ def test_dashboard_and_symbol_pages_show_real_data(db):
         research = c.get("/research").text
         assert "No validated results yet" in research and "ma_crossover@1" in research and "research" in research
         assert "Not available yet" in c.get("/outlook").text
+
+
+def test_session_cookie_is_secure_by_default(db):
+    with _client(db) as c:
+        cookie = _login(c).headers["set-cookie"].lower()
+        assert "secure" in cookie and "httponly" in cookie and "samesite=lax" in cookie
+    with _client(db, https_only=False) as c:  # explicit local-development opt-out
+        assert "secure" not in _login(c).headers["set-cookie"].lower()
+
+
+def test_non_ascii_passwords_are_compared_safely(db):
+    with _client(db, password="pässwörd-✓") as c:
+        assert "Incorrect password" in _login(c, "wrönġ").text  # no 500
+        r = _login(c, "pässwörd-✓")
+        assert (r.status_code, r.headers["location"]) == (303, "/")
+
+
+def test_daily_change_is_not_distorted_by_a_split(db):
+    """Raw closes 1208.88 -> 121.79 across NVDA's 10:1 split; the real move was about +0.75%."""
+    _load_nvda(db)
+    db.bars.delete_many({"symbol": "NVDA", "session": {"$gt": dt.datetime(2024, 6, 10, tzinfo=UTC)}})
+    with _client(db) as c:
+        _login(c)
+        html = c.get("/").text
+        assert "+0.75%" in html and "-89.9" not in html

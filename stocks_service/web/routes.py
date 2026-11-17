@@ -48,7 +48,8 @@ def login_form(request: Request):
 def login(request: Request, password: str = Form(...)):
     if not website_enabled(request):
         raise HTTPException(503, "Website disabled.")
-    if not hmac.compare_digest(password, request.app.state.settings.admin_password):
+    # compare_digest only accepts ASCII str; compare UTF-8 bytes so any password works.
+    if not hmac.compare_digest(password.encode("utf-8"), request.app.state.settings.admin_password.encode("utf-8")):
         return _render(request, "login.html", error="Incorrect password.")
     request.session["user"] = "admin"
     return RedirectResponse("/", status_code=303)

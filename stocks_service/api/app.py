@@ -61,7 +61,7 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
     # Session cookie for the website; a random per-process secret when the website is disabled.
     import secrets as _secrets
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret or _secrets.token_urlsafe(32),
-                       https_only=False, same_site="lax", max_age=12 * 3600)
+                       https_only=settings.session_https_only, same_site="lax", max_age=12 * 3600)
 
     @app.exception_handler(LoginRequired)
     def _login_required(request: Request, exc: LoginRequired):

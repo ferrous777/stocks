@@ -49,10 +49,13 @@ def overview(db: Database) -> dict:
             quarantine=(s.get("quarantine") or {}).get("reason"),
             last_session=last[0]["session"].date() if last else None,
             last_close=last[0]["c"] if last else None,
-            change_pct=(last[0]["c"] / last[1]["c"] - 1) if len(last) == 2 else None,
+            change_pct=None,
         )
         if row.last_session is not None:
             view = load_view(db, row.symbol, row.last_session)
+            # Stored closes are raw; compare on the view's split-adjusted basis so a split is not a "move".
+            if len(view) >= 2:
+                row.change_pct = float(view.c[-1] / view.c[-2] - 1)
             row.decisions = {spec.key: decide(view, spec) for spec in all_specs()}
         rows.append(row)
     versions = {v["_id"]: v.get("status", "unregistered") for v in db.strategy_versions.find()}

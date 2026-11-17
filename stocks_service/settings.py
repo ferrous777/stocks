@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     admin_password: str = ""
     # Signs the website session cookie; required when admin_password is set.
     session_secret: str = ""
+    # Session cookie is sent only over HTTPS. Set STOCKS_SESSION_HTTPS_ONLY=false only for local HTTP development.
+    session_https_only: bool = True
     # Bars are only treated as complete once their end time is this far in the past,
     # giving the data source time to finalize them.
     ingest_buffer_minutes: int = 20
