@@ -79,3 +79,19 @@ def test_quarantine_clear_requires_note(client, db):
     r = client.post("/api/v1/symbols/NVDA/quarantine/clear?note=verified%20halt", headers=H)
     assert r.status_code == 200 and "quarantine" not in r.json()
     assert r.json()["quarantine_history"][0]["note"] == "verified halt"
+
+
+@pytest.mark.parametrize("field", ["groups", "enabled", "asset_class", "factors", "tradable", "priority", "shortable"])
+def test_patch_rejects_explicit_null_for_required_fields(client, field):
+    client.post("/api/v1/symbols", headers=H, json={"symbol": "NVDA", "asset_class": "equity"})
+    r = client.patch("/api/v1/symbols/NVDA", headers=H, json={field: None})
+    assert r.status_code == 422 and "cannot be null" in r.text
+    assert client.get("/api/v1/symbols/NVDA", headers=H).json()["asset_class"] == "equity"
+
+
+def test_patch_can_clear_nullable_fields_and_validates_groups(client):
+    client.post("/api/v1/symbols", headers=H, json={"symbol": "NVDA", "asset_class": "equity", "name": "Nvidia",
+                                                    "sector": "Technology"})
+    r = client.patch("/api/v1/symbols/NVDA", headers=H, json={"name": None, "sector": None})
+    assert r.status_code == 200 and r.json()["name"] is None and r.json()["sector"] is None
+    assert client.patch("/api/v1/symbols/NVDA", headers=H, json={"groups": ["Bad Slug"]}).status_code == 422

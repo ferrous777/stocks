@@ -12,7 +12,10 @@ const MONGO_START = [
   // could initialize the volume without a root user.
   'if [ -z "$MONGO_KEYFILE" ] || [ -z "$MONGO_INITDB_ROOT_USERNAME" ] || [ -z "$MONGO_INITDB_ROOT_PASSWORD" ]; then ',
   'echo "missing MONGO_KEYFILE / MONGO_INITDB_ROOT_USERNAME / MONGO_INITDB_ROOT_PASSWORD" >&2; exit 1; fi; ',
-  'printf %s "$MONGO_KEYFILE" > /tmp/mongo-keyfile && chmod 400 /tmp/mongo-keyfile && chown 999:999 /tmp/mongo-keyfile && ',
+  // Keyfile preparation runs in the foreground and aborts startup on any failure.
+  'printf %s "$MONGO_KEYFILE" > /tmp/mongo-keyfile && chmod 400 /tmp/mongo-keyfile && chown 999:999 /tmp/mongo-keyfile ',
+  '|| { echo "keyfile preparation failed" >&2; exit 1; }; ',
+  // Only the replica-set initiation loop is backgrounded.
   "(until mongosh --quiet --host 127.0.0.1 -u \"$MONGO_INITDB_ROOT_USERNAME\" -p \"$MONGO_INITDB_ROOT_PASSWORD\" ",
   "--authenticationDatabase admin --eval ",
   "\"try { rs.status().ok } catch (e) { rs.initiate({_id: \\\"rs0\\\", members: [{_id: 0, host: \\\"$RAILWAY_PRIVATE_DOMAIN:27017\\\"}]}).ok }\" ",
