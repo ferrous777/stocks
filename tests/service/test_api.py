@@ -95,3 +95,9 @@ def test_patch_can_clear_nullable_fields_and_validates_groups(client):
     r = client.patch("/api/v1/symbols/NVDA", headers=H, json={"name": None, "sector": None})
     assert r.status_code == 200 and r.json()["name"] is None and r.json()["sector"] is None
     assert client.patch("/api/v1/symbols/NVDA", headers=H, json={"groups": ["Bad Slug"]}).status_code == 422
+
+
+def test_root_redirects_to_api_docs(client):
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 307 and r.headers["location"] == "/docs"
+    assert client.get("/docs").status_code == 200
