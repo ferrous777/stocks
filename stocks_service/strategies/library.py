@@ -37,6 +37,8 @@ def ma_crossover(view: PointInTimeView, p: dict) -> Signal:
 
 def volume_price(view: PointInTimeView, p: dict) -> Signal:
     n = p["period"]
+    if np.isnan(view.v[-(n + 1):]).any():
+        return Signal("hold", 0.0, ("volume_unavailable",))
     avg = float(np.mean(view.v[-(n + 1):-1]))
     change = float(view.c[-1] / view.c[-2] - 1)
     if avg <= 0:
@@ -104,6 +106,8 @@ def trend_breakout(view: PointInTimeView, p: dict) -> Signal:
     a = atr(h, l, c, p["atr_period"])
     diffs = np.diff(c[-n:])
     up, down = float(np.mean(diffs > 0)), float(np.mean(diffs < 0))
+    if np.isnan(v[-(p["vol_lookback"] + 1):]).any():
+        return Signal("hold", 0.0, ("volume_unavailable",))
     vol_avg = float(np.mean(v[-(p["vol_lookback"] + 1):-1]))
     vol_ok = vol_avg > 0 and float(v[-1]) > vol_avg * p["vol_mult"]
     price = float(c[-1])

@@ -27,8 +27,8 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("ex_date", ASCENDING)], name="ex_date"),
     ],
     "signals": [
-        IndexModel([("strategy", ASCENDING), ("symbol", ASCENDING), ("asof", ASCENDING)],
-                   name="strategy_symbol_asof", unique=True),
+        IndexModel([("strategy", ASCENDING), ("symbol", ASCENDING), ("asof", ASCENDING), ("source", ASCENDING)],
+                   name="strategy_symbol_asof_source", unique=True),
         IndexModel([("symbol", ASCENDING), ("asof", DESCENDING)], name="symbol_asof"),
         IndexModel([("strategy", ASCENDING), ("asof", DESCENDING)], name="strategy_asof"),
     ],

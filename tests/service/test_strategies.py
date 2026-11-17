@@ -190,3 +190,46 @@ def test_sync_never_promotes_or_resets_status(db):
     db.strategy_versions.update_one({"_id": "momentum@1"}, {"$set": {"status": "paused"}})
     assert sync_strategy_versions(db, NOW) == []
     assert db.strategy_versions.find_one({"_id": "momentum@1"})["status"] == "paused"
+
+
+# --- review fixes (PR #13) ----------------------------------------------------
+
+@pytest.mark.parametrize("asof", [dt.date(2021, 7, 19), dt.date(2021, 7, 20), dt.date(2023, 1, 3),
+                                  dt.date(2024, 6, 7), dt.date(2024, 6, 10)])
+def test_truncated_view_equals_direct_construction_across_splits(asof):
+    bars, splits = raw_daily(NVDA_LONG, "NVDA")
+    via_truncate = _view(NVDA_LONG, "NVDA").truncated(asof)
+    direct = PointInTimeView.from_raw("NVDA", [b for b in bars if b["session"] <= asof],
+                                      [s for s in splits if s.ex_date <= asof], asof)
+    assert via_truncate.sessions == direct.sessions
+    for f in ("o", "h", "l", "c", "v"):
+        np.testing.assert_array_equal(getattr(via_truncate, f), getattr(direct, f))
+    if asof == dt.date(2024, 6, 7):
+        assert via_truncate.c[-1] == pytest.approx(1208.88, abs=0.01)  # not 120.888
+
+
+def test_missing_volume_is_not_zero_and_blocks_volume_rules():
+    bars, splits = raw_daily(NVDA_LONG, "NVDA")
+    asof = dt.date(2023, 5, 25)
+    holed = [{**b, "v": None} if b["session"] == dt.date(2023, 5, 23) else b for b in bars]
+    v = PointInTimeView.from_raw("NVDA", holed, splits, asof)
+    assert np.isnan(v.v[v.index_of(dt.date(2023, 5, 23))])
+    for key in ("volume_price@1", "trend_breakout@1"):
+        d = decide(v, get_spec(key))
+        assert (d.direction, d.reasons) == ("hold", ("volume_unavailable",)), key
+    # Price-only strategies are unaffected by the missing volume.
+    assert decide(v, get_spec("ma_crossover@1")) == decide(_view(NVDA_LONG, "NVDA", asof), get_spec("ma_crossover@1"))
+
+
+def test_live_decision_is_immutable_and_parity_uses_it(db):
+    _load_nvda(db)
+    sync_strategy_versions(db, NOW)
+    asof = dt.date(2025, 5, 30)
+    live = run_decision(db, "NVDA", asof, "macd@1")
+    assert persist_decision(db, live, source="live", now=NOW) is True
+    altered = dataclasses.replace(live, strength=0.987654)
+    assert persist_decision(db, altered, source="live", now=NOW) is False  # first live snapshot kept
+    assert persist_decision(db, altered, source="replay", now=NOW) is True  # replays stored separately
+    docs = {d["source"]: d["strength"] for d in db.signals.find({"strategy": "macd@1", "symbol": "NVDA"})}
+    assert docs == {"live": live.strength, "replay": 0.987654}
+    assert check_parity(db, "macd@1", "NVDA", asof, now=NOW) is True  # compared with live, not the replay

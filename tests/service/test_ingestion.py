@@ -154,3 +154,27 @@ def test_successful_ingest_writes_actions_and_bars_together(db, fetcher):
     log = db.ingest_log.find_one({"symbol": "NVDA"})
     assert log["result"]["upserted"] == res.upserted == db.bars.count_documents({"symbol": "NVDA"})
     assert db.corporate_actions.count_documents({"symbol": "NVDA"}) == res.new_corporate_actions == 2
+
+
+@pytest.mark.parametrize("concurrent_split", [
+    {"ex_date": dt.datetime(2024, 6, 10, tzinfo=UTC), "ratio": 5.0},   # same date, conflicting ratio
+    {"ex_date": dt.datetime(2024, 7, 1, tzinfo=UTC), "ratio": 2.0},    # a split we did not normalize with
+])
+def test_split_committed_concurrently_aborts_the_ingest(db, fetcher, monkeypatch, concurrent_split):
+    """Another ingest commits a split after this one validated: the transaction must abort."""
+    _add_symbol(db, "NVDA")
+    _verify(db, fetcher)
+    real_check = ingestion._overlap_check
+
+    def check_then_race(*args, **kwargs):
+        out = real_check(*args, **kwargs)
+        db.corporate_actions.insert_one({"symbol": "NVDA", "type": "split", "source": "other_ingest",
+                                         **concurrent_split})
+        return out
+
+    monkeypatch.setattr(ingestion, "_overlap_check", check_then_race)
+    with pytest.raises(ingestion.ConcurrentCorporateActionChange):
+        _ingest(db, fetcher)
+    assert db.bars.count_documents({"symbol": "NVDA"}) == 0
+    assert db.ingest_log.count_documents({}) == 0
+    assert db.corporate_actions.count_documents({"symbol": "NVDA"}) == 1  # only the concurrent writer's split

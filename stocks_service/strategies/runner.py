@@ -57,10 +57,25 @@ def _doc(decision: Decision) -> dict:
     return d
 
 
-def persist_decision(db: Database, decision: Decision, *, source: str, now: dt.datetime) -> None:
-    key = {"strategy": decision.strategy, "symbol": decision.symbol, "asof": _d(decision.asof)}
-    db.signals.update_one(key, {"$set": {**_doc(decision), "source": source}, "$setOnInsert": {"created_at": now}},
-                          upsert=True)
+LIVE = "live"
+
+
+def persist_decision(db: Database, decision: Decision, *, source: str, now: dt.datetime) -> bool:
+    """Store a decision under (strategy, symbol, asof, source).
+
+    The first ``live`` snapshot is immutable: later live writes for the same key never replace it,
+    so parity always compares against what was actually decided at the time. Other sources
+    (e.g. ``replay``) are stored separately and may be refreshed. Returns True if a document was
+    created or updated.
+    """
+    key = {"strategy": decision.strategy, "symbol": decision.symbol, "asof": _d(decision.asof), "source": source}
+    doc = {**_doc(decision), "source": source}
+    if source == LIVE:
+        res = db.signals.update_one(key, {"$setOnInsert": {**doc, "created_at": now}}, upsert=True)
+        return res.upserted_id is not None
+    res = db.signals.update_one(key, {"$set": {**doc, "updated_at": now}, "$setOnInsert": {"created_at": now}},
+                                upsert=True)
+    return res.upserted_id is not None or res.modified_count > 0
 
 
 def sync_strategy_versions(db: Database, now: dt.datetime) -> list[str]:
@@ -84,10 +99,10 @@ class ParityViolation(RuntimeError):
 
 
 def check_parity(db: Database, strategy_key: str, symbol: str, asof: dt.date, *, now: dt.datetime) -> bool:
-    """Recompute a stored decision; on mismatch record a violation and pause the version."""
-    stored = db.signals.find_one({"strategy": strategy_key, "symbol": symbol, "asof": _d(asof)})
+    """Recompute the stored *live* decision; on mismatch record a violation and pause the version."""
+    stored = db.signals.find_one({"strategy": strategy_key, "symbol": symbol, "asof": _d(asof), "source": LIVE})
     if stored is None:
-        raise LookupError(f"no stored decision for {strategy_key} {symbol} {asof}")
+        raise LookupError(f"no stored live decision for {strategy_key} {symbol} {asof}")
     replay = _doc(run_decision(db, symbol, asof, strategy_key))
     fields = ("direction", "strength", "reasons", "features", "bars_used")
     diffs = {f: {"live": stored.get(f), "replay": replay[f]} for f in fields if stored.get(f) != replay[f]}

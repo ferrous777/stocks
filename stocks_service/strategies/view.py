@@ -9,7 +9,7 @@ replayed years later.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -20,8 +20,8 @@ class CutoffViolation(LookupError):
     """Raised when code asks a view for data after its as-of date."""
 
 
-def _ro(values: list[float]) -> np.ndarray:
-    arr = np.asarray(values, dtype=float)
+def _ro(values: list[float | None]) -> np.ndarray:
+    arr = np.asarray([np.nan if x is None else x for x in values], dtype=float)
     arr.setflags(write=False)
     return arr
 
@@ -35,7 +35,10 @@ class PointInTimeView:
     h: np.ndarray
     l: np.ndarray
     c: np.ndarray
-    v: np.ndarray
+    v: np.ndarray  # NaN where the source had no volume (missing is not zero)
+    # Raw inputs, kept so a truncated view can be rebuilt on its own cutoff's adjustment basis.
+    _raw: tuple = field(default=(), repr=False, compare=False)
+    _splits: tuple = field(default=(), repr=False, compare=False)
 
     @classmethod
     def from_raw(cls, symbol: str, raw_bars: list[dict], splits: list[Split], asof: dt.date) -> PointInTimeView:
@@ -54,7 +57,9 @@ class PointInTimeView:
             h=_ro([b["h"] / k for b, k in zip(rows, f)]),
             l=_ro([b["l"] / k for b, k in zip(rows, f)]),
             c=_ro([b["c"] / k for b, k in zip(rows, f)]),
-            v=_ro([(b["v"] or 0.0) * k for b, k in zip(rows, f)]),
+            v=_ro([None if b.get("v") is None else b["v"] * k for b, k in zip(rows, f)]),
+            _raw=tuple(rows),
+            _splits=tuple(splits),
         )
 
     def __len__(self) -> int:
@@ -73,9 +78,11 @@ class PointInTimeView:
             raise KeyError(f"{self.symbol}: no bar for {session}") from None
 
     def truncated(self, asof: dt.date) -> PointInTimeView:
-        """A view with an earlier cutoff. Prices stay on this view's adjustment basis."""
+        """The view as it would have been built at an earlier cutoff.
+
+        Rebuilt from the raw bars, so splits after ``asof`` are not applied (same result as
+        ``from_raw`` with data up to ``asof``).
+        """
         if asof > self.asof:
             raise CutoffViolation(f"cannot extend a view from {self.asof} to {asof}")
-        n = sum(1 for s in self.sessions if s <= asof)
-        return PointInTimeView(self.symbol, asof, self.sessions[:n], self.o[:n], self.h[:n], self.l[:n],
-                               self.c[:n], self.v[:n])
+        return PointInTimeView.from_raw(self.symbol, list(self._raw), list(self._splits), asof)

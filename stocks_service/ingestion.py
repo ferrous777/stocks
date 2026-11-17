@@ -140,9 +140,13 @@ def get_verified_basis(db: Database, interval: str) -> tuple[Basis, Basis]:
 # Corporate actions
 # ---------------------------------------------------------------------------
 
-def load_splits(db: Database, symbol: str) -> list[Split]:
+def load_splits(db: Database, symbol: str, session=None) -> list[Split]:
     return [Split(ex_date=d["ex_date"].date(), ratio=d["ratio"])
-            for d in db.corporate_actions.find({"symbol": symbol, "type": "split"}).sort("ex_date", 1)]
+            for d in db.corporate_actions.find({"symbol": symbol, "type": "split"}, session=session).sort("ex_date", 1)]
+
+
+class ConcurrentCorporateActionChange(IngestError):
+    """Stored splits changed between validation and commit; the fetched bars were normalized with stale splits."""
 
 
 def candidate_splits(db: Database, parsed: ParsedChart) -> list[Split]:
@@ -300,6 +304,15 @@ def ingest(
 
     # 2) Commit corporate actions, bars and the log atomically.
     def _commit(session):
+        # Re-read stored splits inside the transaction: another ingest may have committed a split
+        # (or a conflicting ratio) since validation. Normalization used `splits`, so any difference
+        # means the bars are on a stale basis; abort rather than commit them.
+        stored_now = {sp.ex_date: sp.ratio for sp in load_splits(db, symbol, session=session)}
+        used = {sp.ex_date: sp.ratio for sp in splits}
+        stale = {d: (r, used.get(d)) for d, r in stored_now.items() if d not in used or not math.isclose(r, used[d])}
+        if stale:
+            raise ConcurrentCorporateActionChange(
+                f"{symbol}: stored splits changed during ingest {stale}; re-run the ingest")
         result.new_corporate_actions = store_corporate_actions(db, parsed, splits, price_basis=price_basis,
                                                                now=now, session=session)
         ca_version = (db.symbols.find_one({"_id": symbol}, {"ca_version": 1}, session=session) or {}).get(
