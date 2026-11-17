@@ -57,6 +57,17 @@ python -m stocks_service.cli backfill --interval 1d          # full daily histor
 python -m stocks_service.cli backfill --interval 1h          # ~730 days, archived for alerts/freshness
 ```
 
+`backfill` is a **one-time** full-history load and skips symbols that already have bars (`--refetch` to force).
+After that, data is kept current incrementally:
+
+```sh
+python -m stocks_service.cli update --interval 1d   # after the close: only bars since the last stored one
+python -m stocks_service.cli update --interval 1h   # during market hours (alerts/freshness)
+```
+
+Each update re-reads a small overlap (5 sessions daily, 1 session hourly) so revisions or an unrecorded split are
+caught by the overlap check, and fails with an explicit error for a symbol that was never backfilled.
+
 `reconcile-legacy` needs the legacy `cache/` and `data/timeseries.db`, which only exist locally / on
 PythonAnywhere. Run them from a machine with those files through a temporary, authenticated
 TCP proxy on `mongo` (use `directConnection=true`), then remove the proxy.

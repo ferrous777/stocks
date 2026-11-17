@@ -312,3 +312,43 @@ def ingest(
         result.unchanged = len(ops) - res.upserted_count - res.modified_count
     db.ingest_log.insert_one({"symbol": symbol, "interval": interval, "at": now, "result": result.__dict__})
     return result
+
+
+# ---------------------------------------------------------------------------
+# Incremental updates
+# ---------------------------------------------------------------------------
+
+# Sessions re-fetched before the last stored bar on every update, so the overlap check can catch
+# source revisions or a newly applied split without re-downloading history.
+OVERLAP_SESSIONS = {"1d": 5, "1h": 1}
+
+
+class NotBackfilled(IngestError):
+    pass
+
+
+def incremental_start(db: Database, symbol: str, interval: str) -> dt.datetime:
+    """Start of the fetch window for an update: a few sessions before the last stored bar."""
+    last = db.bars.find_one({"symbol": symbol, "interval": interval}, sort=[("ts", -1)], projection={"session": 1})
+    if last is None:
+        raise NotBackfilled(f"{symbol} has no {interval} bars yet; run a backfill for it first")
+    session = last["session"].date()
+    window = sessions.calendar().sessions_window(sessions._ts(session), -(OVERLAP_SESSIONS[interval] + 1))
+    first = window[0].date()
+    return dt.datetime(first.year, first.month, first.day, tzinfo=dt.timezone.utc)
+
+
+def update(
+    db: Database,
+    fetcher: ChartFetcher,
+    *,
+    symbol: str,
+    interval: str,
+    now: dt.datetime,
+    buffer: dt.timedelta,
+    overlap_tolerance: float,
+    gap_threshold: float,
+) -> IngestResult:
+    """Fetch only bars since the last stored one (plus a small overlap)."""
+    return ingest(db, fetcher, symbol=symbol, interval=interval, start=incremental_start(db, symbol, interval),
+                  now=now, buffer=buffer, overlap_tolerance=overlap_tolerance, gap_threshold=gap_threshold)

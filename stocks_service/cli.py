@@ -64,7 +64,27 @@ def cmd_verify_basis(args) -> int:
     return 0
 
 
+def _run_symbols(symbols: list[str], pause: float, fn) -> int:
+    failures = 0
+    for sym in symbols:
+        try:
+            r = fn(sym)
+            print(f"{sym:8} fetched={r.fetched} new={r.upserted} revised={r.revised} unchanged={r.unchanged} "
+                  f"new_ca={r.new_corporate_actions} rejected={r.rejected}")
+        except Exception as e:
+            failures += 1
+            print(f"{sym:8} FAILED {type(e).__name__}: {e}", file=sys.stderr)
+        time.sleep(pause)
+    print(f"\n{len(symbols) - failures}/{len(symbols)} succeeded")
+    return 1 if failures else 0
+
+
+def _enabled_symbols(db) -> list[str]:
+    return [d["_id"] for d in db.symbols.find({"enabled": True}, {"_id": 1}).sort("_id", 1)]
+
+
 def cmd_backfill(args) -> int:
+    """Full-history load. By default only for symbols with no stored bars at this interval."""
     db, s = _db()
     client = YahooChartClient(s.yahoo_user_agent, s.yahoo_timeout_seconds)
     now = _now()
@@ -74,21 +94,29 @@ def cmd_backfill(args) -> int:
         start = now - dt.timedelta(days=729)  # Yahoo serves ~730 days of hourly history
     else:
         start = dt.datetime(1990, 1, 2, tzinfo=dt.timezone.utc)
-    symbols = args.symbols or [d["_id"] for d in db.symbols.find({"enabled": True}, {"_id": 1}).sort("_id", 1)]
-    failures = 0
-    for sym in symbols:
-        try:
-            r = ingestion.ingest(db, client, symbol=sym, interval=args.interval, start=start, now=now,
-                                 buffer=dt.timedelta(minutes=s.ingest_buffer_minutes),
-                                 overlap_tolerance=s.overlap_tolerance, gap_threshold=s.unexplained_gap_log_threshold)
-            print(f"{sym:8} fetched={r.fetched} new={r.upserted} revised={r.revised} unchanged={r.unchanged} "
-                  f"new_ca={r.new_corporate_actions} rejected={r.rejected}")
-        except Exception as e:
-            failures += 1
-            print(f"{sym:8} FAILED {type(e).__name__}: {e}", file=sys.stderr)
-        time.sleep(args.pause)
-    print(f"\n{len(symbols) - failures}/{len(symbols)} succeeded")
-    return 1 if failures else 0
+    symbols = args.symbols or _enabled_symbols(db)
+    if not args.refetch:
+        loaded = set(db.bars.distinct("symbol", {"interval": args.interval, "symbol": {"$in": symbols}}))
+        skipped = [x for x in symbols if x in loaded]
+        symbols = [x for x in symbols if x not in loaded]
+        if skipped:
+            print(f"skipping {len(skipped)} already-loaded symbols (use `update`, or --refetch to reload): "
+                  f"{', '.join(skipped)}")
+    return _run_symbols(symbols, args.pause, lambda sym: ingestion.ingest(
+        db, client, symbol=sym, interval=args.interval, start=start, now=now,
+        buffer=dt.timedelta(minutes=s.ingest_buffer_minutes), overlap_tolerance=s.overlap_tolerance,
+        gap_threshold=s.unexplained_gap_log_threshold))
+
+
+def cmd_update(args) -> int:
+    """Incremental: fetch only bars since each symbol's last stored bar (plus a small overlap)."""
+    db, s = _db()
+    client = YahooChartClient(s.yahoo_user_agent, s.yahoo_timeout_seconds)
+    now = _now()
+    return _run_symbols(args.symbols or _enabled_symbols(db), args.pause, lambda sym: ingestion.update(
+        db, client, symbol=sym, interval=args.interval, now=now,
+        buffer=dt.timedelta(minutes=s.ingest_buffer_minutes), overlap_tolerance=s.overlap_tolerance,
+        gap_threshold=s.unexplained_gap_log_threshold))
 
 
 def cmd_reconcile(args) -> int:
@@ -130,7 +158,13 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--symbols", nargs="*")
     b.add_argument("--start")
     b.add_argument("--pause", type=float, default=0.5, help="seconds between symbols (be polite to the source)")
+    b.add_argument("--refetch", action="store_true", help="reload full history even for already-loaded symbols")
     b.set_defaults(fn=cmd_backfill)
+    up = sub.add_parser("update", help="incremental fetch since each symbol's last stored bar")
+    up.add_argument("--interval", choices=["1d", "1h"], required=True)
+    up.add_argument("--symbols", nargs="*")
+    up.add_argument("--pause", type=float, default=0.2)
+    up.set_defaults(fn=cmd_update)
     r = sub.add_parser("reconcile-legacy")
     r.add_argument("--cache-dir", default=str(REPO / "cache"))
     r.add_argument("--sqlite", default=str(REPO / "data" / "timeseries.db"))

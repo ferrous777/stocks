@@ -99,3 +99,26 @@ def test_gap_without_corporate_action_is_detected(db):
     assert ingestion._gap_check(db, "NVDA", raw, parsed.splits, 0.47) is None  # split on file explains the drop
     gap = ingestion._gap_check(db, "NVDA", raw, [], 0.47)  # same raw data with the split missing
     assert gap["session"] == "2024-06-10"
+
+
+def test_update_fetches_only_since_last_stored_bar(db, fetcher):
+    _add_symbol(db, "NVDA")
+    _verify(db, fetcher)
+    _ingest(db, fetcher)  # initial full load through 2024-07-15
+    fetcher.calls.clear()
+    res = ingestion.update(db, fetcher, symbol="NVDA", interval="1d", now=NOW, buffer=dt.timedelta(minutes=20),
+                           overlap_tolerance=0.005, gap_threshold=0.47)
+    period1 = fetcher.calls[0][2]
+    # Window starts 5 sessions before the last stored bar, not at the beginning of history.
+    assert period1 == int(dt.datetime(2024, 7, 8, tzinfo=UTC).timestamp())
+    assert res.fetched == 6 and res.upserted == 0 and res.unchanged == 6
+    assert db.bars.count_documents({"symbol": "NVDA"}) == 51
+
+
+def test_update_requires_an_initial_backfill(db, fetcher):
+    _add_symbol(db, "NVDA")
+    _verify(db, fetcher)
+    with pytest.raises(ingestion.NotBackfilled):
+        ingestion.update(db, fetcher, symbol="NVDA", interval="1d", now=NOW, buffer=dt.timedelta(minutes=20),
+                         overlap_tolerance=0.005, gap_threshold=0.47)
+    assert fetcher.calls[-1][1] == "1d" and len(fetcher.calls) == 1  # only the verification fetch happened
