@@ -232,3 +232,40 @@ def admin_job(job_id: str, db: Database = Depends(get_db)):
     if job is None:
         raise HTTPException(404, "job not found")
     return job
+
+
+# --- research (phase 3 validation) ---------------------------------------------------
+
+@router.get("/research/report")
+def research_report(db: Database = Depends(get_db)):
+    from ..research.protocol import latest_report
+    rep = latest_report(db)
+    if rep is None:
+        raise HTTPException(404, "no research report yet; run POST /api/v1/research/run")
+    return rep
+
+
+@router.post("/research/run", status_code=status.HTTP_202_ACCEPTED)
+def research_run(db: Database = Depends(get_db), dev_start: dt.date = dt.date(2006, 1, 3),
+                 dev_end: dt.date = dt.date(2024, 11, 15), holdout_start: dt.date = dt.date(2024, 11, 18)):
+    from ..research.protocol import HoldoutError, start_development_job
+    if dev_end >= holdout_start:
+        raise HTTPException(422, "dev_end must be before holdout_start")
+    try:
+        job_id = start_development_job(db, dev_start=dev_start, dev_end=dev_end, holdout_start=holdout_start)
+    except (RuntimeError, HoldoutError) as e:
+        raise HTTPException(409, str(e))
+    return {"job_id": job_id}
+
+
+@router.get("/research/jobs/{job_id}")
+def research_job(job_id: str, db: Database = Depends(get_db)):
+    from bson import ObjectId
+    try:
+        doc = db.jobs.find_one({"_id": ObjectId(job_id), "kind": "research"})
+    except Exception:
+        doc = None
+    if doc is None:
+        raise HTTPException(404, "job not found")
+    doc["id"] = str(doc.pop("_id"))
+    return doc

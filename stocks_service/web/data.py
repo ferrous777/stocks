@@ -115,8 +115,11 @@ def symbol_detail(db: Database, symbol: str) -> dict | None:
 
 
 def research_status(db: Database) -> dict:
+    from ..research.protocol import latest_report
+    holdout = db.holdouts.find_one({"_id": "primary"})
     return {
         "versions": list(db.strategy_versions.find().sort("_id", 1)),
-        "experiments": db.experiments.count_documents({}) if "experiments" in db.list_collection_names() else 0,
-        "reports": [],  # filled by phase 3 (validation harness); none exist yet
+        "experiments": db.experiments.count_documents({}),
+        "report": latest_report(db),
+        "holdout": holdout,
     }

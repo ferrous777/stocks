@@ -4,23 +4,83 @@
 <h1>Research</h1>
 <p class="muted">Which strategies made money after costs on data they never saw — and did they beat QQQM, SPY and cash?</p>
 
-<div class="notice">
-  <strong>No validated results yet.</strong>
-  The validation harness (walk-forward backtests with costs, benchmark comparisons, a sealed holdout and
-  overfitting statistics) is being built in plan phase 3. Until it runs, no strategy is eligible and no
-  profitability claims are shown.
+{% if not report %}
+<div class="notice"><strong>No research report yet.</strong> Run the validation (<code>POST /api/v1/research/run</code>)
+after the price history is loaded.</div>
+{% else %}
+{% set r = report %}
+<div class="panel" style="margin:14px 0">
+  {% if r.eligible %}
+  <strong class="pos">Eligible after the gate: {{ r.eligible|join(', ') }}</strong>
+  {% else %}
+  <strong class="neg">No strategy passed the gate.</strong>
+  {% endif %}
+  <p class="small muted" style="margin:6px 0 0">
+    Development window {{ r.dev_window[0] }} → {{ r.dev_window[1] }} · holdout {{ r.holdout_window[0] }} → {{ r.holdout_window[1] }}
+    ({{ holdout.status if holdout else 'unknown' }}) · {{ r.trial_count }} recorded trials ·
+    probability of backtest overfitting {{ '%.2f'|format(r.pbo.pbo) if r.pbo else 'n/a' }} · generated {{ r.created_at.strftime('%Y-%m-%d %H:%M UTC') }}
+  </p>
 </div>
 
+<h2>Strategies vs. cash and benchmarks (after costs)</h2>
+<div class="panel scroll"><table>
+  <thead><tr>
+    <th>Strategy</th><th class="num">CAGR</th><th class="num">Sharpe</th><th class="num">Max DD</th>
+    <th class="num">vs cash</th><th class="num">95% CI</th><th class="num">vs SPY</th><th class="num">vs QQQM</th>
+    <th class="num">vs equal-wt</th><th class="num">Deflated Sharpe</th><th class="num">vs cash at 2× costs</th>
+    <th class="num">Trades</th><th class="num">Exposure</th><th>Gate</th>
+  </tr></thead>
+  <tbody>
+  {% for key, v in r.results.items() %}{% set m = v.metrics %}{% set c = v.comparisons %}
+  <tr>
+    <td>{{ key }}</td>
+    <td class="num {{ 'pos' if m.cagr and m.cagr > 0 else 'neg' }}">{{ '%.1f%%'|format(m.cagr*100) if m.cagr is not none else '—' }}</td>
+    <td class="num">{{ '%.2f'|format(m.sharpe) if m.sharpe is not none else '—' }}</td>
+    <td class="num">{{ '%.0f%%'|format(m.max_drawdown*100) }}</td>
+    <td class="num">{{ '%+.1f%%'|format(c.cash.excess_annual*100) }}</td>
+    <td class="num small muted">[{{ '%+.1f'|format(c.cash.excess_ci95[0]*100) }}, {{ '%+.1f'|format(c.cash.excess_ci95[1]*100) }}]</td>
+    <td class="num">{{ '%+.1f%%'|format(c.SPY.excess_annual*100) }}</td>
+    <td class="num">{{ '%+.1f%%'|format(c['QQQM (QQQ before 2020-10-13)'].excess_annual*100) }}</td>
+    <td class="num">{{ '%+.1f%%'|format(c.equal_weight_universe.excess_annual*100) }}</td>
+    <td class="num">{{ '%.2f'|format(v.deflated_sharpe) if v.deflated_sharpe is not none else '—' }}</td>
+    <td class="num">{{ '%+.1f%%'|format(v.stress.costs_x2.excess_vs_cash*100) }}</td>
+    <td class="num">{{ v.trades }}</td>
+    <td class="num">{{ '%.0f%%'|format(v.avg_exposure*100) }}</td>
+    <td>{% if v.gate.eligible %}<span class="chip pos">eligible</span>{% else %}
+      <span class="chip neg" title="{% for k, ok in v.gate.checks.items() %}{{ k }}: {{ 'pass' if ok else 'FAIL' }}&#10;{% endfor %}">fails {{ v.gate.checks.values()|reject|list|length }}/{{ v.gate.checks|length }}</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+<p class="muted small">"vs" columns are annualized differences in daily returns over the same sessions; the 95% CI is a seeded
+block bootstrap. Gate: CI lower bound vs cash &gt; 0, deflated Sharpe ≥ 0.95, max drawdown ≤ 35%, still beats cash at 2× costs.</p>
+
+<h2>Benchmarks over the same window</h2>
+{% set b = (r.results.values()|first).comparisons %}
+<div class="panel scroll"><table>
+  <thead><tr><th>Benchmark</th><th class="num">CAGR</th><th class="num">Sharpe</th><th class="num">Max DD</th></tr></thead>
+  <tbody>{% for name in ['SPY', 'QQQM (QQQ before 2020-10-13)', 'equal_weight_universe', 'cash'] %}{% set m = b[name].baseline %}
+    <tr><td>{{ name }}</td><td class="num">{{ '%.1f%%'|format(m.cagr*100) }}</td>
+      <td class="num">{{ '%.2f'|format(m.sharpe) if m.sharpe is not none else '—' }}</td><td class="num">{{ '%.0f%%'|format(m.max_drawdown*100) }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+
+<h2>Assumptions and caveats</h2>
+<div class="panel small">
+  <p>Policy {{ r.policy }}: up to {{ r.policy_params.max_positions }} positions, {{ '%.0f%%'|format(r.policy_params.risk_per_trade*100) }} of equity at risk per trade,
+  ≤ {{ '%.0f%%'|format(r.policy_params.max_position_pct*100) }} per position; idle cash earns the 13-week T-bill rate.
+  Costs ({{ r.cost_profile.profile_id }}): ${{ r.cost_profile.commission_per_share }} commission, {{ r.cost_profile.half_spread_bps }} bps half-spread,
+  {{ r.cost_profile.slippage_bps }} bps slippage per side, {{ '%.1f%%'|format(r.cost_profile.borrow_rate_annual*100) }} annual short borrow.</p>
+  <ul>{% for c in r.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
 <h2>Strategy versions</h2>
-{% if versions %}
 <div class="panel scroll"><table>
   <thead><tr><th>Version</th><th>Status</th><th>Description</th></tr></thead>
   <tbody>{% for v in versions %}
     <tr><td>{{ v._id }}</td><td><span class="chip">{{ v.status }}</span></td><td class="muted small">{{ v.description }}</td></tr>
   {% endfor %}</tbody>
 </table></div>
-{% else %}
-<p class="muted">Strategy versions have not been registered in this database yet.</p>
-{% endif %}
 <p class="muted small">Experiments recorded: {{ experiments }}</p>
 {% endblock %}
