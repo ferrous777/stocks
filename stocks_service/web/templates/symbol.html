@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ d.symbol }} · Stocks{% endblock %}
+{% block content %}
+<p class="small"><a href="/">← Dashboard</a></p>
+<h1>{{ d.symbol }}</h1>
+<p class="muted">{{ d.meta.asset_class }}{% if d.meta.sector %} · {{ d.meta.sector }}{% endif %}
+  {% for g in d.meta.groups %} <span class="chip">{{ g }}</span>{% endfor %}
+  {% if d.meta.quarantine %} · <span class="neg">quarantined: {{ d.meta.quarantine.reason }}</span>{% endif %}</p>
+
+{% if not d.has_data %}
+<div class="panel"><strong>No price history loaded for {{ d.symbol }} yet.</strong></div>
+{% else %}
+<div class="panel">
+  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div><span style="font-size:24px;font-weight:650">{{ '%.2f'|format(d.last_close) }}</span>
+      <span class="muted small"> close {{ d.asof }}</span></div>
+    {% if d.chart %}<div class="muted small">{{ d.chart.first }} – {{ d.chart.last }} · {{ d.chart.n }} sessions · {{ d.basis_note }}</div>{% endif %}
+  </div>
+  {% if d.chart %}
+  <svg viewBox="0 0 {{ d.chart.width }} {{ d.chart.height }}" width="100%" role="img" aria-label="{{ d.symbol }} closing prices">
+    <polyline class="line" points="{{ d.chart.points }}"/>
+  </svg>
+  <div class="muted small" style="display:flex;justify-content:space-between"><span>low {{ '%.2f'|format(d.chart.lo) }}</span><span>high {{ '%.2f'|format(d.chart.hi) }}</span></div>
+  {% endif %}
+</div>
+
+<h2>Strategy decisions at the {{ d.asof }} close</h2>
+<div class="notice small">Research output from unvalidated strategies — not a recommendation.</div>
+<div class="panel scroll"><table>
+  <thead><tr><th>Strategy</th><th>Decision</th><th class="num">Strength</th><th>Why</th></tr></thead>
+  <tbody>{% for x in d.decisions %}
+    <tr><td>{{ x.strategy }}</td><td class="{{ x.direction }}">{{ x.direction }}</td>
+      <td class="num">{{ '%.2f'|format(x.strength) }}</td><td class="muted small">{{ x.reasons|join(', ') }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+
+<h2>ATR levels and time estimates</h2>
+<p class="muted small">Entry at the last close, stop 2×ATR(14), target 4×ATR(14) — initial parameters pending validation.
+Probabilities come from resampling this symbol's own past returns (no drift assumed); they are not calibrated yet.</p>
+<div class="grid">
+{% for side, s in d.sides.items() %}
+  <div class="panel">
+    <strong class="{{ side }}">{{ side|capitalize }}</strong>
+    {% if s.error %}<p class="muted small">{{ s.error }}</p>{% else %}
+    {% set lv = s.levels %}{% set e = s.estimate %}
+    <table class="small" style="margin-top:6px">
+      <tr><td>Entry limit</td><td class="num">{{ '%.2f'|format(lv.entry_limit) }}</td></tr>
+      <tr><td>Stop</td><td class="num">{{ '%.2f'|format(lv.stop) }} <span class="muted">({{ '%.1f'|format(lv.risk_pct*100) }}%)</span></td></tr>
+      <tr><td>Target</td><td class="num">{{ '%.2f'|format(lv.target) }} <span class="muted">({{ '%.1f'|format(lv.reward_pct*100) }}%)</span></td></tr>
+      <tr><td>Days to target</td><td class="num">{% if e.valid %}{{ '%.0f'|format(e.days_to_target) }}{% if e.range_low is not none %} <span class="muted">({{ '%.0f'|format(e.range_low) }}–{{ '%.0f'|format(e.range_high) }})</span>{% endif %}{% else %}<span class="muted">n/a — {{ e.reason }}</span>{% endif %}</td></tr>
+      {% if e.p_target is not none %}
+      <tr><td>Target first (126 sessions)</td><td class="num">{{ '%.0f'|format(e.p_target*100) }}%</td></tr>
+      <tr><td>Stop first</td><td class="num">{{ '%.0f'|format(e.p_stop*100) }}%</td></tr>
+      <tr><td>Neither</td><td class="num">{{ '%.0f'|format(e.p_neither*100) }}%</td></tr>
+      {% endif %}
+    </table>{% endif %}
+  </div>
+{% endfor %}
+</div>
+{% endif %}
+
+<h2>Corporate actions</h2>
+{% if d.corporate_actions %}
+<div class="panel scroll"><table>
+  <thead><tr><th>Ex-date</th><th>Type</th><th class="num">Detail</th></tr></thead>
+  <tbody>{% for c in d.corporate_actions %}
+    <tr><td>{{ c.ex_date.date() }}</td><td>{{ c.type }}</td>
+      <td class="num">{% if c.type == 'split' %}{{ '%g'|format(c.ratio) }}:1{% else %}{{ '%.4f'|format(c.amount_raw) }} / share{% endif %}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% else %}<p class="muted">None on file.</p>{% endif %}
+{% endblock %}

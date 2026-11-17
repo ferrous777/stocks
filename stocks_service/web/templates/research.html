@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Research · Stocks{% endblock %}
+{% block content %}
+<h1>Research</h1>
+<p class="muted">Which strategies made money after costs on data they never saw — and did they beat QQQM, SPY and cash?</p>
+
+<div class="notice">
+  <strong>No validated results yet.</strong>
+  The validation harness (walk-forward backtests with costs, benchmark comparisons, a sealed holdout and
+  overfitting statistics) is being built in plan phase 3. Until it runs, no strategy is eligible and no
+  profitability claims are shown.
+</div>
+
+<h2>Strategy versions</h2>
+{% if versions %}
+<div class="panel scroll"><table>
+  <thead><tr><th>Version</th><th>Status</th><th>Description</th></tr></thead>
+  <tbody>{% for v in versions %}
+    <tr><td>{{ v._id }}</td><td><span class="chip">{{ v.status }}</span></td><td class="muted small">{{ v.description }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% else %}
+<p class="muted">Strategy versions have not been registered in this database yet.</p>
+{% endif %}
+<p class="muted small">Experiments recorded: {{ experiments }}</p>
+{% endblock %}
