@@ -178,3 +178,42 @@ def test_split_committed_concurrently_aborts_the_ingest(db, fetcher, monkeypatch
     assert db.bars.count_documents({"symbol": "NVDA"}) == 0
     assert db.ingest_log.count_documents({}) == 0
     assert db.corporate_actions.count_documents({"symbol": "NVDA"}) == 1  # only the concurrent writer's split
+
+
+def _nvda_raw_around_split():
+    parsed = parse_chart(load_yahoo("NVDA_1d_2024-05-01_2024-07-15"), symbol="NVDA", interval="1d",
+                         window_start=START, window_end=NOW, complete_before=NOW)
+    return [to_raw(b, parsed.splits, price_basis=Basis.SPLIT_ADJUSTED, volume_basis=Basis.SPLIT_ADJUSTED)
+            for b in parsed.bars]
+
+
+def test_split_dated_on_a_non_session_still_explains_the_gap(db):
+    """NVDA's 2001 split is dated by the source on a day the market was closed; same idea here."""
+    from stocks_service.price_basis import Split
+    raw = _nvda_raw_around_split()
+    weekend_split = [Split(dt.date(2024, 6, 8), 10.0)]  # a Saturday, between 06-07 and 06-10
+    assert ingestion._gap_check(db, "NVDA", raw, weekend_split, 0.47) is None
+    assert ingestion._gap_check(db, "NVDA", raw, [], 0.47)["session"] == "2024-06-10"
+
+
+def test_reviewed_gap_is_not_flagged_again(db):
+    raw = _nvda_raw_around_split()
+    assert ingestion._gap_check(db, "NVDA", raw, [], 0.47, accepted={dt.date(2024, 6, 10)}) is None
+
+
+@pytest.mark.parametrize("asset_class,quarantined", [("equity", True), ("index", False)])
+def test_gap_check_applies_to_price_series_only(db, fetcher, asset_class, quarantined):
+    """Yields (asset class index, e.g. ^IRX) can halve without any split; only price series are checked."""
+    db.symbols.insert_one({"_id": "NVDA", "asset_class": asset_class, "enabled": True, "ca_version": 0})
+    _verify(db, fetcher)
+    # A stored prior bar far above the first fetched open creates a large raw gap with no split to explain it.
+    db.bars.insert_one({"symbol": "NVDA", "interval": "1d", "ts": dt.datetime(2024, 4, 30, 13, 30, tzinfo=UTC),
+                        "session": dt.datetime(2024, 4, 30, tzinfo=UTC), "o": 3000.0, "h": 3000.0, "l": 3000.0,
+                        "c": 3000.0, "v": 1.0})
+    if quarantined:
+        with pytest.raises(ingestion.SymbolQuarantined):
+            _ingest(db, fetcher)
+        assert db.symbols.find_one({"_id": "NVDA"})["quarantine"]["reason"] == "unexplained_gap"
+    else:
+        assert _ingest(db, fetcher).fetched == 51
+        assert "quarantine" not in db.symbols.find_one({"_id": "NVDA"})

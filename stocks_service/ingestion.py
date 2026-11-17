@@ -242,19 +242,27 @@ def _overlap_check(db: Database, symbol: str, interval: str, bars: list[dict], t
     return "source_revision", {"n": len(bad), "examples": bad[:5]}
 
 
-def _gap_check(db: Database, symbol: str, bars: list[dict], splits: list[Split], threshold: float) -> dict | None:
-    """Daily bars only: raw open vs previous raw close, ignoring sessions with a split."""
-    split_days = {s.ex_date for s in splits}
+def _gap_check(db: Database, symbol: str, bars: list[dict], splits: list[Split], threshold: float,
+               accepted: set[dt.date] = frozenset()) -> dict | None:
+    """Daily bars only: raw open vs previous raw close.
+
+    A gap is explained by a split whose ex-date falls in (previous session, this session] —
+    sources sometimes date a split on a non-trading day (e.g. NVDA's 2001 split after the
+    9/11 closure). Sessions in ``accepted`` were reviewed as real moves and are skipped.
+    """
     prev = None
     if bars:
-        prev_doc = db.bars.find_one({"symbol": symbol, "interval": "1d", "ts": {"$lt": bars[0]["ts"]}},
-                                    sort=[("ts", -1)])
-        prev = prev_doc
+        prev = db.bars.find_one({"symbol": symbol, "interval": "1d", "ts": {"$lt": bars[0]["ts"]}},
+                                sort=[("ts", -1)])
     for b in bars:
-        if prev is not None and b["session"] not in split_days:
-            gap = math.log(b["o"] / prev["c"])
-            if abs(gap) > threshold:
-                return {"session": b["session"].isoformat(), "prev_close": prev["c"], "open": b["o"], "log_gap": gap}
+        if prev is not None:
+            prev_session = prev["session"].date() if isinstance(prev["session"], dt.datetime) else prev["session"]
+            explained = any(prev_session < s.ex_date <= b["session"] for s in splits)
+            if not explained and b["session"] not in accepted:
+                gap = math.log(b["o"] / prev["c"])
+                if abs(gap) > threshold:
+                    return {"session": b["session"].isoformat(), "prev_close": prev["c"], "open": b["o"],
+                            "log_gap": gap}
         prev = b
     return None
 
@@ -293,8 +301,10 @@ def ingest(
     raw = [to_raw(b, splits, price_basis=price_basis, volume_basis=volume_basis) for b in parsed.bars]
     raw.sort(key=lambda b: b["ts"])
     problem = _overlap_check(db, symbol, interval, raw, overlap_tolerance)
-    if problem is None and interval == "1d":
-        gap = _gap_check(db, symbol, raw, splits, gap_threshold)
+    # Gap check applies to traded price series only (not yields/indices such as ^IRX).
+    if problem is None and interval == "1d" and sym.get("asset_class") != "index":
+        accepted = {dt.date.fromisoformat(x) for x in sym.get("accepted_gaps", [])}
+        gap = _gap_check(db, symbol, raw, splits, gap_threshold, accepted)
         if gap:
             problem = ("unexplained_gap", gap)
     if problem:
