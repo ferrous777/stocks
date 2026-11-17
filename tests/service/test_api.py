@@ -95,3 +95,24 @@ def test_patch_can_clear_nullable_fields_and_validates_groups(client):
     r = client.patch("/api/v1/symbols/NVDA", headers=H, json={"name": None, "sector": None})
     assert r.status_code == 200 and r.json()["name"] is None and r.json()["sector"] is None
     assert client.patch("/api/v1/symbols/NVDA", headers=H, json={"groups": ["Bad Slug"]}).status_code == 422
+
+
+def test_admin_load_runs_steps_and_records_progress(client, db, fetcher):
+    import time
+    r = client.post("/api/v1/admin/load", headers=H, json={"steps": ["bogus"]})
+    assert r.status_code == 422
+    assert client.post("/api/v1/admin/load", json={"steps": ["init"]}).status_code == 401
+    r = client.post("/api/v1/admin/load", headers=H,
+                    json={"steps": ["init", "universe", "verify_1d", "data_symbols", "backfill_1d"], "symbols": ["NVDA"]})
+    assert r.status_code == 202
+    url = r.json()["status_url"]
+    for _ in range(100):
+        job = client.get(url, headers=H).json()
+        if job["status"] != "running":
+            break
+        time.sleep(0.1)
+    assert job["status"] == "completed", job
+    assert db.symbols.count_documents({}) >= 51 and db.symbols.find_one({"_id": "^IRX"})["tradable"] is False
+    assert db.bars.count_documents({"symbol": "NVDA", "interval": "1d"}) == 51
+    assert any(p.get("step") == "verify_1d" and p.get("price_basis") == "split_adjusted" for p in job["progress"])
+    assert client.get("/api/v1/admin/jobs/notanid", headers=H).status_code == 404

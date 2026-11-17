@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
+from pydantic import BaseModel
 
 from .. import ingestion
 from ..ingestion import load_splits
@@ -198,3 +199,31 @@ def get_corporate_actions(symbol: str = SymbolPath, db: Database = Depends(get_d
 @router.get("/price-sources")
 def get_price_sources(db: Database = Depends(get_db)):
     return list(db.price_sources.find())
+
+
+# --- admin: data load jobs (no shell access to the service required) -----------
+
+class LoadRequest(BaseModel):
+    steps: list[str]
+    symbols: list[str] | None = None
+
+
+@router.post("/admin/load", status_code=status.HTTP_202_ACCEPTED)
+def admin_load(body: LoadRequest, request: Request, db: Database = Depends(get_db)):
+    from .. import admin
+    try:
+        job_id = admin.start_load(db, request.app.state.fetcher, request.app.state.settings, body.steps, body.symbols)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except admin.JobRunning as e:
+        raise HTTPException(409, str(e))
+    return {"job_id": job_id, "status_url": f"/api/v1/admin/jobs/{job_id}"}
+
+
+@router.get("/admin/jobs/{job_id}")
+def admin_job(job_id: str, db: Database = Depends(get_db)):
+    from .. import admin
+    job = admin.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    return job
