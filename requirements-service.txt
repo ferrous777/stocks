@@ -1,0 +1,12 @@
+# Dependencies for the new stocks_service (FastAPI + MongoDB on Railway).
+# The legacy Flask app keeps using requirements.txt until cutover.
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+pymongo==4.12.1
+pydantic==2.14.3
+pydantic-settings==2.9.1
+exchange_calendars==4.13.2
+pandas==3.0.1
+numpy==2.4.3
+requests==2.31.0
+PyYAML==6.0.3

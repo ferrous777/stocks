@@ -33,3 +33,38 @@ jobs:
         run: |
           . venv/bin/activate
           python -m pytest -q tests/unit
+
+  service-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Start MongoDB single-node replica set
+        run: |
+          docker run -d --name mongo -p 27027:27017 mongo:8.0 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 30); do docker exec mongo mongosh --quiet --eval 'db.adminCommand("ping").ok' && break; sleep 1; done
+          docker exec mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          for i in $(seq 1 30); do [ "$(docker exec mongo mongosh --quiet --eval 'db.hello().isWritablePrimary')" = "true" ] && break; sleep 1; done
+
+      - name: Install dependencies
+        run: |
+          python -m venv venv
+          . venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          # legacy app import is part of the coexistence test
+          pip install -r requirements.txt
+
+      - name: Run service tests
+        env:
+          STOCKS_TEST_MONGO_URL: mongodb://127.0.0.1:27027/?replicaSet=rs0&directConnection=true
+        run: |
+          . venv/bin/activate
+          python -m pytest -q tests/service
