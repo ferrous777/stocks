@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Stocks{% endblock %}
+{% block content %}
+<div class="panel" style="max-width:360px;margin:40px auto">
+  <h1>Sign in</h1>
+  <form method="post" action="/login" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+    <input type="password" name="password" placeholder="Password" autofocus required style="flex:1;min-width:160px">
+    <button type="submit">Sign in</button>
+  </form>
+  {% if error %}<p class="neg small">{{ error }}</p>{% endif %}
+</div>
+{% endblock %}
