@@ -43,7 +43,7 @@ def _ingest_nvda(db, fetcher):
 
 def test_reconcile_legacy_cache_against_normalized_bars(db, fetcher):
     _ingest_nvda(db, fetcher)
-    report = migration.reconcile_cache(db, FIXTURES / "legacy" / "cache")
+    report = migration.reconcile_cache(db, FIXTURES / "legacy" / "cache_files")
     r = report["NVDA"]
     assert (r["status"], r["overlap"], r["mismatches"]) == ("ok", 51, 0)
     assert r["max_rel_diff"] < 1e-6
@@ -51,7 +51,7 @@ def test_reconcile_legacy_cache_against_normalized_bars(db, fetcher):
 
 def test_reconcile_detects_disagreement(db, fetcher, tmp_path):
     _ingest_nvda(db, fetcher)
-    src = json.loads((FIXTURES / "legacy" / "cache" / "NVDA_historical.json").read_text())
+    src = json.loads((FIXTURES / "legacy" / "cache_files" / "NVDA_historical.json").read_text())
     src["data_points"][3]["close"] *= 1.05
     (tmp_path / "NVDA_historical.json").write_text(json.dumps(src))
     r = migration.reconcile_cache(db, tmp_path)["NVDA"]
@@ -60,7 +60,7 @@ def test_reconcile_detects_disagreement(db, fetcher, tmp_path):
 
 def test_reconcile_sqlite_snapshots(db, fetcher, tmp_path):
     _ingest_nvda(db, fetcher)
-    pts = json.loads((FIXTURES / "legacy" / "cache" / "NVDA_historical.json").read_text())["data_points"]
+    pts = json.loads((FIXTURES / "legacy" / "cache_files" / "NVDA_historical.json").read_text())["data_points"]
     path = tmp_path / "timeseries.db"
     con = sqlite3.connect(path)
     con.execute("create table daily_snapshots (symbol text, date text, data text)")
@@ -85,7 +85,7 @@ def test_classify_result_file(name, kind, symbol):
 
 
 def test_import_legacy_results_records_errors(db, tmp_path):
-    shutil.copy(FIXTURES / "legacy" / "results" / "AAPL_recommendations_20260420.json", tmp_path)
+    shutil.copy(FIXTURES / "legacy" / "result_files" / "AAPL_recommendations_20260420.json", tmp_path)
     (tmp_path / "AAPL_backtest_20260421.json").write_text("{not json")
     res = migration.import_legacy_results(db, tmp_path)
     assert res["imported"] == {"recommendations": 1}
