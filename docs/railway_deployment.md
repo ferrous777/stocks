@@ -57,8 +57,8 @@ python -m stocks_service.cli backfill --interval 1d          # full daily histor
 python -m stocks_service.cli backfill --interval 1h          # ~730 days, archived for alerts/freshness
 ```
 
-`reconcile-legacy` and `import-legacy-results` need the legacy `cache/`, `data/timeseries.db` and `results/`, which
-only exist locally / on PythonAnywhere. Run them from a machine with those files through a temporary, authenticated
+`reconcile-legacy` needs the legacy `cache/` and `data/timeseries.db`, which only exist locally / on
+PythonAnywhere. Run them from a machine with those files through a temporary, authenticated
 TCP proxy on `mongo` (use `directConnection=true`), then remove the proxy.
 
 ## Not yet in place

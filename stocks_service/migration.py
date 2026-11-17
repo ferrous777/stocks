@@ -1,5 +1,8 @@
 """Read-only migration from the legacy flat-file/SQLite stores.
 
+Only the symbol universe is migrated. Legacy recommendation/backtest results are
+development output and are intentionally not imported.
+
 Nothing here modifies legacy files. Canonical bars come from a fresh Yahoo backfill
 (consistent, verified basis); the legacy cache and SQLite snapshots are used only to
 cross-check those bars in a reconciliation report.
@@ -9,7 +12,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import re
 import sqlite3
 from pathlib import Path
 
@@ -129,46 +131,3 @@ def reconcile_sqlite(db: Database, sqlite_path: Path, tol: float = 0.005) -> dic
     for symbol, date, data in rows:
         by_symbol.setdefault(symbol, {})[dt.date.fromisoformat(date)] = float(json.loads(data)["close"])
     return {s: _compare(db, s, legacy, tol) for s, legacy in sorted(by_symbol.items())}
-
-
-# ---------------------------------------------------------------------------
-# Legacy result files
-# ---------------------------------------------------------------------------
-
-_PATTERNS = [
-    (re.compile(r"^(?P<symbol>[A-Z0-9.\-^]+)_recommendations_(?P<date>\d{8})\.json$"), "recommendations"),
-    (re.compile(r"^(?P<symbol>[A-Z0-9.\-^]+)_backtest_(?P<strategy>[a-z_]+)_(?P<period>\d+[dy])_(?P<date>\d{8})\.json$"),
-     "backtest_period"),
-    (re.compile(r"^(?P<symbol>[A-Z0-9.\-^]+)_backtest_(?P<date>\d{8})\.json$"), "backtest"),
-    (re.compile(r"^recommendations_(?P<date>\d{8})\.json$"), "combined_recommendations"),
-]
-
-
-def classify_result_file(name: str) -> dict:
-    for rx, kind in _PATTERNS:
-        m = rx.match(name)
-        if m:
-            g = m.groupdict()
-            d = dt.datetime.strptime(g["date"], "%Y%m%d").replace(tzinfo=dt.timezone.utc)
-            return {"kind": kind, "symbol": g.get("symbol"), "date": d,
-                    "strategy": g.get("strategy"), "period": g.get("period")}
-    return {"kind": "unrecognized", "symbol": None, "date": None, "strategy": None, "period": None}
-
-
-def import_legacy_results(db: Database, results_dir: Path) -> dict:
-    now = dt.datetime.now(dt.timezone.utc)
-    counts: dict[str, int] = {}
-    errors = []
-    for f in sorted(results_dir.glob("*.json")):
-        meta = classify_result_file(f.name)
-        try:
-            payload = json.loads(f.read_text())
-            db.legacy_recommendations.replace_one(
-                {"_id": f.name},
-                {"_id": f.name, **meta, "payload": payload, "imported_at": now},
-                upsert=True,
-            )
-            counts[meta["kind"]] = counts.get(meta["kind"], 0) + 1
-        except Exception as e:  # record every failure; never silently skip
-            errors.append({"file": f.name, "error": f"{type(e).__name__}: {e}"})
-    return {"imported": counts, "errors": errors}

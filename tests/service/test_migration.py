@@ -1,6 +1,5 @@
 import datetime as dt
 import json
-import shutil
 import sqlite3
 from pathlib import Path
 
@@ -70,26 +69,3 @@ def test_reconcile_sqlite_snapshots(db, fetcher, tmp_path):
     con.close()
     r = migration.reconcile_sqlite(db, path)["NVDA"]
     assert (r["status"], r["overlap"]) == ("ok", 51)
-
-
-@pytest.mark.parametrize("name,kind,symbol", [
-    ("AAPL_recommendations_20260420.json", "recommendations", "AAPL"),
-    ("AAPL_backtest_20260420.json", "backtest", "AAPL"),
-    ("NVDA_backtest_trend_following_30d_20260420.json", "backtest_period", "NVDA"),
-    ("recommendations_20260420.json", "combined_recommendations", None),
-    ("notes.json", "unrecognized", None),
-])
-def test_classify_result_file(name, kind, symbol):
-    meta = migration.classify_result_file(name)
-    assert (meta["kind"], meta["symbol"]) == (kind, symbol)
-
-
-def test_import_legacy_results_records_errors(db, tmp_path):
-    shutil.copy(FIXTURES / "legacy" / "result_files" / "AAPL_recommendations_20260420.json", tmp_path)
-    (tmp_path / "AAPL_backtest_20260421.json").write_text("{not json")
-    res = migration.import_legacy_results(db, tmp_path)
-    assert res["imported"] == {"recommendations": 1}
-    assert res["errors"][0]["file"] == "AAPL_backtest_20260421.json"
-    doc = db.legacy_recommendations.find_one({"_id": "AAPL_recommendations_20260420.json"})
-    assert doc["payload"]["recommendations"]["action"] == "HOLD"
-    assert doc["date"] == dt.datetime(2026, 4, 20, tzinfo=UTC)

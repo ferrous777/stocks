@@ -26,10 +26,6 @@ INDEXES: dict[str, list[IndexModel]] = {
                    name="symbol_type_exdate", unique=True),
         IndexModel([("ex_date", ASCENDING)], name="ex_date"),
     ],
-    "legacy_recommendations": [
-        IndexModel([("symbol", ASCENDING), ("date", DESCENDING)], name="symbol_date"),
-        IndexModel([("kind", ASCENDING)], name="kind"),
-    ],
     "migration_reports": [
         IndexModel([("created_at", DESCENDING)], name="created_at"),
     ],

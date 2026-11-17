@@ -112,14 +112,6 @@ def cmd_reconcile(args) -> int:
     return 1 if bad else 0
 
 
-def cmd_import_results(args) -> int:
-    db, _ = _db()
-    res = migration.import_legacy_results(db, Path(args.results_dir))
-    db.migration_reports.insert_one({"created_at": _now(), "kind": "legacy_results_import", **res})
-    _print(res)
-    return 1 if res["errors"] else 0
-
-
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="stocks_service.cli")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -143,9 +135,6 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--cache-dir", default=str(REPO / "cache"))
     r.add_argument("--sqlite", default=str(REPO / "data" / "timeseries.db"))
     r.set_defaults(fn=cmd_reconcile)
-    i = sub.add_parser("import-legacy-results")
-    i.add_argument("--results-dir", default=str(REPO / "results"))
-    i.set_defaults(fn=cmd_import_results)
     args = p.parse_args(argv)
     return args.fn(args)
 
