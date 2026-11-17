@@ -122,3 +122,59 @@ def test_update_requires_an_initial_backfill(db, fetcher):
         ingestion.update(db, fetcher, symbol="NVDA", interval="1d", now=NOW, buffer=dt.timedelta(minutes=20),
                          overlap_tolerance=0.005, gap_threshold=0.47)
     assert fetcher.calls[-1][1] == "1d" and len(fetcher.calls) == 1  # only the verification fetch happened
+
+
+def test_quarantined_fetch_commits_no_corporate_actions(db, fetcher):
+    """A split that arrives with a fetch failing validation must not be stored (and must not
+    bump ca_version), or split-adjusted views would apply a rejected split to history."""
+    _add_symbol(db, "NVDA")
+    _verify(db, fetcher)
+    db.corporate_actions.delete_many({})  # verification does not store actions; be explicit
+    no_split = load_yahoo("NVDA_1d_2024-05-01_2024-07-15")
+    no_split["chart"]["result"][0]["events"].pop("splits")
+    from .conftest import RecordedFetcher
+    _ingest(db, RecordedFetcher({("NVDA", "1d"): no_split}))  # stores bars without the split
+    before = (db.symbols.find_one({"_id": "NVDA"})["ca_version"], db.corporate_actions.count_documents({}),
+              db.bars.find_one({"symbol": "NVDA", "session": dt.datetime(2024, 6, 7, tzinfo=UTC)})["c"])
+
+    with pytest.raises(ingestion.SymbolQuarantined):
+        _ingest(db, fetcher)  # now the 10:1 split appears; history disagrees by 10x -> quarantine
+
+    after = (db.symbols.find_one({"_id": "NVDA"})["ca_version"], db.corporate_actions.count_documents({}),
+             db.bars.find_one({"symbol": "NVDA", "session": dt.datetime(2024, 6, 7, tzinfo=UTC)})["c"])
+    assert after == before
+    assert db.corporate_actions.count_documents({"type": "split"}) == 0
+    assert db.symbols.find_one({"_id": "NVDA"})["quarantine"]["reason"] == "unrecorded_split_suspected"
+
+
+def test_successful_ingest_writes_actions_and_bars_together(db, fetcher):
+    _add_symbol(db, "NVDA")
+    _verify(db, fetcher)
+    res = _ingest(db, fetcher)
+    log = db.ingest_log.find_one({"symbol": "NVDA"})
+    assert log["result"]["upserted"] == res.upserted == db.bars.count_documents({"symbol": "NVDA"})
+    assert db.corporate_actions.count_documents({"symbol": "NVDA"}) == res.new_corporate_actions == 2
+
+
+@pytest.mark.parametrize("concurrent_split", [
+    {"ex_date": dt.datetime(2024, 6, 10, tzinfo=UTC), "ratio": 5.0},   # same date, conflicting ratio
+    {"ex_date": dt.datetime(2024, 7, 1, tzinfo=UTC), "ratio": 2.0},    # a split we did not normalize with
+])
+def test_split_committed_concurrently_aborts_the_ingest(db, fetcher, monkeypatch, concurrent_split):
+    """Another ingest commits a split after this one validated: the transaction must abort."""
+    _add_symbol(db, "NVDA")
+    _verify(db, fetcher)
+    real_check = ingestion._overlap_check
+
+    def check_then_race(*args, **kwargs):
+        out = real_check(*args, **kwargs)
+        db.corporate_actions.insert_one({"symbol": "NVDA", "type": "split", "source": "other_ingest",
+                                         **concurrent_split})
+        return out
+
+    monkeypatch.setattr(ingestion, "_overlap_check", check_then_race)
+    with pytest.raises(ingestion.ConcurrentCorporateActionChange):
+        _ingest(db, fetcher)
+    assert db.bars.count_documents({"symbol": "NVDA"}) == 0
+    assert db.ingest_log.count_documents({}) == 0
+    assert db.corporate_actions.count_documents({"symbol": "NVDA"}) == 1  # only the concurrent writer's split

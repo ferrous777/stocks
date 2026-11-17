@@ -64,6 +64,20 @@ class SymbolPatch(BaseModel):
     priority: int | None = Field(default=None, ge=0, le=3)
     shortable: bool | None = None
 
+    # Omitting a field leaves it unchanged; an explicit null is only allowed for nullable fields
+    # (name, sector). Defaults are not validated, so this only fires for explicit nulls.
+    @field_validator("asset_class", "groups", "factors", "tradable", "enabled", "priority", "shortable")
+    @classmethod
+    def _not_null(cls, v, info):
+        if v is None:
+            raise ValueError(f"{info.field_name} cannot be null; omit it to leave it unchanged")
+        return v
+
+    @field_validator("groups")
+    @classmethod
+    def _groups(cls, v: list[str]) -> list[str]:
+        return SymbolBase._groups(v)
+
 
 class GroupIn(BaseModel):
     model_config = ConfigDict(extra="forbid")

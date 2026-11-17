@@ -239,8 +239,8 @@ class Strategy(ABC):
                         'entry_date': date,
                         'entry_price': current_close,
                         'size': self.position_size,
-                        'stop_loss': current_close * (1 - self.stop_loss if signal == 'long' else -self.stop_loss),
-                        'profit_target': current_close * (1 + self.profit_target if signal == 'long' else -self.profit_target)
+                        'stop_loss': current_close * ((1 - self.stop_loss) if signal == 'long' else (1 + self.stop_loss)),
+                        'profit_target': current_close * ((1 + self.profit_target) if signal == 'long' else (1 - self.profit_target))
                     }
                 
                 # Handle exit signals

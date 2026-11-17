@@ -140,45 +140,57 @@ def get_verified_basis(db: Database, interval: str) -> tuple[Basis, Basis]:
 # Corporate actions
 # ---------------------------------------------------------------------------
 
-def load_splits(db: Database, symbol: str) -> list[Split]:
+def load_splits(db: Database, symbol: str, session=None) -> list[Split]:
     return [Split(ex_date=d["ex_date"].date(), ratio=d["ratio"])
-            for d in db.corporate_actions.find({"symbol": symbol, "type": "split"}).sort("ex_date", 1)]
+            for d in db.corporate_actions.find({"symbol": symbol, "type": "split"}, session=session).sort("ex_date", 1)]
 
 
-def store_corporate_actions(db: Database, parsed: ParsedChart, *, price_basis: Basis, now: dt.datetime) -> int:
-    """Upsert splits/dividends. Returns the number of newly seen actions.
+class ConcurrentCorporateActionChange(IngestError):
+    """Stored splits changed between validation and commit; the fetched bars were normalized with stale splits."""
+
+
+def candidate_splits(db: Database, parsed: ParsedChart) -> list[Split]:
+    """Stored splits plus those in the fetch, validated in memory (nothing is written).
+
+    A ratio that disagrees with a stored split for the same ex_date is an error.
+    """
+    stored = {sp.ex_date: sp for sp in load_splits(db, parsed.symbol)}
+    for sp in parsed.splits:
+        old = stored.get(sp.ex_date)
+        if old is not None and not math.isclose(old.ratio, sp.ratio, rel_tol=1e-9):
+            raise IngestError(f"{parsed.symbol}: split ratio on {sp.ex_date} changed "
+                              f"{old.ratio} -> {sp.ratio}; manual review required")
+        stored.setdefault(sp.ex_date, sp)
+    return sorted(stored.values(), key=lambda sp: sp.ex_date)
+
+
+def store_corporate_actions(db: Database, parsed: ParsedChart, splits: list[Split], *, price_basis: Basis,
+                            now: dt.datetime, session=None) -> int:
+    """Upsert already-validated splits/dividends. Returns the number of newly seen actions.
 
     Dividend amounts are converted with the same factor as prices; this assumes the
     source reports dividends on its price basis (flagged ``amount_basis_verified: False``
     until verified against a known dividend).
     """
-    known_splits = sorted(set(parsed.splits) | set(load_splits(db, parsed.symbol)), key=lambda s: s.ex_date)
     new = 0
-    for s in parsed.splits:
+    for sp in parsed.splits:
         res = db.corporate_actions.update_one(
-            {"symbol": parsed.symbol, "type": "split", "ex_date": _d(s.ex_date)},
-            {"$setOnInsert": {"ratio": s.ratio, "source": SOURCE, "seen_at": now}},
-            upsert=True,
+            {"symbol": parsed.symbol, "type": "split", "ex_date": _d(sp.ex_date)},
+            {"$setOnInsert": {"ratio": sp.ratio, "source": SOURCE, "seen_at": now}},
+            upsert=True, session=session,
         )
-        if res.upserted_id is not None:
-            new += 1
-        else:
-            existing = db.corporate_actions.find_one({"symbol": parsed.symbol, "type": "split", "ex_date": _d(s.ex_date)})
-            if not math.isclose(existing["ratio"], s.ratio, rel_tol=1e-9):
-                raise IngestError(f"{parsed.symbol}: split ratio on {s.ex_date} changed "
-                                  f"{existing['ratio']} -> {s.ratio}; manual review required")
+        new += res.upserted_id is not None
     for dv in parsed.dividends:
-        f = split_factor_after(dv.ex_date, known_splits) if price_basis is Basis.SPLIT_ADJUSTED else 1.0
+        f = split_factor_after(dv.ex_date, splits) if price_basis is Basis.SPLIT_ADJUSTED else 1.0
         res = db.corporate_actions.update_one(
             {"symbol": parsed.symbol, "type": "dividend", "ex_date": _d(dv.ex_date)},
             {"$setOnInsert": {"amount_source": dv.amount_source, "amount_raw": dv.amount_source * f,
                               "amount_basis_verified": False, "source": SOURCE, "seen_at": now}},
-            upsert=True,
+            upsert=True, session=session,
         )
-        if res.upserted_id is not None:
-            new += 1
+        new += res.upserted_id is not None
     if new:
-        db.symbols.update_one({"_id": parsed.symbol}, {"$inc": {"ca_version": 1}})
+        db.symbols.update_one({"_id": parsed.symbol}, {"$inc": {"ca_version": 1}}, session=session)
     return new
 
 
@@ -276,41 +288,57 @@ def ingest(
     for r in parsed.rejected:
         result.rejected[r["reason"]] = result.rejected.get(r["reason"], 0) + 1
 
-    result.new_corporate_actions = store_corporate_actions(db, parsed, price_basis=price_basis, now=now)
-    splits = load_splits(db, symbol)
+    # 1) Validate in memory. Nothing is written until every check passes.
+    splits = candidate_splits(db, parsed)
     raw = [to_raw(b, splits, price_basis=price_basis, volume_basis=volume_basis) for b in parsed.bars]
     raw.sort(key=lambda b: b["ts"])
-
     problem = _overlap_check(db, symbol, interval, raw, overlap_tolerance)
-    if problem:
-        quarantine(db, symbol, problem[0], problem[1], now)
-        raise SymbolQuarantined(f"{symbol} {interval}: {problem[0]} {problem[1].get('ratio', '')}")
-    if interval == "1d":
+    if problem is None and interval == "1d":
         gap = _gap_check(db, symbol, raw, splits, gap_threshold)
         if gap:
-            quarantine(db, symbol, "unexplained_gap", gap, now)
-            raise SymbolQuarantined(f"{symbol}: unexplained raw gap {gap}")
+            problem = ("unexplained_gap", gap)
+    if problem:
+        # Only the quarantine is recorded; candidate corporate actions and bars are discarded.
+        quarantine(db, symbol, problem[0], problem[1], now)
+        raise SymbolQuarantined(f"{symbol} {interval}: {problem[0]} {problem[1].get('ratio', '')}".rstrip())
 
-    ca_version = (db.symbols.find_one({"_id": symbol}, {"ca_version": 1}) or {}).get("ca_version", 0)
-    ops = []
-    for b in raw:
-        doc = {
-            "symbol": symbol, "interval": interval, "ts": b["ts"], "ts_end": b["ts_end"],
-            "session": _d(b["session"]), "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"], "v": b["v"],
-            "source": SOURCE, "source_price_basis": price_basis.value, "source_volume_basis": volume_basis.value,
-            "split_factor_applied": b["split_factor_applied"], "ca_version": ca_version, "complete": True,
-        }
-        ops.append(UpdateOne(
-            {"symbol": symbol, "interval": interval, "ts": b["ts"]},
-            {"$set": doc, "$setOnInsert": {"ingested_at": now}},
-            upsert=True,
-        ))
-    if ops:
-        res = db.bars.bulk_write(ops, ordered=False)
-        result.upserted = res.upserted_count
-        result.revised = res.modified_count
-        result.unchanged = len(ops) - res.upserted_count - res.modified_count
-    db.ingest_log.insert_one({"symbol": symbol, "interval": interval, "at": now, "result": result.__dict__})
+    # 2) Commit corporate actions, bars and the log atomically.
+    def _commit(session):
+        # Re-read stored splits inside the transaction: another ingest may have committed a split
+        # (or a conflicting ratio) since validation. Normalization used `splits`, so any difference
+        # means the bars are on a stale basis; abort rather than commit them.
+        stored_now = {sp.ex_date: sp.ratio for sp in load_splits(db, symbol, session=session)}
+        used = {sp.ex_date: sp.ratio for sp in splits}
+        stale = {d: (r, used.get(d)) for d, r in stored_now.items() if d not in used or not math.isclose(r, used[d])}
+        if stale:
+            raise ConcurrentCorporateActionChange(
+                f"{symbol}: stored splits changed during ingest {stale}; re-run the ingest")
+        result.new_corporate_actions = store_corporate_actions(db, parsed, splits, price_basis=price_basis,
+                                                               now=now, session=session)
+        ca_version = (db.symbols.find_one({"_id": symbol}, {"ca_version": 1}, session=session) or {}).get(
+            "ca_version", 0)
+        ops = []
+        for b in raw:
+            doc = {
+                "symbol": symbol, "interval": interval, "ts": b["ts"], "ts_end": b["ts_end"],
+                "session": _d(b["session"]), "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"], "v": b["v"],
+                "source": SOURCE, "source_price_basis": price_basis.value,
+                "source_volume_basis": volume_basis.value, "split_factor_applied": b["split_factor_applied"],
+                "ca_version": ca_version, "complete": True,
+            }
+            ops.append(UpdateOne({"symbol": symbol, "interval": interval, "ts": b["ts"]},
+                                 {"$set": doc, "$setOnInsert": {"ingested_at": now}}, upsert=True))
+        result.upserted = result.revised = result.unchanged = 0
+        if ops:
+            res = db.bars.bulk_write(ops, ordered=False, session=session)
+            result.upserted = res.upserted_count
+            result.revised = res.modified_count
+            result.unchanged = len(ops) - res.upserted_count - res.modified_count
+        db.ingest_log.insert_one({"symbol": symbol, "interval": interval, "at": now, "result": dict(result.__dict__)},
+                                 session=session)
+
+    with db.client.start_session() as session:
+        session.with_transaction(_commit)
     return result
 
 

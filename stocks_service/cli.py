@@ -120,12 +120,23 @@ def cmd_update(args) -> int:
 
 
 def cmd_reconcile(args) -> int:
+    cache_dir = Path(args.cache_dir) if args.cache_dir else None
+    sqlite = Path(args.sqlite) if args.sqlite else None
+    has_cache = bool(cache_dir and cache_dir.is_dir() and any(cache_dir.glob("*_historical.json")))
+    has_sqlite = bool(sqlite and sqlite.is_file())
+    if not (has_cache or has_sqlite):
+        print("No legacy price data found, so nothing was reconciled (no report stored).\n"
+              f"  --cache-dir {cache_dir}: {'no *_historical.json files' if cache_dir and cache_dir.is_dir() else 'not found'}\n"
+              f"  --sqlite {sqlite}: not found\n"
+              "Run this where the legacy cache/ or data/timeseries.db exist, or pass their paths.",
+              file=sys.stderr)
+        return 2
     db, s = _db()
     report = {"created_at": _now(), "kind": "legacy_bar_reconciliation", "tolerance": s.overlap_tolerance}
-    if args.cache_dir and Path(args.cache_dir).is_dir():
-        report["cache"] = migration.reconcile_cache(db, Path(args.cache_dir), s.overlap_tolerance)
-    if args.sqlite and Path(args.sqlite).is_file():
-        report["sqlite"] = migration.reconcile_sqlite(db, Path(args.sqlite), s.overlap_tolerance)
+    if has_cache:
+        report["cache"] = migration.reconcile_cache(db, cache_dir, s.overlap_tolerance)
+    if has_sqlite:
+        report["sqlite"] = migration.reconcile_sqlite(db, sqlite, s.overlap_tolerance)
     db.migration_reports.insert_one(dict(report))
     for source in ("cache", "sqlite"):
         rows = report.get(source) or {}

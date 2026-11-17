@@ -80,3 +80,22 @@ def fetcher():
 
 # Fixed "now" after the recorded data was fetched; keeps tests deterministic.
 NOW = dt.datetime(2026, 11, 16, 23, 0, tzinfo=UTC)
+
+_RAW_CACHE: dict[str, tuple] = {}
+
+
+def raw_daily(name: str, symbol: str):
+    """(raw bars, splits) from a recorded daily Yahoo payload, normalized like ingestion does."""
+    if name not in _RAW_CACHE:
+        from stocks_service.price_basis import Basis, to_raw
+        from stocks_service.yahoo import parse_chart
+        parsed = parse_chart(load_yahoo(name), symbol=symbol, interval="1d",
+                             window_start=dt.datetime(1990, 1, 2, tzinfo=UTC), window_end=NOW, complete_before=NOW)
+        bars = [to_raw(b, parsed.splits, price_basis=Basis.SPLIT_ADJUSTED, volume_basis=Basis.SPLIT_ADJUSTED)
+                for b in parsed.bars]
+        _RAW_CACHE[name] = (bars, parsed.splits)
+    return _RAW_CACHE[name]
+
+
+NVDA_LONG = "NVDA_1d_2020-06-01_2025-06-02"
+INTC_LONG = "INTC_1d_2020-06-01_2025-06-02"
