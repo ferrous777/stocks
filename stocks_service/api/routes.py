@@ -98,10 +98,15 @@ def clear_quarantine(note: str = Query(min_length=3), symbol: str = SymbolPath, 
     if not doc.get("quarantine"):
         raise HTTPException(409, f"{symbol} is not quarantined")
     now = dt.datetime.now(dt.timezone.utc)
-    db.symbols.update_one({"_id": symbol}, {
+    update = {
         "$unset": {"quarantine": ""},
         "$push": {"quarantine_history": {**doc["quarantine"], "cleared_at": now, "note": note}},
-    })
+    }
+    q = doc["quarantine"]
+    if q.get("reason") == "unexplained_gap" and q.get("details", {}).get("session"):
+        # Record the reviewed gap so re-ingesting the same history does not quarantine it again.
+        update["$addToSet"] = {"accepted_gaps": q["details"]["session"]}
+    db.symbols.update_one({"_id": symbol}, update)
     return _symbol_out(db.symbols.find_one({"_id": symbol}))
 
 

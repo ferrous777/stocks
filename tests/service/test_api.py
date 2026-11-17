@@ -116,3 +116,11 @@ def test_admin_load_runs_steps_and_records_progress(client, db, fetcher):
     assert db.bars.count_documents({"symbol": "NVDA", "interval": "1d"}) == 51
     assert any(p.get("step") == "verify_1d" and p.get("price_basis") == "split_adjusted" for p in job["progress"])
     assert client.get("/api/v1/admin/jobs/notanid", headers=H).status_code == 404
+
+
+def test_clearing_a_gap_quarantine_records_the_accepted_gap(client, db):
+    client.post("/api/v1/symbols", headers=H, json={"symbol": "AAPL", "asset_class": "equity"})
+    db.symbols.update_one({"_id": "AAPL"}, {"$set": {"quarantine": {
+        "reason": "unexplained_gap", "details": {"session": "2000-09-29", "log_gap": -0.64}, "detected_at": NOW}}})
+    r = client.post("/api/v1/symbols/AAPL/quarantine/clear?note=real%20crash%20on%20profit%20warning", headers=H)
+    assert r.status_code == 200 and r.json()["accepted_gaps"] == ["2000-09-29"]
