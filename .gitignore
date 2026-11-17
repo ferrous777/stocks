@@ -89,3 +89,5 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+# Node (Railway IaC SDK)
+node_modules/
