@@ -115,6 +115,7 @@ class EnsembleStrategy(Strategy):
         strategy_signals = []
         for strategy in self.strategies:
             signal, confidence, details = strategy.generate_signals(data_points, index)
+            signal = self.normalize_signal_for_backtest(signal)  # buy/sell -> long/short
             if signal != "hold":
                 strategy_signals.append({
                     "strategy_name": strategy.name,
@@ -165,13 +166,14 @@ class EnsembleStrategy(Strategy):
                 analysis = strategy.analyze(date)
                 if symbol in analysis:
                     signal_data = analysis[symbol]
-                    if signal_data["signal"] != "hold":  # Only include non-hold signals
+                    normalized = self.normalize_signal_for_backtest(signal_data["signal"])  # buy/sell -> long/short
+                    if normalized != "hold":  # Only include non-hold signals
                         strategy_signals.append({
                             "strategy_name": strategy.name,
-                            "signal": signal_data["signal"],
+                            "signal": normalized,
                             "confidence": signal_data["confidence"] * self.strategy_weights[strategy.name],
-                            "metrics": signal_data["metrics"],
-                            "details": signal_data["details"]
+                            "metrics": signal_data.get("metrics", {}),
+                            "details": signal_data.get("details", signal_data.get("reason", ""))
                         })
             
             if not strategy_signals:
