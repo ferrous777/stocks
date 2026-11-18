@@ -8,7 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import ingestion
 from ..ingestion import load_splits
@@ -269,3 +269,89 @@ def research_job(job_id: str, db: Database = Depends(get_db)):
         raise HTTPException(404, "job not found")
     doc["id"] = str(doc.pop("_id"))
     return doc
+
+
+# --- cost profiles (explicit, versioned, immutable once created) ------------------------
+
+class CostProfileIn(BaseModel):
+    profile_id: str = Field(pattern=r"^[a-z][a-z0-9_]{1,40}$")
+    version: int = Field(ge=1)
+    commission_per_share: float = Field(ge=0)
+    min_commission: float = Field(ge=0)
+    half_spread_bps: float = Field(ge=0)
+    slippage_bps: float = Field(ge=0)
+    borrow_rate_annual: float | None = Field(default=..., ge=0)  # null disables shorts under this profile
+    note: str = Field(min_length=3, max_length=500)
+
+
+@router.post("/cost-profiles", status_code=status.HTTP_201_CREATED)
+def create_cost_profile(body: CostProfileIn, db: Database = Depends(get_db)):
+    doc = {"_id": f"{body.profile_id}@{body.version}", **body.model_dump(), "created_at": dt.datetime.now(dt.timezone.utc)}
+    try:
+        db.cost_profiles.insert_one(doc)
+    except DuplicateKeyError:
+        raise HTTPException(409, f"{doc['_id']} already exists; profiles are immutable, create a new version")
+    return doc
+
+
+@router.get("/cost-profiles")
+def list_cost_profiles(db: Database = Depends(get_db)):
+    return list(db.cost_profiles.find().sort([("profile_id", 1), ("version", 1)]))
+
+
+# --- six-month outlook (phase 4) -----------------------------------------------------------
+
+class OutlookRunIn(BaseModel):
+    steps: list[Literal["calibrate", "outlook"]] = Field(default=["calibrate", "outlook"], min_length=1)
+
+
+@router.post("/outlook/run", status_code=status.HTTP_202_ACCEPTED)
+def outlook_run(body: OutlookRunIn, db: Database = Depends(get_db)):
+    from ..jobs import JobConflict
+    from ..outlook.build import start_outlook_job
+    try:
+        job_id = start_outlook_job(db, steps=list(body.steps))
+    except JobConflict as e:
+        raise HTTPException(409, str(e))
+    return {"job_id": job_id, "status_url": f"/api/v1/outlook/jobs/{job_id}"}
+
+
+@router.get("/outlook/jobs/{job_id}")
+def outlook_job(job_id: str, db: Database = Depends(get_db)):
+    from ..jobs import get_job
+    doc = get_job(db, job_id, kind="outlook")
+    if doc is None:
+        raise HTTPException(404, "job not found")
+    return doc
+
+
+@router.get("/outlook")
+def outlook(db: Database = Depends(get_db), side: Literal["long", "short"] | None = None,
+            sort: Literal["return", "per_session", "evidence", "downside"] = "return",
+            min_grade: Literal["A", "B", "C", "insufficient"] = "insufficient", limit: int = Query(200, ge=1, le=1000)):
+    """Latest six-month outlook: every watched symbol x side, sorted by expected 6-month net return."""
+    from ..outlook.build import GRADE_ORDER, latest_outlook
+    doc = latest_outlook(db)
+    if doc is None:
+        raise HTTPException(404, "no outlook yet; run POST /api/v1/outlook/run")
+    rows = [r for r in doc["rows"] if (side is None or r["side"] == side)
+            and GRADE_ORDER[r["grade"]] <= GRADE_ORDER[min_grade]]
+    neg = -1e9
+    keys = {
+        "return": lambda r: -(r.get("exp_return_6m") if r.get("exp_return_6m") is not None else neg),
+        "per_session": lambda r: -(r.get("exp_return_per_session") if r.get("exp_return_per_session") is not None else neg),
+        "evidence": lambda r: (GRADE_ORDER[r["grade"]], -(r.get("exp_return_6m") or neg)),
+        "downside": lambda r: -(r.get("p10_return_6m") if r.get("p10_return_6m") is not None else neg),
+    }
+    rows.sort(key=keys[sort])
+    doc["rows"] = rows[:limit]
+    return doc
+
+
+@router.get("/outlook/calibration")
+def outlook_calibration(db: Database = Depends(get_db)):
+    cal = db.calibrations.find_one(sort=[("created_at", -1)])
+    if cal is None:
+        raise HTTPException(404, "no calibration yet; run POST /api/v1/outlook/run")
+    cal["id"] = str(cal.pop("_id"))
+    return cal

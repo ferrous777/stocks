@@ -123,3 +123,12 @@ def research_status(db: Database) -> dict:
         "report": latest_report(db),
         "holdout": holdout,
     }
+
+
+def outlook_status(db: Database, side: str | None = None) -> dict:
+    from ..outlook.build import latest_outlook
+    doc = latest_outlook(db)
+    if doc and side in ("long", "short"):
+        doc["rows"] = [r for r in doc["rows"] if r["side"] == side]
+    cal = db.calibrations.find_one(sort=[("created_at", -1)], projection={"buckets": 0})
+    return {"outlook": doc, "calibration": cal, "side": side}

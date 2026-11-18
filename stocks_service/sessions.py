@@ -106,3 +106,11 @@ def session_after_n(d: dt.date, n: int) -> dt.date | None:
         raise SessionError(f"{d.isoformat()} is not an XNYS trading session")
     j = idx[d] + n
     return days[j] if j < len(days) else None
+
+
+def session_number(d: dt.date) -> int:
+    """Ordinal of session ``d`` in the calendar (stable for a fixed CAL_START)."""
+    _, idx = _session_index()
+    if d not in idx:
+        raise SessionError(f"{d.isoformat()} is not an XNYS trading session")
+    return idx[d]

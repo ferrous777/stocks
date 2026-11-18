@@ -12,8 +12,8 @@ Rules enforced here (plan §B):
   irreversible claim. The run then executes the recorded parameters.
 * The Deflated Sharpe uses every development trial recorded in ``experiments`` for this
   protocol version, not only the strategies in the current invocation.
-* Background runs hold an expiring, heartbeated lease in ``job_locks``; a run whose worker died
-  is marked ``abandoned`` by the next run instead of blocking the endpoint forever.
+* Background runs use ``stocks_service.jobs`` (atomic expiring lease; orphaned runs are marked
+  ``abandoned`` by the next run).
 """
 
 from __future__ import annotations
@@ -26,11 +26,9 @@ import pathlib
 import subprocess
 
 import numpy as np
-from pymongo import ReturnDocument
 from pymongo.database import Database
-from pymongo.errors import DuplicateKeyError
 
-from .. import sessions
+from .. import jobs, sessions
 from ..sim import CostProfile, ExecutionPolicy
 from ..strategies import all_specs, get_spec
 from . import baselines, stats
@@ -51,10 +49,6 @@ BASE_COST = CostProfile("us_equity_baseline", 1, commission_per_share=0.0, min_c
 
 
 class HoldoutError(RuntimeError):
-    pass
-
-
-class JobConflict(RuntimeError):
     pass
 
 
@@ -373,68 +367,17 @@ def latest_report(db: Database) -> dict | None:
     return doc
 
 
-LOCK_NAME = "research_run"
-LEASE = dt.timedelta(minutes=5)
-HEARTBEAT_SECONDS = 60
-
-
-def _claim_lock(db: Database, holder: str, now: dt.datetime) -> bool:
-    """Atomically take the research lease if it is free or expired (unique _id makes this race-free)."""
-    try:
-        db.job_locks.find_one_and_update({"_id": LOCK_NAME, "expires_at": {"$lt": now}},
-                                         {"$set": {"holder": holder, "expires_at": now + LEASE, "claimed_at": now}},
-                                         upsert=True, return_document=ReturnDocument.AFTER)
-        return True
-    except DuplicateKeyError:
-        return False  # held by a live worker
-
-
 def start_development_job(db: Database, *, dev_start: dt.date, dev_end: dt.date, holdout_start: dt.date,
                           run_in_thread: bool = True) -> str:
-    """Run seal + development evaluation in a background thread, tracked in `jobs`.
+    """Seal (once) + development evaluation as a leased background job (see ``stocks_service.jobs``)."""
+    def work(log):
+        last = db.bars.find_one({"symbol": "SPY", "interval": "1d"}, sort=[("session", -1)])
+        if last is None:
+            raise ValueError("SPY has no data; load the universe first")
+        now = dt.datetime.now(dt.timezone.utc)
+        seal_holdout(db, start=holdout_start, end=last["session"].date(), now=now)
+        rep = run_development(db, start=dev_start, end=dev_end, now=now)
+        return {"eligible": rep["eligible"]}
 
-    Only one run at a time: the worker holds an expiring lease that it renews every minute. If a
-    deploy or crash kills the worker, the lease lapses and the next request marks the orphaned job
-    ``abandoned`` and proceeds.
-    """
-    import threading
-    import traceback
-    from bson import ObjectId
-    now = dt.datetime.now(dt.timezone.utc)
-    job_id = ObjectId()
-    if not _claim_lock(db, str(job_id), now):
-        raise JobConflict("a research run is already in progress")
-    db.jobs.update_many({"kind": "research", "status": "running"},
-                        {"$set": {"status": "abandoned", "finished_at": now,
-                                  "error": "worker stopped without finishing (lease expired)"}})
-    db.jobs.insert_one({"_id": job_id, "kind": "research", "status": "running", "started_at": now})
-    stop = threading.Event()
-
-    def heartbeat():
-        while not stop.wait(HEARTBEAT_SECONDS):
-            db.job_locks.update_one({"_id": LOCK_NAME, "holder": str(job_id)},
-                                    {"$set": {"expires_at": dt.datetime.now(dt.timezone.utc) + LEASE}})
-
-    def work():
-        try:
-            last = db.bars.find_one({"symbol": "SPY", "interval": "1d"}, sort=[("session", -1)])
-            if last is None:
-                raise ValueError("SPY has no data; load the universe first")
-            seal_holdout(db, start=holdout_start, end=last["session"].date(), now=now)
-            rep = run_development(db, start=dev_start, end=dev_end, now=now)
-            db.jobs.update_one({"_id": job_id}, {"$set": {"status": "completed", "finished_at": dt.datetime.now(dt.timezone.utc),
-                                                         "eligible": rep["eligible"]}})
-        except Exception as e:
-            db.jobs.update_one({"_id": job_id}, {"$set": {"status": "failed", "finished_at": dt.datetime.now(dt.timezone.utc),
-                                                         "error": f"{type(e).__name__}: {e}",
-                                                         "traceback": traceback.format_exc()[-4000:]}})
-        finally:
-            stop.set()
-            db.job_locks.delete_one({"_id": LOCK_NAME, "holder": str(job_id)})
-
-    if run_in_thread:
-        threading.Thread(target=heartbeat, daemon=True).start()
-        threading.Thread(target=work, daemon=True).start()
-    else:
-        work()
-    return str(job_id)
+    return jobs.start_job(db, "research", work, run_in_thread=run_in_thread,
+                          params={"dev_start": dev_start.isoformat(), "dev_end": dev_end.isoformat()})
