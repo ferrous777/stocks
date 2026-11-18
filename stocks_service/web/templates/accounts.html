@@ -1,26 +1,27 @@
 {% extends "base.html" %}
+{% import "components.html" as ui %}
 {% block title %}Accounts · Stocks{% endblock %}
 {% block content %}
-<h1>Accounts</h1>
-<p class="muted">Your real brokerage accounts. Upload positions as JSON snapshots and record fills; differences
-between what you upload and what the ledger expects show up as breaks to explain, never as invented trades.</p>
-{% if error %}<div class="notice">{{ error }}</div>{% endif %}
-<div class="panel scroll"><table>
-  <thead><tr><th>Account</th><th>Name</th><th>Latest snapshot</th><th class="num">Open breaks</th></tr></thead>
-  <tbody>
+{% call ui.page_header("Accounts") %}Your real brokerage accounts. Upload positions as JSON snapshots and record fills; differences
+between what you upload and what the ledger expects show up as breaks to explain, never as invented trades.{% endcall %}
+{% if error %}{% call ui.alert("negative") %}{{ error }}{% endcall %}{% endif %}
+
+{% call ui.table(["Account", "Name", "Latest snapshot", ("Open breaks", "num")]) %}
   {% for a in accounts %}
     <tr><td><a href="/accounts/{{ a._id }}">{{ a._id }}</a></td><td>{{ a.name }}</td>
       <td>{{ a.latest_snapshot.strftime('%Y-%m-%d %H:%M UTC') if a.latest_snapshot else '—' }}</td>
       <td class="num {{ 'neg' if a.open_breaks else '' }}">{{ a.open_breaks }}</td></tr>
   {% else %}
-    <tr><td colspan="4" class="muted">No accounts yet.</td></tr>
+    {{ ui.empty_row(4, "No accounts yet.") }}
   {% endfor %}
-  </tbody>
-</table></div>
+{% endcall %}
+
 <h2>Add an account</h2>
-<form method="post" action="/accounts" class="panel" style="display:flex;gap:8px;flex-wrap:wrap">
-  <input type="text" name="account_id" placeholder="id, e.g. fidelity-brokerage" required pattern="[a-z0-9][a-z0-9_\-]{1,40}">
-  <input type="text" name="name" placeholder="Display name" required>
-  <button type="submit">Add</button>
+{% call ui.card() %}
+<form method="post" action="/accounts" class="form-row">
+  <input class="input" type="text" name="account_id" placeholder="id, e.g. fidelity-brokerage" aria-label="Account id" required pattern="[a-z0-9][a-z0-9_\-]{1,40}">
+  <input class="input" type="text" name="name" placeholder="Display name" aria-label="Display name" required>
+  {{ ui.button("Add", "primary") }}
 </form>
+{% endcall %}
 {% endblock %}

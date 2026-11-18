@@ -36,7 +36,7 @@ def decide(view: PointInTimeView, spec: StrategySpec) -> Decision:
 def load_view(db: Database, symbol: str, asof: dt.date, lookback: int = LOOKBACK_BARS) -> PointInTimeView:
     docs = list(db.bars.find({"symbol": symbol, "interval": "1d", "session": {"$lte": _d(asof)}},
                              {"session": 1, "o": 1, "h": 1, "l": 1, "c": 1, "v": 1})
-                .sort("session", -1).limit(lookback))
+                .sort("session", -1).limit(lookback))   # lookback=0: no limit (all history)
     bars = [{"session": d["session"].date(), "o": d["o"], "h": d["h"], "l": d["l"], "c": d["c"], "v": d["v"]}
             for d in docs]
     return PointInTimeView.from_raw(symbol, bars, load_splits(db, symbol), asof)

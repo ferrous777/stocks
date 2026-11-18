@@ -1,34 +1,28 @@
 {% extends "base.html" %}
+{% import "components.html" as ui %}
 {% block title %}Dashboard · Stocks{% endblock %}
 {% block content %}
-<h1>Dashboard</h1>
-<p class="muted">{{ rows|length }} symbols in the universe · {{ loaded }} with price history loaded</p>
+{% call ui.page_header("Dashboard") %}{{ rows|length }} symbols in the universe · {{ loaded }} with price history loaded{% endcall %}
 
-<div class="notice small">
-  <strong>Strategy decisions are research output, not recommendations.</strong>
-  No strategy has passed the profitability validation yet (plan phase 3), so nothing here says a trade will make money.
-</div>
+{% call ui.alert("warning", "Strategy decisions are research output, not recommendations.") %}
+  <p class="small">No strategy has passed the profitability validation yet (plan phase 3), so nothing here says a trade will make money.</p>
+{% endcall %}
 
 {% if loaded == 0 %}
-<div class="panel">
-  <strong>No price history loaded yet.</strong>
+{% call ui.card("No price history loaded yet.") %}
   <p class="muted small">The universe is configured but bars have not been backfilled. Run the data load
   (<code>python -m stocks_service.cli backfill --interval 1d</code> inside the Railway service).</p>
-</div>
+{% endcall %}
 {% endif %}
 
-<div class="panel scroll" style="margin-top:14px">
-<table>
-  <thead><tr>
-    <th>Symbol</th><th>Class</th><th>Groups</th><th class="num">Last close</th><th class="num">Day</th><th>As of</th>
-    {% for k in strategy_keys %}<th title="{{ strategy_status[k] }}">{{ k.split('@')[0].replace('_', ' ') }}</th>{% endfor %}
-  </tr></thead>
-  <tbody>
+{% set cols = ["Symbol", "Class", "Groups", ("Last close", "num"), ("Day", "num"), "As of"] %}
+{% for k in strategy_keys %}{% set _ = cols.append((k.split('@')[0].replace('_', ' '), "", strategy_status[k])) %}{% endfor %}
+{% call ui.table(cols, class_="my-3") %}
   {% for r in rows %}
   <tr>
-    <td><a href="/symbol/{{ r.symbol }}">{{ r.symbol }}</a>{% if r.quarantine %} <span class="chip neg" title="quarantined">{{ r.quarantine }}</span>{% endif %}</td>
+    <td><a href="/symbol/{{ r.symbol }}">{{ r.symbol }}</a>{% if r.quarantine %} {{ ui.badge(r.quarantine, "negative", "quarantined") }}{% endif %}</td>
     <td class="muted">{{ r.asset_class }}</td>
-    <td>{% for g in r.groups %}<span class="chip">{{ g }}</span> {% endfor %}</td>
+    <td>{% for g in r.groups %}{{ ui.badge(g) }} {% endfor %}</td>
     {% if r.last_session %}
     <td class="num">{{ '%.2f'|format(r.last_close) }}</td>
     <td class="num {{ 'pos' if r.change_pct and r.change_pct > 0 else 'neg' if r.change_pct and r.change_pct < 0 }}">
@@ -42,9 +36,7 @@
     {% endif %}
   </tr>
   {% endfor %}
-  </tbody>
-</table>
-</div>
-<p class="muted small">Strength is a 0–1 ranking score from each strategy's rule, not a probability.
+{% endcall %}
+<p class="muted small prose">Strength is a 0–1 ranking score from each strategy's rule, not a probability.
 Hover a decision for the rule that produced it.</p>
 {% endblock %}

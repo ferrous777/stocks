@@ -1,0 +1,77 @@
+{#- Reusable UI components. Import with:
+      {% import "components.html" as ui %}
+    Styling lives in static/app.css (tokens + component classes); markup lives only here. -#}
+
+{#- A top-navigation link; the current page gets aria-current="page" (styled and announced). -#}
+{% macro nav_link(href, label, active=False) -%}
+<a class="nav__link" href="{{ href }}"{% if active %} aria-current="page"{% endif %}>{{ label }}</a>
+{%- endmacro %}
+
+{#- Page title block. `meta` sits next to the title (e.g. an id), `back` is (href, label). The optional
+    call body is rendered as the subtitle. -#}
+{% macro page_header(title, meta=None, back=None) -%}
+<header class="page-header">
+  {% if back %}<div class="page-header__eyebrow"><a href="{{ back[0] }}">← {{ back[1] }}</a></div>{% endif %}
+  <h1>{{ title }}{% if meta %}<span class="page-header__meta">{{ meta }}</span>{% endif %}</h1>
+  {% if caller is defined %}<p class="page-header__subtitle">{{ caller() }}</p>{% endif %}
+</header>
+{%- endmacro %}
+
+{#- A surface for grouped content. flush=True removes padding (for tables). -#}
+{% macro card(title=None, flush=False, class_="") -%}
+<div class="card{{ ' card--flush' if flush }}{{ ' ' ~ class_ if class_ }}">
+  {% if title %}<div class="card__title">{{ title }}</div>{% endif %}
+  {{ caller() }}
+</div>
+{%- endmacro %}
+
+{#- A message box. tone: warning (default) | negative | positive | info. -#}
+{% macro alert(tone="warning", title=None, class_="") -%}
+<div class="alert alert--{{ tone }}{{ ' ' ~ class_ if class_ }}" role="{{ 'alert' if tone == 'negative' else 'status' }}">
+  {% if title %}<strong>{{ title }}</strong>{% endif %}
+  {{ caller() if caller is defined }}
+</div>
+{%- endmacro %}
+
+{#- A small pill label. tone: None | positive | negative | warning | info. -#}
+{% macro badge(text, tone=None, title=None) -%}
+<span class="badge{{ ' badge--' ~ tone if tone }}"{% if title %} title="{{ title }}"{% endif %}>{{ text }}</span>
+{%- endmacro %}
+
+{#- A labelled figure, for summary rows. Wrap several in <div class="stats">. -#}
+{% macro stat(label, value, hint=None, tone=None) -%}
+<div class="stat">
+  <div class="stat__label">{{ label }}</div>
+  <div class="stat__value{{ ' ' ~ tone if tone }}">{{ value }}</div>
+  {% if hint %}<div class="stat__hint">{{ hint }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- A button. variant: None | primary | ghost; size: None | sm. -#}
+{% macro button(label, variant=None, type="submit", size=None) -%}
+<button type="{{ type }}" class="btn{{ ' btn--' ~ variant if variant }}{{ ' btn--' ~ size if size }}">{{ label }}</button>
+{%- endmacro %}
+
+{#- A filter control. items: list of (href, label, selected). -#}
+{% macro segmented(items, label="Filter") -%}
+<nav class="segmented" aria-label="{{ label }}">
+  {% for href, text, selected in items %}<a class="segmented__item" href="{{ href }}"{% if selected %} aria-current="true"{% endif %}>{{ text }}</a>{% endfor %}
+</nav>
+{%- endmacro %}
+
+{#- A data table inside a bordered, horizontally scrollable surface. cols: each a label, or
+    (label, "num") for a right-aligned numeric column, or (label, "num", tooltip). The call body
+    renders the <tr> rows. -#}
+{% macro table(cols, compact=False, class_="") -%}
+<div class="table-wrap{{ ' ' ~ class_ if class_ }}">
+<table class="table{{ ' table--compact' if compact }}">
+  <thead><tr>{% for c in cols %}{% if c is string %}<th>{{ c }}</th>{% else %}<th class="{{ c[1] }}"{% if c|length > 2 and c[2] %} title="{{ c[2] }}"{% endif %}>{{ c[0] }}</th>{% endif %}{% endfor %}</tr></thead>
+  <tbody>{{ caller() }}</tbody>
+</table>
+</div>
+{%- endmacro %}
+
+{#- The row shown when a table has nothing to list. -#}
+{% macro empty_row(colspan, text) -%}
+<tr><td colspan="{{ colspan }}" class="empty">{{ text }}</td></tr>
+{%- endmacro %}

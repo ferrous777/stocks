@@ -130,7 +130,7 @@ def test_outlook_end_to_end(db):
         assert c.get("/api/v1/outlook/calibration", headers=H).json()["cost_profile"] == "market@1"
         c.post("/login", data={"password": "pw"})
         page = c.get("/outlook").text
-        assert "As of the" in page and "NVDA" in page
+        assert "As of close" in page and "NVDA" in page
 
 
 # --- review fixes (PR #19) ---------------------------------------------------------------
