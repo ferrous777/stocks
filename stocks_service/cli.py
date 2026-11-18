@@ -119,6 +119,20 @@ def cmd_update(args) -> int:
         gap_threshold=s.unexplained_gap_log_threshold))
 
 
+def cmd_tick(_args) -> int:
+    """Scheduled tick (Railway cron): incremental daily ingest + outlook refresh. Exit 1 if the run failed."""
+    from . import jobs, tick
+    db, s = _db()
+    try:
+        job_id = tick.run_tick(db, YahooChartClient(s.yahoo_user_agent, s.yahoo_timeout_seconds), s)
+    except jobs.JobConflict as e:
+        print(f"skipped: {e}")
+        return 0
+    job = jobs.get_job(db, job_id)
+    _print({k: job.get(k) for k in ("id", "status", "error", "result")})
+    return 0 if job["status"] == "completed" else 1
+
+
 def cmd_reconcile(args) -> int:
     cache_dir = Path(args.cache_dir) if args.cache_dir else None
     sqlite = Path(args.sqlite) if args.sqlite else None
@@ -176,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
     up.add_argument("--symbols", nargs="*")
     up.add_argument("--pause", type=float, default=0.2)
     up.set_defaults(fn=cmd_update)
+    sub.add_parser("tick", help="scheduled tick: incremental daily ingest + outlook refresh").set_defaults(fn=cmd_tick)
     r = sub.add_parser("reconcile-legacy")
     r.add_argument("--cache-dir", default=str(REPO / "cache"))
     r.add_argument("--sqlite", default=str(REPO / "data" / "timeseries.db"))

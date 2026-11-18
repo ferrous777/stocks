@@ -500,3 +500,16 @@ def account_positions(account_id: str = AccountPath, db: Database = Depends(get_
 def account_outlook(account_id: str = AccountPath, db: Database = Depends(get_db)):
     from ..accounts import service
     return _acct_call(service.account_outlook, db, account_id, _now())
+
+
+# --- scheduled tick (also runnable on demand) ------------------------------------------
+
+@router.post("/admin/tick", status_code=status.HTTP_202_ACCEPTED)
+def admin_tick(request: Request, db: Database = Depends(get_db)):
+    """Run the cron tick now (incremental daily ingest + outlook refresh) as a background job."""
+    from .. import jobs, tick
+    try:
+        job_id = tick.run_tick(db, request.app.state.fetcher, request.app.state.settings, run_in_thread=True)
+    except jobs.JobConflict as e:
+        raise HTTPException(409, str(e))
+    return {"job_id": job_id, "status_url": f"/api/v1/admin/jobs/{job_id}"}
