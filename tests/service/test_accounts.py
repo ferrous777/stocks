@@ -48,6 +48,19 @@ def test_split_scales_quantity_at_the_ex_date_open_and_keeps_cost():
     assert after.qty == 100 and after.basis == 12_000.0 and after.avg_cost == pytest.approx(120.0)
 
 
+def test_split_dated_on_a_closed_day_takes_effect_at_the_next_open():
+    """Yahoo dates NVDA's 2001 2:1 split 2001-09-12; NYSE was closed until 2001-09-17 (13:30 UTC open).
+    The ledger must not fail on it, and the split applies at the first open after it."""
+    from stocks_service.accounts.ledger import split_time
+    assert split_time(dt.date(2001, 9, 12)) == T(2001, 9, 17, 13, 30)
+    assert split_time(dt.date(2024, 6, 10)) == T(2024, 6, 10, 13, 30)        # a session: its own open
+    ev = [LedgerEvent(T(2001, 9, 10, 21), "opening_balance", "NVDA", qty=10, cost_basis=1_000.0)]
+    splits = {"NVDA": [(dt.date(2001, 9, 12), 2.0), (dt.date(2024, 6, 10), 10.0)]}
+    assert state_as_of(T(2001, 9, 14), ev, [], splits).qty("NVDA") == 10       # market still closed
+    assert state_as_of(T(2001, 9, 17, 14), ev, [], splits).qty("NVDA") == 20
+    assert state_as_of(T(2026, 11, 18), ev, [], splits).qty("NVDA") == 200     # the whole history replays
+
+
 def test_transfer_out_leaves_at_average_cost():
     ev = [LedgerEvent(T(2024, 1, 2), "opening_balance", "AAA", qty=10, cost_basis=1000.0),
           LedgerEvent(T(2024, 1, 3), "transfer_out", "AAA", qty=-4, cost_basis=0.0)]
