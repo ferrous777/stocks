@@ -1,4 +1,5 @@
-"""Server-rendered website (Jinja2), protected by a single admin password and a signed session cookie."""
+"""Server-rendered website (Jinja2), protected by a secret sign-in link and/or a password, and a signed
+session cookie (90 days)."""
 
 from __future__ import annotations
 
@@ -23,12 +24,13 @@ class LoginRequired(Exception):
 
 
 def website_enabled(request: Request) -> bool:
-    return bool(request.app.state.settings.admin_password)
+    s = request.app.state.settings
+    return bool(s.admin_password or s.login_token)
 
 
 def require_login(request: Request) -> None:
     if not website_enabled(request):
-        raise HTTPException(503, "Website disabled: set STOCKS_ADMIN_PASSWORD and STOCKS_SESSION_SECRET.")
+        raise HTTPException(503, "Website disabled: set STOCKS_LOGIN_TOKEN (or STOCKS_ADMIN_PASSWORD) and STOCKS_SESSION_SECRET.")
     if not request.session.get("user"):
         raise LoginRequired()
 
@@ -40,17 +42,32 @@ def _render(request: Request, name: str, **ctx):
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
     if not website_enabled(request):
-        raise HTTPException(503, "Website disabled: set STOCKS_ADMIN_PASSWORD and STOCKS_SESSION_SECRET.")
-    return _render(request, "login.html", error=None)
+        raise HTTPException(503, "Website disabled: set STOCKS_LOGIN_TOKEN (or STOCKS_ADMIN_PASSWORD) and STOCKS_SESSION_SECRET.")
+    return _render(request, "login.html", error=None, password_enabled=bool(request.app.state.settings.admin_password))
+
+
+@router.post("/login/link", response_class=HTMLResponse)
+def login_link(request: Request, token: str = Form(...)):
+    """Sign in with the token from the bookmark ``/login#<token>``.
+
+    The token lives in the URL *fragment*, which browsers never send to the server, so it cannot
+    appear in access or proxy logs; the login page's script posts it here in the request body.
+    """
+    secret = request.app.state.settings.login_token
+    if not secret or not hmac.compare_digest(token.encode("utf-8"), secret.encode("utf-8")):
+        return _render(request, "login.html", error="That sign-in link is not valid.",
+                       password_enabled=bool(request.app.state.settings.admin_password))
+    request.session["user"] = "admin"
+    return RedirectResponse("/", status_code=303)
 
 
 @router.post("/login", response_class=HTMLResponse)
 def login(request: Request, password: str = Form(...)):
-    if not website_enabled(request):
-        raise HTTPException(503, "Website disabled.")
+    if not request.app.state.settings.admin_password:
+        raise HTTPException(404, "Password sign-in is not enabled; use your sign-in link.")
     # compare_digest only accepts ASCII str; compare UTF-8 bytes so any password works.
     if not hmac.compare_digest(password.encode("utf-8"), request.app.state.settings.admin_password.encode("utf-8")):
-        return _render(request, "login.html", error="Incorrect password.")
+        return _render(request, "login.html", error="Incorrect password.", password_enabled=True)
     request.session["user"] = "admin"
     return RedirectResponse("/", status_code=303)
 

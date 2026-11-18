@@ -15,9 +15,11 @@ class Settings(BaseSettings):
     mongo_db: str = "stocks"
     # Comma-separated list of accepted API keys. The API refuses to start without at least one.
     api_keys: str = ""
-    # Website login. When unset, the website pages respond 503 with setup instructions (the API still works).
+    # Website login: a secret sign-in link (/login/<login_token>, bookmarkable) and/or a password.
+    # With neither set, the website pages respond 503 with setup instructions (the API still works).
+    login_token: str = ""
     admin_password: str = ""
-    # Signs the website session cookie; required when admin_password is set.
+    # Signs the website session cookie; required when either login method is set.
     session_secret: str = ""
     # Session cookie is sent only over HTTPS. Set STOCKS_SESSION_HTTPS_ONLY=false only for local HTTP development.
     session_https_only: bool = True
