@@ -2,14 +2,65 @@
 {% block title %}Outlook · Stocks{% endblock %}
 {% block content %}
 <h1>Six-month outlook</h1>
-<p class="muted">For every watched symbol, long and short: expected net profit over 126 sessions, downside range,
-entry/stop/target and evidence quality — sorted by expected profit.</p>
+<p class="muted">Every watched symbol, long and short: the ATR plan for the next session, and what that plan has
+historically returned over a six-month (126-session) horizon after costs, sorted by expected return.</p>
 
-<div class="notice">
-  <strong>Not available yet.</strong>
-  Expected profits and downside ranges come from out-of-sample outcomes of validated strategies under an explicit
-  cost profile. Those don't exist until the phase 3 validation runs, and this page will not show estimated returns
-  before then. Current per-strategy decisions and ATR levels are on each symbol's page.
+{% if not outlook %}
+<div class="notice"><strong>No outlook yet.</strong> It needs the research holdout sealed, a <code>market</code> cost
+profile (<code>POST /api/v1/cost-profiles</code>) and a calibration run (<code>POST /api/v1/outlook/run</code>).</div>
+{% else %}
+{% set o = outlook %}
+<div class="panel" style="margin:14px 0">
+  <strong>As of the {{ o.asof }} close</strong> · orders for the next session, placeable until
+  {{ (o.rows|first).placeable_until[11:16] if o.rows else '' }} UTC ·
+  costs {{ o.cost_profile }} ({{ o.cost.half_spread_bps }} bps half-spread + {{ o.cost.slippage_bps }} bps slippage per side) ·
+  T-bills over the horizon: {{ '%.2f%%'|format(o.cash_return_6m*100) }}
+  <p class="small muted" style="margin:6px 0 0">
+    <span class="chip">A</span> calibrated signal of a validated (active) strategy ·
+    <span class="chip">B</span> calibrated signal, strategy not validated ·
+    <span class="chip">C</span> no signal with demonstrated skill — this symbol's own history for the same plan (base rate, not a forecast) ·
+    insufficient — reasons shown. No strategy is validated yet, so nothing here is a recommendation to trade.
+  </p>
+  <p class="small" style="margin:6px 0 0">Show:
+    <a href="/outlook" class="{{ 'on' if not side }}">both</a> ·
+    <a href="/outlook?side=long">long</a> · <a href="/outlook?side=short">short</a></p>
 </div>
-<p><a href="/">Go to the dashboard →</a></p>
+
+<div class="panel scroll"><table>
+  <thead><tr>
+    <th>Symbol</th><th>Side</th><th>Grade</th><th class="num">Exp. 6-mo return</th><th class="num">vs T-bills</th>
+    <th class="num">10th / 90th pct</th><th class="num">P(win)</th><th class="num">Target / stop / timeout / no fill</th>
+    <th class="num">Entry limit</th><th class="num">Stop</th><th class="num">Target</th><th class="num">n</th><th>Signals today</th>
+  </tr></thead>
+  <tbody>
+  {% for r in o.rows %}{% set e = r.estimate %}
+  <tr>
+    <td><a href="/symbol/{{ r.symbol }}">{{ r.symbol }}</a></td>
+    <td>{{ r.side }}</td>
+    <td><span class="chip {{ 'pos' if r.grade in ('A','B') else '' }}" title="{{ r.source }}{% for x in r.reasons %}&#10;{{ x }}{% endfor %}">{{ r.grade }}</span></td>
+    {% if r.exp_return_6m is defined and r.exp_return_6m is not none %}
+    <td class="num {{ 'pos' if r.exp_return_6m > o.cash_return_6m else 'neg' }}">{{ '%+.1f%%'|format(r.exp_return_6m*100) }}</td>
+    <td class="num">{{ '%+.1f%%'|format(r.exp_excess_6m*100) }}</td>
+    <td class="num small">{{ '%+.0f'|format(r.p10_return_6m*100) }} / {{ '%+.0f'|format(r.p90_return_6m*100) }}%</td>
+    <td class="num">{{ '%.0f%%'|format(e.p_win*100) }}</td>
+    <td class="num small muted">{{ '%.0f'|format(e.p.target*100) }} / {{ '%.0f'|format((e.p.stop+e.p.gap_stop)*100) }} / {{ '%.0f'|format(e.p.timeout*100) }} / {{ '%.0f'|format(e.p.not_filled*100) }}%</td>
+    {% else %}
+    <td class="num muted" colspan="5">{{ r.reasons|join('; ') if r.reasons else '—' }}</td>
+    {% endif %}
+    {% if r.plan %}
+    <td class="num">{{ '%.2f'|format(r.plan.entry_limit) }}</td><td class="num">{{ '%.2f'|format(r.plan.stop) }}</td>
+    <td class="num">{{ '%.2f'|format(r.plan.target) }}</td>
+    {% else %}<td colspan="3" class="muted">—</td>{% endif %}
+    <td class="num small muted">{{ e.n if e else '—' }}</td>
+    <td class="small">{% for s in r.signals %}{{ s.strategy }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+<p class="muted small">Returns are per position, after the cost profile's spread, slippage, commission and short borrow,
+with dividends; capital earns T-bills outside the trade. The plan is a DAY limit order for the next session only
+(fills only if price trades through the limit), with the stop and target placed after the fill and a 126-session timeout.
+Labels are sampled every 5 sessions from development history before the sealed holdout and overlap in time, so
+<em>n</em> overstates the independent evidence. Today's universe is hand-picked (survivorship bias).</p>
+{% endif %}
 {% endblock %}

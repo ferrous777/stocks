@@ -81,7 +81,7 @@ def test_dashboard_and_symbol_pages_show_real_data(db):
         assert c.get("/symbol/ZZZZ").status_code == 404
         research = c.get("/research").text
         assert "No research report yet" in research and "ma_crossover@1" in research
-        assert "Not available yet" in c.get("/outlook").text
+        assert "No outlook yet" in c.get("/outlook").text
 
 
 def test_session_cookie_is_secure_by_default(db):

@@ -44,6 +44,18 @@ INDEXES: dict[str, list[IndexModel]] = {
     "ingest_log": [
         IndexModel([("symbol", ASCENDING), ("interval", ASCENDING), ("at", DESCENDING)], name="symbol_interval_at"),
     ],
+    "cost_profiles": [
+        IndexModel([("profile_id", ASCENDING), ("version", ASCENDING)], name="profile_version", unique=True),
+    ],
+    "calibrations": [
+        IndexModel([("created_at", DESCENDING)], name="created_at"),
+    ],
+    "outlook_runs": [
+        IndexModel([("created_at", DESCENDING)], name="created_at"),
+    ],
+    "jobs": [
+        IndexModel([("kind", ASCENDING), ("status", ASCENDING)], name="kind_status"),
+    ],
     "job_locks": [
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],

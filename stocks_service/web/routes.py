@@ -83,5 +83,5 @@ def research(request: Request, db: Database = Depends(get_db)):
 
 
 @router.get("/outlook", response_class=HTMLResponse, dependencies=[Depends(require_login)])
-def outlook(request: Request):
-    return _render(request, "outlook.html")
+def outlook(request: Request, side: str | None = None, db: Database = Depends(get_db)):
+    return _render(request, "outlook.html", **data.outlook_status(db, side))

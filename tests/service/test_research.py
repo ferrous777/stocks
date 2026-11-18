@@ -250,16 +250,20 @@ def test_reveal_preflights_before_consuming_the_holdout(db):
 
 
 def test_research_job_lock_is_atomic_and_recovers_abandoned_runs(db):
+    from stocks_service import jobs
     t0 = dt.datetime.now(UTC)
-    assert protocol._claim_lock(db, "a", t0)
-    assert not protocol._claim_lock(db, "b", t0)  # live lease: second claim refused
+    assert jobs.claim_lock(db, "job:research", "a", t0)
+    assert not jobs.claim_lock(db, "job:research", "b", t0)  # live lease: second claim refused
+    with pytest.raises(jobs.JobConflict):
+        protocol.start_development_job(db, dev_start=dt.date(2021, 6, 1), dev_end=dt.date(2024, 11, 15),
+                                       holdout_start=dt.date(2024, 11, 18), run_in_thread=False)
     # A worker that died leaves a running job and a lapsed lease; the next run takes over.
     db.jobs.insert_one({"kind": "research", "status": "running", "started_at": t0})
-    db.job_locks.update_one({"_id": protocol.LOCK_NAME}, {"$set": {"expires_at": t0 - dt.timedelta(seconds=1)}})
+    db.job_locks.update_one({"_id": "job:research"}, {"$set": {"expires_at": t0 - dt.timedelta(seconds=1)}})
     job = protocol.start_development_job(db, dev_start=dt.date(2021, 6, 1), dev_end=dt.date(2024, 11, 15),
                                          holdout_start=dt.date(2024, 11, 18), run_in_thread=False)
     assert db.jobs.count_documents({"kind": "research", "status": "abandoned"}) == 1
-    assert db.jobs.find_one({"_id": __import__("bson").ObjectId(job)})["status"] == "failed"  # no data loaded
+    assert jobs.get_job(db, job)["status"] == "failed"  # no data loaded
     assert db.job_locks.count_documents({}) == 0  # released when the worker finished
 
 
