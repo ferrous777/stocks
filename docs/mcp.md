@@ -1,5 +1,7 @@
 # Connecting an AI agent (MCP)
 
+The website's **Connect** page (`/connect`) has copy-paste setup for Claude Code, JSON-configured clients, the Claude API MCP connector, the Python MCP SDK and a curl check, all pointing at the server you are viewing, plus the live tool list.
+
 The service exposes an MCP server for an external AI decision-maker:
 - **Endpoint:** `https://stocks-production-8666a97e.up.railway.app/mcp`. It uses streamable HTTP and is stateless.
 - **Auth:** `Authorization: Bearer <one of STOCKS_API_KEYS>`.

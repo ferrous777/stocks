@@ -202,3 +202,28 @@ def outlook_status(db: Database, side: str | None = None) -> dict:
         doc["rows"] = [r for r in doc["rows"] if r["side"] == side]
     cal = db.calibrations.find_one(sort=[("created_at", -1), ("_id", -1)], projection={"buckets": 0})
     return {"outlook": doc, "calibration": cal, "side": side}
+
+
+IDENTITY_PARAMS = ("agent_id", "model_id", "prompt_version")
+
+
+def mcp_connect(db: Database, base_url: str, tools: list, api_keys: list[str]) -> dict:
+    """Facts for the Connect page, all read from the running server: its URL, the tools the MCP server
+    registers (name, description, parameters) and the paper accounts an agent may trade."""
+    rows = []
+    for t in tools:
+        schema = t.inputSchema or {}
+        required = set(schema.get("required") or [])
+        params = [{"name": n, "type": p.get("type") or "/".join(x.get("type", "?") for x in p.get("anyOf", [])),
+                   "required": n in required, "default": p.get("default")}
+                  for n, p in (schema.get("properties") or {}).items() if n not in IDENTITY_PARAMS]
+        rows.append({"name": t.name, "description": (t.description or "").strip(), "params": params})
+    paper = list(db.accounts.find({"kind": "paper"}, {"name": 1, "policy": 1, "strategy": 1}).sort("_id", 1))
+    return {
+        "endpoint": base_url.rstrip("/") + "/mcp",
+        "tools": rows,
+        "identity_params": IDENTITY_PARAMS,
+        "agent_accounts": [a for a in paper if a.get("policy") == "agent"],
+        "baseline_accounts": [a for a in paper if str(a.get("policy", "")).startswith("baseline")],
+        "key_count": len(api_keys),
+    }

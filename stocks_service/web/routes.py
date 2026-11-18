@@ -121,6 +121,14 @@ def outlook(request: Request, side: str | None = None, db: Database = Depends(ge
     return _render(request, "outlook.html", **data.outlook_status(db, side))
 
 
+@router.get("/connect", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+async def connect(request: Request, db: Database = Depends(get_db)):
+    """How to connect an AI agent to the MCP server: endpoint, auth, client setup and the live tool list."""
+    tools = await request.app.state.mcp.list_tools()
+    return _render(request, "connect.html", **data.mcp_connect(db, str(request.base_url), tools,
+                                                               request.app.state.api_keys))
+
+
 # --- accounts ---------------------------------------------------------------------------------
 
 def _account_page(request: Request, db: Database, account_id: str, message: str | None = None,

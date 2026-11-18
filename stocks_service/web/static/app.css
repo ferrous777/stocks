@@ -123,7 +123,7 @@ code { font: 0.9em var(--font-mono); background: var(--color-surface-muted); pad
 .stat { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }
 .stat__label { color: var(--color-text-muted); font-size: var(--text-sm); }
 .stat__value { font-size: var(--text-lg); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; }
-.stat__hint { color: var(--color-text-muted); font-size: var(--text-xs); }
+.stat__hint { color: var(--color-text-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
 
 /* ---- Badge -------------------------------------------------------------------------------- */
 .badge { display: inline-block; padding: 1px var(--space-2); border-radius: var(--radius-full); font-size: var(--text-xs);
@@ -178,6 +178,16 @@ code { font: 0.9em var(--font-mono); background: var(--color-surface-muted); pad
 .table--compact th, .table--compact td { padding: var(--space-1) var(--space-2); }
 .table td.empty { color: var(--color-text-muted); text-align: center; padding: var(--space-5); }
 
+/* ---- Code block ---------------------------------------------------------------------------- */
+.code-block { position: relative; margin: var(--space-2) 0 var(--space-3); }
+.code-block pre { margin: 0; padding: var(--space-3) var(--space-4); padding-right: 72px; overflow-x: auto;
+                  background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+                  font: var(--text-xs)/1.55 var(--font-mono); }
+.code-block pre code { background: none; padding: 0; font: inherit; }
+.code-block__copy { position: absolute; top: var(--space-2); right: var(--space-2); }
+.steps { margin: 0; padding-left: var(--space-5); }
+.steps > li + li { margin-top: var(--space-2); }
+
 /* ---- Chart -------------------------------------------------------------------------------- */
 .sparkline { fill: none; stroke: var(--color-accent); stroke-width: 1.6; }
 .price-chart__controls { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center; margin: var(--space-3) 0; }
@@ -214,7 +224,9 @@ code { font: 0.9em var(--font-mono); background: var(--color-surface-muted); pad
 .pos, .long { color: var(--color-positive); } .neg, .short { color: var(--color-negative); }
 .long, .short, .exit { font-weight: var(--weight-semibold); }
 .exit { color: var(--color-accent); } .hold { color: var(--color-text-muted); }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-3); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-3); align-items: start; }
+.grid > * { min-width: 0; }   /* let wide content (code, tables) scroll inside its cell instead of widening it */
+.grid > .card + .card { margin-top: 0; }
 .stack > * + * { margin-top: var(--space-3); }
 .cluster { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 .spacer { flex: 1; }
