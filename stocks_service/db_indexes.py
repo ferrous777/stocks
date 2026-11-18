@@ -113,6 +113,9 @@ INDEXES: dict[str, list[IndexModel]] = {
     "umpire_models": [
         IndexModel([("created_at", DESCENDING)], name="created_at"),
     ],
+    "param_sets": [
+        IndexModel([("strategy", ASCENDING), ("created_at", DESCENDING)], name="strategy_created"),
+    ],
     "job_locks": [
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],
