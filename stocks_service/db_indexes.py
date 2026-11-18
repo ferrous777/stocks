@@ -95,6 +95,14 @@ INDEXES: dict[str, list[IndexModel]] = {
     "equity_curve": [
         IndexModel([("account_id", ASCENDING), ("session", ASCENDING)], name="account_session", unique=True),
     ],
+    "forecast_outcomes": [
+        IndexModel([("asof", ASCENDING), ("symbol", ASCENDING), ("side", ASCENDING)], name="asof_symbol_side",
+                   unique=True),
+        IndexModel([("source", ASCENDING), ("resolved_session", DESCENDING)], name="source_resolved"),
+    ],
+    "lifecycle_events": [
+        IndexModel([("strategy", ASCENDING), ("at", DESCENDING)], name="strategy_at"),
+    ],
     "job_locks": [
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],

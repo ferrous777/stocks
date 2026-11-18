@@ -27,6 +27,7 @@ from ..research.backtest import PolicyParams, _irx_rate
 from ..research.protocol import holdout_window, load_universe
 from ..sim import CostProfile, ExecutionPolicy
 from ..strategies import all_specs, decide
+from ..strategies.runner import LIVE, persist_decision
 from .calibration import CALIBRATION_VERSION, calibrate
 from .labels import BASE, LABEL_VERSION, STRIDE, build_labels
 
@@ -115,6 +116,8 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
             continue
         view = series.view_at(asof)
         decisions = {spec.key: decide(view, spec) for spec in all_specs() if len(view) >= spec.min_bars}
+        for dec in decisions.values():  # immutable live record; the nightly parity check replays it
+            persist_decision(db, dec, source=LIVE, now=now)
         for side in ("long", "short"):
             if side == "short" and not shorts_ok:
                 rows.append(empty_row(sym, side, f"cost profile {cost.key} has no borrow rate, so shorts are disabled"))
@@ -134,7 +137,7 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
             options = []
             for sg in signals:
                 bk = sig_buckets.get((sg["strategy"], side))
-                if bk and bk["status"] == "calibrated":
+                if bk and bk["status"] == "calibrated" and sg["status"] not in ("paused", "retired"):
                     options.append(("A" if sg["status"] == "active" else "B", bk, f"signal:{sg['strategy']}"))
             if not options and base and base["status"] == "base_rate":
                 options.append(("C", base, "base_rate"))
