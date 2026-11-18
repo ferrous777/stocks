@@ -185,7 +185,7 @@ def _brief(b: dict | None) -> dict | None:
 def latest_outlook(db: Database) -> dict | None:
     doc = db.outlook_runs.find_one(sort=[("created_at", -1), ("_id", -1)])
     if doc:
-        doc.pop("_id", None)
+        doc["run_id"] = str(doc.pop("_id"))   # immutable id of exactly this outlook build
         doc["calibration_id"] = str(doc["calibration_id"])
     return doc
 
