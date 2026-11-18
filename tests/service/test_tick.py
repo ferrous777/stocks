@@ -86,3 +86,16 @@ def test_synchronous_jobs_renew_their_lease(db, monkeypatch):
 
     jobs.start_job(db, "slow", work, run_in_thread=False)
     assert seen[0][1] > seen[0][0]  # extended while the synchronous work ran
+
+
+def test_jobs_listing_for_operational_checks(db, fetcher):
+    from fastapi.testclient import TestClient
+    from stocks_service.api.app import create_app
+    _add_symbol(db, "NVDA")
+    _verify(db, fetcher)
+    _ingest(db, fetcher)
+    tick.run_tick(db, fetcher, S, pause=0)
+    with TestClient(create_app(S, db=db), base_url="https://testserver") as c:
+        rows = c.get("/api/v1/admin/jobs?kind=tick", headers={"X-API-Key": "k"}).json()
+        assert len(rows) == 1 and rows[0]["status"] == "completed" and "ingest_1d" in rows[0]["result"]
+        assert "traceback" not in rows[0]

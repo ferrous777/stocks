@@ -6,12 +6,12 @@ The legacy app keeps running, untouched, until the steps below are complete. Not
 
 This window only confirms that the new service runs reliably. Investment evidence comes from the research report and the lifecycle shadow period, not from this window.
 
-Check daily in `GET /api/v1/admin/jobs/<id>`; the job ids are listed by the `jobs` collection, `kind: tick`. The account and outlook pages also show the same information.
-- [ ] Every weekday has `tick` runs with `status: completed`, and none are `failed` or `abandoned`.
-- [ ] `ingest_1d.failures` is empty or explained, for example a quarantine with a cleared note.
-- [ ] The outlook `asof` advances each session.
-- [ ] `lifecycle.parity.violations` is 0.
-- [ ] The paper accounts advance every session, and `stalled` is never set.
+Check every trading day with `GET /api/v1/admin/jobs?kind=tick&limit=40`. It lists recent tick runs and their `status` and `result`. Then:
+- [ ] Every weekday has runs with `status: completed`, and none are `failed` or `abandoned`.
+- [ ] `result.ingest_1d.failures` is empty, or explained (for example a quarantine cleared with a note).
+- [ ] `result.lifecycle.parity.violations` is 0.
+- [ ] Every entry of `result.paper` has `stalled: null` and no `error`.
+- [ ] The outlook's `asof` advances each session. Check it on the Outlook page or with `GET /api/v1/outlook`.
 - [ ] `/health` returns `replica_set: rs0` throughout, including across at least one Mongo restart.
 
 The window started on 2026-11-18, the first session with the cron service live.
@@ -41,17 +41,26 @@ Every legacy route is either replaced or explicitly retired.
 
 ## 3. Backup before switching
 
-Take a full dump of the Railway database and keep it outside Railway. This needs SSH access to the `mongo` service (`railway ssh`); register your key and accept the host key first.
+Take a **point-in-time** dump of the Railway database and keep it outside Railway. Ticks and paper processing write in multi-document transactions, so a plain dump taken while they run could catch collections on either side of a transaction. `--oplog` records the writes made during the dump; restoring with `--oplogReplay` brings every collection to the same instant.
+
+This needs SSH access to the `mongo` service (`railway ssh`); register your key and accept the host key first.
 
 ```
-railway ssh --service mongo -- sh -c 'mongodump --quiet --archive --gzip -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin' > stocks-$(date +%F).archive.gz
+railway ssh --service mongo -- sh -c 'mongodump --quiet --oplog --archive --gzip -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin' > stocks-$(date +%F).archive.gz
 ```
 
-Restore into a scratch database to check it:
+Alternatively, take the dump in a write-free window: before 12:00 UTC on a weekday or at a weekend, when the cron does not run, with no job `running` in `GET /api/v1/admin/jobs`.
+
+Verify it by restoring into a **separate, empty** scratch MongoDB, never into Railway. `--oplogReplay` needs a whole-instance restore and cannot rename namespaces:
 
 ```
-mongorestore --archive=stocks-YYYY-MM-DD.archive.gz --gzip --nsFrom='stocks.*' --nsTo='restore_check.*'
+docker run -d --name restore-check -p 27099:27017 mongo:8.0
+mongorestore --uri mongodb://127.0.0.1:27099 --archive=stocks-YYYY-MM-DD.archive.gz --gzip --oplogReplay
+mongosh --port 27099 --eval 'db.getSiblingDB("stocks").bars.countDocuments()'
+docker rm -f restore-check
 ```
+
+If you ever restore into a shared server instead, select only the application namespaces with `--nsInclude='stocks.*'` together with `--nsFrom`/`--nsTo`. In that case `--oplogReplay` cannot be used, so the dump must come from a write-free window.
 
 The legacy data stays untouched on PythonAnywhere (results JSON, SQLite, the cache), and that copy is the legacy backup. The new service rebuilt its history from Yahoo with verified price bases, so it does not depend on the legacy files.
 
