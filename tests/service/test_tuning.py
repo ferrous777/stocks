@@ -19,16 +19,26 @@ def test_rank_scores_weight_normalized_ranks():
     assert s["c"] == pytest.approx(0.0)
 
 
-def test_folds_expand_and_never_overlap(monkeypatch):
+def test_folds_expand_and_never_overlap():
     from stocks_service import sessions
     days = sessions.sessions_between(dt.date(2006, 1, 3), dt.date(2024, 11, 15))
     fs = tuning.folds(days)
-    assert days[fs[0][1]].year == 2012
-    for (tr, ts, te), nxt in zip(fs, fs[1:] + [None]):
-        assert tr == ts and ts < te
+    assert days[fs[0][0]].year == 2012
+    for (ts, te), nxt in zip(fs, fs[1:] + [None]):
+        assert 0 < ts < te
         if nxt:
-            assert te == nxt[1]                       # contiguous test windows
-    assert days[fs[-1][2] - 1] == dt.date(2024, 11, 15)
+            assert te == nxt[0]                       # contiguous test windows
+    assert days[fs[-1][1] - 1] == dt.date(2024, 11, 15)
+    # A short final fold is kept (window ending in February 2024).
+    short = sessions.sessions_between(dt.date(2006, 1, 3), dt.date(2024, 2, 15))
+    assert short[tuning.folds(short)[-1][1] - 1] == dt.date(2024, 2, 15)
+
+
+def test_ties_share_ranks():
+    m = {"a": {"sharpe": 1.0, "cagr": 0.10, "max_drawdown": 0.2},
+         "b": {"sharpe": 1.0, "cagr": 0.20, "max_drawdown": 0.2}}
+    s = tuning.rank_scores(m)
+    assert s["b"] > s["a"]                            # b dominates: tied Sharpe/drawdown, higher CAGR
 
 
 def test_tuning_records_every_trial_and_selects_on_training_data_only(db, monkeypatch):
@@ -49,4 +59,9 @@ def test_tuning_records_every_trial_and_selects_on_training_data_only(db, monkey
     lo, hi = d["paired_excess_annual"]["ci95"]
     assert (d["status"] == "adopt") == (lo > 0)
     assert [f["test_from"][:4] for f in d["folds"]] == ["2022", "2023", "2024"]
+    assert d["folds"][-1]["test_to"] == "2024-11-15"
+    from stocks_service import sessions
+    days = sessions.sessions_between(dt.date(2021, 6, 1), dt.date(2024, 11, 15))
+    first = days.index(dt.date.fromisoformat(d["folds"][0]["test_from"]))
+    assert d["oos_sessions"] == len(days) - first   # a return into every test session: no boundary holes
     assert db.param_sets.count_documents({}) == 1
