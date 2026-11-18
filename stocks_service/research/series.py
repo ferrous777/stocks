@@ -69,6 +69,10 @@ class SymbolSeries:
     def count_through(self, asof: dt.date) -> int:
         return bisect.bisect_right(self.sessions, asof)
 
+    def has_bar(self, session: dt.date) -> bool:
+        i = self.count_through(session)
+        return i > 0 and self.sessions[i - 1] == session
+
     def view_at(self, asof: dt.date, lookback: int = LOOKBACK_BARS) -> PointInTimeView:
         n = self.count_through(asof)
         lo = max(0, n - lookback)

@@ -48,6 +48,20 @@ def _commission(profile: CostProfile, qty: float) -> float:
     return max(profile.min_commission, profile.commission_per_share * qty) if qty > 0 else 0.0
 
 
+def entry_costs(profile: CostProfile, price: float, qty: float) -> float:
+    """Cash cost of opening ``qty`` shares at ``price``: commission plus half-spread and slippage."""
+    return _commission(profile, qty) + price * qty * (profile.half_spread_bps + profile.slippage_bps) / 10_000
+
+
+def exit_costs(profile: CostProfile, price: float, qty: float) -> float:
+    """Cash cost of closing; same components as the entry (charged on the exit price)."""
+    return entry_costs(profile, price, qty)
+
+
+def borrow_cost(profile: CostProfile, notional: float, calendar_days: int) -> float:
+    return notional * profile.borrow_rate_annual * calendar_days / 360
+
+
 def net_trade(outcome: Outcome, side: Side, qty: float, profile: CostProfile,
               dividends: list[tuple[dt.date, float]] = ()) -> NetResult | None:
     """Net result of one simulated trade for ``qty`` shares.
@@ -65,13 +79,11 @@ def net_trade(outcome: Outcome, side: Side, qty: float, profile: CostProfile,
     notional = entry * qty
     sign = 1 if side == "long" else -1
     gross_pnl = sign * (exit_ - entry) * qty
-    friction_bps = profile.half_spread_bps + profile.slippage_bps
-    spread_slip = (entry + exit_) * qty * friction_bps / 10_000
     commission = _commission(profile, qty) * 2
+    spread_slip = entry_costs(profile, entry, qty) + exit_costs(profile, exit_, qty) - commission
     borrow = 0.0
     if side == "short":
-        days = (outcome.exit_session - outcome.fill_session).days
-        borrow = notional * profile.borrow_rate_annual * days / 360
+        borrow = borrow_cost(profile, notional, (outcome.exit_session - outcome.fill_session).days)
     div = sum(a for d, a in dividends if outcome.fill_session < d <= outcome.exit_session) * qty * sign
     net_pnl = gross_pnl - spread_slip - commission - borrow + div
     return NetResult(gross_pnl / notional, net_pnl / notional, (spread_slip + commission + borrow) / notional,

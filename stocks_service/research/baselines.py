@@ -13,7 +13,7 @@ import datetime as dt
 
 import numpy as np
 
-from .backtest import _irx_rate
+from .backtest import DataCoverageError, _irx_rate
 from .series import SymbolSeries
 
 
@@ -34,6 +34,9 @@ def cash_daily_returns(irx: SymbolSeries, days: list[dt.date]) -> np.ndarray:
 def _hold_values(series: SymbolSeries, days: list[dt.date], irx: SymbolSeries, capital: float,
                  start_index: int = 0) -> list[float]:
     """Buy at the first session's close (decision basis of that day), hold, dividends to cash."""
+    missing = [d for d in days[start_index:] if not series.has_bar(d)]
+    if missing:
+        raise DataCoverageError(f"{series.symbol} benchmark has no bar on {len(missing)} session(s), first {missing[0]}")
     d0 = days[start_index]
     price0 = series.close_on_basis(d0, d0)
     qty = capital / price0

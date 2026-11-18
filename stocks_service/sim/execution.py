@@ -16,6 +16,9 @@ Rules (plan §1, §F):
 * Timeout: triggered at the close of the N-th session after the fill session; exits at the
   next session's open.
 * Running out of bars before resolution returns ``unresolved`` — never an invented exit.
+* Every bar must be the next XNYS session; a missing session raises ``DataGapError`` rather
+  than resolving a trade across an unknown price path.
+* Returns are normalized by entry notional for both sides (short: (entry - exit) / entry).
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 from typing import Literal
+
+from .. import sessions
 
 Side = Literal["long", "short"]
 Result = Literal["target", "stop", "gap_stop", "timeout", "not_filled", "unresolved"]
@@ -41,6 +46,10 @@ class ExecutionPolicy:
 
 
 DEFAULT_POLICY = ExecutionPolicy()
+
+
+class DataGapError(ValueError):
+    """A required trading session has no bar."""
 
 
 @dataclass(frozen=True)
@@ -85,7 +94,7 @@ class Outcome:
 
 
 def _gross(side: Side, entry: float, exit_: float) -> float:
-    return exit_ / entry - 1 if side == "long" else entry / exit_ - 1
+    return exit_ / entry - 1 if side == "long" else (entry - exit_) / entry
 
 
 def gross_return(o: Outcome, side: Side) -> float | None:
@@ -104,7 +113,7 @@ def simulate_trade(plan: TradePlan, bars: list[Bar], next_session: dt.date,
     if not bars:
         return Outcome("unresolved", note="no bars after decision")
     if bars[0].session != next_session:
-        raise ValueError(f"first bar {bars[0].session} is not the eligible session {next_session}")
+        raise DataGapError(f"first bar {bars[0].session} is not the eligible session {next_session}")
     long = plan.side == "long"
 
     def beyond_stop(price: float) -> bool:
@@ -135,6 +144,10 @@ def simulate_trade(plan: TradePlan, bars: list[Bar], next_session: dt.date,
     # --- holding ---------------------------------------------------------------
     timeout_exit_pending = False
     for k, b in enumerate(bars[1:], start=1):
+        expected = sessions.session_after_n(b0.session, k)
+        if b.session != expected:
+            raise DataGapError(f"missing bar for session {expected} (next bar is {b.session}) while holding a "
+                               f"{plan.side} position filled {b0.session}")
         if timeout_exit_pending:
             return Outcome("timeout", b0.session, fill, b.session, b.o, k, gap_fill=gap_fill)
         if beyond_stop(b.o):

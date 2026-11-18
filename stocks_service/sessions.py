@@ -91,3 +91,18 @@ def sessions_between(start: dt.date, end: dt.date) -> list[dt.date]:
     if end < start:
         return []
     return [s.date() for s in calendar().sessions_in_range(_ts(start), _ts(end))]
+
+
+@lru_cache(maxsize=1)
+def _session_index() -> tuple[tuple[dt.date, ...], dict[dt.date, int]]:
+    days = tuple(s.date() for s in calendar().sessions)
+    return days, {d: i for i, d in enumerate(days)}
+
+
+def session_after_n(d: dt.date, n: int) -> dt.date | None:
+    """Fast lookup of the n-th session after session ``d`` (n >= 0); None past the calendar end."""
+    days, idx = _session_index()
+    if d not in idx:
+        raise SessionError(f"{d.isoformat()} is not an XNYS trading session")
+    j = idx[d] + n
+    return days[j] if j < len(days) else None

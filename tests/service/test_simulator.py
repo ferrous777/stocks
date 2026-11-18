@@ -4,7 +4,7 @@ import math
 import pytest
 
 from stocks_service import sessions
-from stocks_service.sim import Bar, CostProfile, ExecutionPolicy, TradePlan, gross_return, net_trade, simulate_trade
+from stocks_service.sim import Bar, CostProfile, DataGapError, ExecutionPolicy, TradePlan, gross_return, net_trade, simulate_trade
 
 from .conftest import NVDA_LONG, raw_daily
 
@@ -123,6 +123,24 @@ def test_short_is_mirrored():
     o = _sim(plan)
     assert (o.fill_price, o.gap_fill) == (b0.o, True)  # opened at/above the short limit
     assert gross_return(o, "short") is None or o.result in ("timeout", "stop", "target", "gap_stop", "unresolved")
+
+
+def test_short_gross_return_is_normalized_by_entry_notional():
+    b0 = _bars()[0]
+    o = _sim(TradePlan("short", DECIDED, b0.o * 0.99, b0.o * 100, b0.o * 0.01), policy=ExecutionPolicy(timeout_sessions=5))
+    assert o.result == "timeout" and o.exit_price != o.fill_price
+    assert gross_return(o, "short") == pytest.approx((o.fill_price - o.exit_price) / o.fill_price)
+    assert gross_return(o, "short") == pytest.approx(net_trade(o, "short", 10, PROFILE).gross_return)
+
+
+def test_missing_session_while_holding_raises_instead_of_skipping():
+    bars = _bars()
+    gapped = bars[:3] + bars[4:]  # real bars with one session removed
+    with pytest.raises(DataGapError, match=str(bars[3].session)):
+        _sim(_long(bars[0].o * 1.0001, 0.01, 100), bars=gapped, policy=ExecutionPolicy(timeout_sessions=10))
+    # A gap after the trade has already exited is irrelevant and does not raise.
+    o = _sim(_long(bars[0].o * 1.0001, 0.01, 100), bars=bars[:3] + bars[4:], policy=ExecutionPolicy(timeout_sessions=1))
+    assert o.result == "timeout" and o.exit_session == bars[2].session
 
 
 def test_invalid_plans_are_rejected():

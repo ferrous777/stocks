@@ -35,8 +35,8 @@ def summarize(equity: list[float], cash_daily: np.ndarray) -> dict:
     total = equity[-1] / equity[0] - 1
     excess = r - cash_daily[: len(r)]
     sd = float(np.std(excess, ddof=1)) if len(r) > 1 else float("nan")
-    downside = excess[excess < 0]
-    dsd = float(np.sqrt(np.mean(downside ** 2))) if len(downside) else float("nan")
+    # Downside deviation: root-mean-square shortfall over *all* observations (non-negative days count as 0).
+    dsd = float(np.sqrt(np.mean(np.minimum(excess, 0.0) ** 2))) if len(excess) else float("nan")
     mdd, dd_len = max_drawdown(equity)
     return {
         "total_return": total,
@@ -67,11 +67,11 @@ def block_bootstrap_mean_ci(x: np.ndarray, block: int = 20, n: int = 2000, alpha
     return float(x.mean() * TRADING_DAYS), float(lo), float(hi)
 
 
-def deflated_sharpe(returns: np.ndarray, trial_sharpes: list[float]) -> float:
+def deflated_sharpe(returns: np.ndarray, trial_sharpes: list[float], n_trials: int | None = None) -> float:
     """Deflated Sharpe Ratio (Bailey & Lopez de Prado, 2014), per-period Sharpe ratios.
 
     Probability that the true Sharpe exceeds the expected maximum Sharpe of ``len(trial_sharpes)``
-    independent trials, adjusting for skewness, kurtosis and sample length.
+    independent trials (``n_trials`` when more trials were run than have recorded Sharpe ratios), adjusting for skewness, kurtosis and sample length.
     """
     r = np.asarray(returns, dtype=float)
     T = len(r)
@@ -81,8 +81,8 @@ def deflated_sharpe(returns: np.ndarray, trial_sharpes: list[float]) -> float:
     sr = r.mean() / sd
     skew = float(((r - r.mean()) ** 3).mean() / sd ** 3)
     kurt = float(((r - r.mean()) ** 4).mean() / sd ** 4)
-    n = len(trial_sharpes)
-    var_sr = float(np.var(trial_sharpes, ddof=1)) if n > 1 else 0.0
+    n = max(len(trial_sharpes), n_trials or 0)
+    var_sr = float(np.var(trial_sharpes, ddof=1)) if len(trial_sharpes) > 1 else 0.0
     gamma = 0.5772156649
     sr0 = 0.0 if n <= 1 else math.sqrt(var_sr) * ((1 - gamma) * _N.inv_cdf(1 - 1 / n)
                                                   + gamma * _N.inv_cdf(1 - 1 / (n * math.e)))

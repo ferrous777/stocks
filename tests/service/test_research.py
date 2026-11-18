@@ -6,7 +6,7 @@ import pytest
 from stocks_service import ingestion
 from stocks_service.research import protocol, stats
 from stocks_service.research.backtest import run_backtest
-from stocks_service.research.baselines import buy_and_hold, cash_curve, spliced_buy_and_hold
+from stocks_service.research.baselines import buy_and_hold, cash_curve, cash_daily_returns, spliced_buy_and_hold
 from stocks_service.research.series import SymbolSeries
 from stocks_service.sim import CostProfile
 from stocks_service.strategies import PointInTimeView, decide, get_spec
@@ -172,3 +172,105 @@ def test_development_report_end_to_end(db):
         c.post("/login", data={"password": "pw"})
         page = c.get("/research").text
         assert "ma_crossover@1" in page and "Deflated Sharpe" in page and ("No strategy passed" in page or "Eligible" in page)
+
+
+# --- review fixes (PR #18) ------------------------------------------------------------
+
+def test_cash_flows_are_booked_as_they_occur_and_reconcile_with_net_trade():
+    r = run_backtest(_universe(), ["NVDA", "INTC", "SPY", "QQQ"], _series("^IRX"), "momentum@1",
+                     dt.date(2021, 6, 1), dt.date(2025, 5, 30), COST)
+    closed = [t for t in r.trades if t.result != "not_filled"]
+    assert closed and any(t.side == "short" for t in closed)
+    for t in closed:
+        assert t.booked_pnl == pytest.approx(t.net_return * t.entry * t.qty, rel=1e-9, abs=1e-6)
+    assert r.min_cash >= -1e-6  # fully collateralized: short gap fills never overdraw cash
+
+
+def test_window_beyond_stored_data_is_rejected():
+    from stocks_service.research.backtest import DataCoverageError
+    cut = dt.date(2023, 6, 30)
+    with pytest.raises(DataCoverageError):
+        run_backtest(_universe(cut), ["NVDA", "INTC", "SPY", "QQQ"], _series("^IRX", cutoff=cut), "momentum@1",
+                     dt.date(2021, 6, 1), dt.date(2023, 9, 29), COST)
+    # Rates stopping early (prices present) is also refused rather than repeating the last rate.
+    with pytest.raises(DataCoverageError, match="IRX"):
+        run_backtest(_universe(), ["NVDA", "INTC", "SPY", "QQQ"], _series("^IRX", cutoff=cut), "momentum@1",
+                     dt.date(2021, 6, 1), dt.date(2023, 9, 29), COST)
+
+
+def test_sortino_downside_deviation_uses_all_observations():
+    eq = [b["c"] for b in raw_daily(FIX["SPY"], "SPY")[0]]
+    cash = np.zeros(len(eq) - 1)
+    s = stats.summarize(eq, cash)
+    r = stats.daily_returns(eq)
+    expected = r.mean() / np.sqrt(np.mean(np.minimum(r, 0) ** 2)) * np.sqrt(252)
+    assert s["sortino"] == pytest.approx(expected)
+
+
+def test_dsr_trials_come_from_the_registry(db):
+    _load_db(db)
+    protocol.seal_holdout(db, start=dt.date(2024, 11, 18), end=dt.date(2025, 5, 30), now=NOW)
+    protocol.run_development(db, start=dt.date(2021, 6, 1), end=dt.date(2024, 11, 15), now=NOW,
+                             strategies=["ma_crossover@1", "momentum@1", "macd@1"])
+    again = protocol.run_development(db, start=dt.date(2021, 6, 1), end=dt.date(2024, 11, 15), now=NOW,
+                                     strategies=["ma_crossover@1"])
+    assert again["trial_count"] == 4  # the earlier three trials still count against the winner
+    recorded = [d["excess_sharpe"] for d in db.experiments.find({"kind": "development"})]
+    assert len(recorded) == 4 and all(x is not None for x in recorded)
+    uni, _ = protocol.load_universe(db)
+    r = run_backtest(uni, again["tradable"], uni["^IRX"], "ma_crossover@1", dt.date(2021, 6, 1),
+                     dt.date(2024, 11, 15), protocol.BASE_COST)
+    x = stats.daily_returns(r.equity) - cash_daily_returns(uni["^IRX"], r.dates)
+    assert again["results"]["ma_crossover@1"]["deflated_sharpe"] == pytest.approx(stats.deflated_sharpe(x, recorded, 4))
+    assert stats.deflated_sharpe(x, recorded, 4) < stats.deflated_sharpe(x, recorded[-1:], 1)
+
+
+def test_reveal_preflights_before_consuming_the_holdout(db):
+    _load_db(db)
+    protocol.seal_holdout(db, start=dt.date(2024, 11, 18), end=dt.date(2025, 5, 30), now=NOW)
+    digest = protocol.freeze_protocol(db, candidates=["momentum@1"],
+                                      dev_window=(dt.date(2021, 6, 1), dt.date(2024, 11, 15)), now=NOW)
+    # Configuration drift (a corporate-action re-normalization) is refused and the holdout stays sealed.
+    db.symbols.update_one({"_id": "NVDA"}, {"$inc": {"ca_version": 1}})
+    with pytest.raises(protocol.HoldoutError, match="universe"):
+        protocol.reveal_holdout(db, protocol_hash=digest, now=NOW)
+    db.symbols.update_one({"_id": "NVDA"}, {"$inc": {"ca_version": -1}})
+    # Missing benchmark data inside the holdout is refused before the claim.
+    removed = list(db.bars.find({"symbol": "SPY", "session": {"$gte": dt.datetime(2025, 3, 3, tzinfo=UTC)}}))
+    db.bars.delete_many({"_id": {"$in": [b["_id"] for b in removed]}})
+    with pytest.raises(Exception, match="SPY"):
+        protocol.reveal_holdout(db, protocol_hash=digest, now=NOW)
+    assert db.holdouts.find_one({"_id": "primary"})["status"] == "sealed"
+    db.bars.insert_many(removed)
+    res = protocol.reveal_holdout(db, protocol_hash=digest, now=NOW)
+    assert set(res) == {"momentum@1"}
+    assert db.holdouts.find_one({"_id": "primary"})["status"] == "consumed"
+    with pytest.raises(protocol.HoldoutError, match="consumed"):
+        protocol.reveal_holdout(db, protocol_hash=digest, now=NOW)
+
+
+def test_research_job_lock_is_atomic_and_recovers_abandoned_runs(db):
+    t0 = dt.datetime.now(UTC)
+    assert protocol._claim_lock(db, "a", t0)
+    assert not protocol._claim_lock(db, "b", t0)  # live lease: second claim refused
+    # A worker that died leaves a running job and a lapsed lease; the next run takes over.
+    db.jobs.insert_one({"kind": "research", "status": "running", "started_at": t0})
+    db.job_locks.update_one({"_id": protocol.LOCK_NAME}, {"$set": {"expires_at": t0 - dt.timedelta(seconds=1)}})
+    job = protocol.start_development_job(db, dev_start=dt.date(2021, 6, 1), dev_end=dt.date(2024, 11, 15),
+                                         holdout_start=dt.date(2024, 11, 18), run_in_thread=False)
+    assert db.jobs.count_documents({"kind": "research", "status": "abandoned"}) == 1
+    assert db.jobs.find_one({"_id": __import__("bson").ObjectId(job)})["status"] == "failed"  # no data loaded
+    assert db.job_locks.count_documents({}) == 0  # released when the worker finished
+
+
+def test_interior_rate_gap_is_reported_but_a_trailing_gap_is_refused():
+    from stocks_service.research.backtest import DataCoverageError
+    irx = _series("^IRX")
+    keep = [i for i, d in enumerate(irx.sessions) if not (dt.date(2022, 3, 1) <= d <= dt.date(2022, 3, 14))]
+    gapped = SymbolSeries("^IRX", [irx.sessions[i] for i in keep], [irx.raw[i] for i in keep], [], [])
+    uni = {**_universe(), "^IRX": gapped}
+    gaps = protocol.check_coverage(uni, ["NVDA", "SPY"], dt.date(2021, 6, 1), dt.date(2024, 11, 15))
+    assert gaps == ["2022-02-28 -> 2022-03-15"]
+    with pytest.raises(DataCoverageError, match="IRX"):
+        protocol.check_coverage({**uni, "^IRX": _series("^IRX", cutoff=dt.date(2024, 6, 28))}, ["NVDA", "SPY"],
+                                dt.date(2021, 6, 1), dt.date(2024, 11, 15))
