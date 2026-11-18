@@ -82,7 +82,10 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
     if cost is None or cost.key != cal["cost_profile"]:
         raise OutlookUnavailable(f"calibration used {cal['cost_profile']} but the market profile is now "
                                  f"{cost.key if cost else 'missing'}; recalibrate")
-    uni, tradable = load_universe(db)
+    uni, _ = load_universe(db)
+    # Every watched symbol gets rows, including ones whose history has not been loaded yet.
+    watched = sorted(s["_id"] for s in db.symbols.find(
+        {"enabled": {"$ne": False}, "tradable": {"$ne": False}, "asset_class": {"$in": ["equity", "etf"]}}, {"_id": 1}))
     irx = uni["^IRX"]
     asof = uni["SPY"].sessions[-1]
     nxt = sessions.next_session(asof)
@@ -93,17 +96,29 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
     sig_buckets = {(b["strategy"], b["side"]): b for b in cal["buckets"] if b["strategy"] != BASE}
     base_buckets = {(b["symbol"], b["side"]): b for b in cal["buckets"] if b["strategy"] == BASE}
     params = PolicyParams()
+    shorts_ok = cost.borrow_rate_annual is not None
+    common = {"asof": asof.isoformat(), "placeable_until": open_.isoformat(), "valid_until": close.isoformat()}
+
+    def empty_row(sym: str, side: str, reason: str) -> dict:
+        return {"symbol": sym, "side": side, **common, "last_close": None, "plan": None, "signals": [],
+                "grade": "insufficient", "source": "none", "reasons": [reason], "validated": False,
+                "base_rate": None, "estimate": None}
+
     rows = []
-    for sym in tradable:
-        series = uni[sym]
+    for sym in watched:
+        series = uni.get(sym)
+        if series is None or not series.sessions:
+            rows += [empty_row(sym, side, "no price history loaded yet") for side in ("long", "short")]
+            continue
         if not series.has_bar(asof):
-            for side in ("long", "short"):
-                rows.append({"symbol": sym, "side": side, "grade": "insufficient",
-                             "reasons": [f"no bar on {asof} (last {series.sessions[-1]})"]})
+            rows += [empty_row(sym, side, f"no bar on {asof} (last {series.sessions[-1]})") for side in ("long", "short")]
             continue
         view = series.view_at(asof)
         decisions = {spec.key: decide(view, spec) for spec in all_specs() if len(view) >= spec.min_bars}
         for side in ("long", "short"):
+            if side == "short" and not shorts_ok:
+                rows.append(empty_row(sym, side, f"cost profile {cost.key} has no borrow rate, so shorts are disabled"))
+                continue
             reasons = []
             try:
                 lv = atr_levels(view, side, params.levels_dict)
@@ -132,8 +147,7 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
             if signals and grade == "C":
                 reasons.append("signals present but none has demonstrated out-of-sample skill; showing the base rate")
             row = {
-                "symbol": sym, "side": side, "asof": asof.isoformat(), "last_close": float(view.c[-1]),
-                "plan": plan, "placeable_until": open_.isoformat(), "valid_until": close.isoformat(),
+                "symbol": sym, "side": side, **common, "last_close": float(view.c[-1]), "plan": plan,
                 "signals": signals, "grade": grade, "source": source, "reasons": reasons,
                 "validated": grade == "A",
                 "base_rate": _brief(base),
@@ -150,7 +164,7 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
     rows.sort(key=lambda r: (GRADE_ORDER[r["grade"]] == 3, -(r.get("exp_return_6m") or -1e9), r["symbol"], r["side"]))
     doc = {"created_at": now, "version": OUTLOOK_VERSION, "asof": asof.isoformat(), "calibration_id": cal["_id"],
            "cost_profile": cost.key, "cost": dataclasses.asdict(cost), "execution_policy": cal["execution_policy"],
-           "reference_notional": 10_000.0, "cash_return_6m": cash_6m, "horizon_end": horizon_end.isoformat(),
+           "reference_notional": 10_000.0, "shorts_enabled": shorts_ok, **common, "cash_return_6m": cash_6m, "horizon_end": horizon_end.isoformat(),
            "rows": rows}
     db.outlook_runs.insert_one(doc)
     return doc

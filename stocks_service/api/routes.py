@@ -302,7 +302,7 @@ def list_cost_profiles(db: Database = Depends(get_db)):
 # --- six-month outlook (phase 4) -----------------------------------------------------------
 
 class OutlookRunIn(BaseModel):
-    steps: list[Literal["calibrate", "outlook"]] = ["calibrate", "outlook"]
+    steps: list[Literal["calibrate", "outlook"]] = Field(default=["calibrate", "outlook"], min_length=1)
 
 
 @router.post("/outlook/run", status_code=status.HTTP_202_ACCEPTED)

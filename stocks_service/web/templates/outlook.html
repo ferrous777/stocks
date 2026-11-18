@@ -12,7 +12,7 @@ profile (<code>POST /api/v1/cost-profiles</code>) and a calibration run (<code>P
 {% set o = outlook %}
 <div class="panel" style="margin:14px 0">
   <strong>As of the {{ o.asof }} close</strong> · orders for the next session, placeable until
-  {{ (o.rows|first).placeable_until[11:16] if o.rows else '' }} UTC ·
+  {{ o.placeable_until[11:16] if o.placeable_until else '—' }} UTC ·
   costs {{ o.cost_profile }} ({{ o.cost.half_spread_bps }} bps half-spread + {{ o.cost.slippage_bps }} bps slippage per side) ·
   T-bills over the horizon: {{ '%.2f%%'|format(o.cash_return_6m*100) }}
   <p class="small muted" style="margin:6px 0 0">

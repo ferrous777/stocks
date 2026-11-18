@@ -59,8 +59,9 @@ def _label(series: SymbolSeries, irx: SymbolSeries, strategy: str, side: str, d:
     plan = TradePlan(side, d, lv.entry_limit, lv.stop, lv.target)
     bars = series.bars_after(d, horizon_bars)
     nxt = sessions.next_session(d)
-    if not bars or bars[0].session != nxt:
-        return None
+    if not bars:
+        return None  # no bars after d yet: unresolved
+    # A first bar that is not the next session is a data gap: simulate_trade raises DataGapError.
     oc = simulate_trade(plan, bars, nxt, policy)
     if oc.result == "unresolved":
         return None
@@ -82,6 +83,8 @@ def build_labels(universe: dict[str, SymbolSeries], symbols: list[str], irx: Sym
     lv_params = params.levels_dict
     horizon_bars = policy.timeout_sessions + 3
     days = sample_sessions(start, end)
+    # A profile without a borrow rate disables shorts: no short labels at all (never an assumed rate).
+    sides = ("long", "short") if cost.borrow_rate_annual is not None else ("long",)
     labels: list[Label] = []
     stats = {"sampled_sessions": len(days), "data_gaps": 0, "no_levels": 0, "unresolved": 0}
     for n, sym in enumerate(symbols):
@@ -90,11 +93,11 @@ def build_labels(universe: dict[str, SymbolSeries], symbols: list[str], irx: Sym
             if d >= resolved_before or not series.has_bar(d):
                 continue
             view = series.view_at(d)
-            wanted = [(BASE, "long"), (BASE, "short")]
+            wanted = [(BASE, s) for s in sides]
             for spec in specs:
                 if series.count_through(d) >= spec.min_bars:
                     dec = decide(view, spec)
-                    if dec.direction in ("long", "short"):
+                    if dec.direction in sides:
                         wanted.append((spec.key, dec.direction))
             outcomes: dict[str, Label | None] = {}
             for strategy, side in wanted:

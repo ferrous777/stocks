@@ -131,3 +131,49 @@ def test_outlook_end_to_end(db):
         c.post("/login", data={"password": "pw"})
         page = c.get("/outlook").text
         assert "As of the" in page and "NVDA" in page
+
+
+# --- review fixes (PR #19) ---------------------------------------------------------------
+
+def test_missing_entry_session_is_counted_as_a_data_gap():
+    from stocks_service.research.series import SymbolSeries
+    full = _series("NVDA")
+    d = sample_sessions(dt.date(2022, 3, 1), dt.date(2022, 3, 31))[0]
+    drop = sessions.next_session(d)
+    keep = [i for i, s in enumerate(full.sessions) if s != drop]
+    gapped = SymbolSeries("NVDA", [full.sessions[i] for i in keep], [full.raw[i] for i in keep], full.splits,
+                          full.dividends)
+    _, stats = build_labels({"NVDA": gapped}, ["NVDA"], _series("^IRX"), [], d, d, COST, resolved_before=CUT)
+    assert stats["data_gaps"] == 2 and stats["labels"] == 0  # both sides, recorded rather than silently dropped
+
+
+def test_profile_without_borrow_rate_produces_no_short_labels():
+    no_borrow = CostProfile("market", 2, 0.0, 0.0, 2.0, 3.0, None)
+    labs, _ = build_labels(_universe(), ["NVDA"], _series("^IRX"), KEYS, dt.date(2021, 1, 4), dt.date(2021, 12, 31),
+                           no_borrow, resolved_before=CUT)
+    assert labs and {lab.side for lab in labs} == {"long"}
+
+
+def test_outlook_rows_for_unloaded_symbols_no_shorts_and_step_validation(db):
+    from stocks_service.jobs import get_job
+    _load_db(db)
+    protocol.seal_holdout(db, start=CUT, end=dt.date(2025, 5, 30), now=NOW)
+    db.symbols.insert_one({"_id": "FCX", "asset_class": "equity", "tradable": True, "enabled": True, "ca_version": 0})
+    H = {"X-API-Key": "k"}
+    with _client(db) as c:
+        assert c.post("/api/v1/outlook/run", json={"steps": []}, headers=H).status_code == 422
+        body = {"profile_id": "market", "version": 1, "commission_per_share": 0, "min_commission": 0,
+                "half_spread_bps": 2, "slippage_bps": 3, "borrow_rate_annual": None, "note": "no shorting"}
+        assert c.post("/api/v1/cost-profiles", json=body, headers=H).status_code == 201
+        job = build.start_outlook_job(db, steps=["calibrate", "outlook"], run_in_thread=False)
+        assert get_job(db, job)["status"] == "completed", get_job(db, job).get("error")
+        o = c.get("/api/v1/outlook", headers=H).json()
+        assert o["shorts_enabled"] is False
+        fcx = [r for r in o["rows"] if r["symbol"] == "FCX"]
+        assert len(fcx) == 2 and all(r["grade"] == "insufficient" and "no price history" in r["reasons"][0] for r in fcx)
+        shorts = [r for r in o["rows"] if r["side"] == "short"]
+        assert shorts and all(r["grade"] == "insufficient" for r in shorts)
+        assert any("borrow" in r["reasons"][0] for r in shorts)
+        assert {k for r in o["rows"] for k in ("placeable_until", "valid_until", "plan", "estimate")} <= set(fcx[0])
+        c.post("/login", data={"password": "pw"})
+        assert c.get("/outlook?side=short").status_code == 200  # all-insufficient view renders
