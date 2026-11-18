@@ -12,6 +12,9 @@
    the strategy's status — and a pre-open ticket notification per account when active strategies
    produce tickets.
 
+4. Paper accounts: process completed sessions through the shared simulator, then the baseline
+   policy places its orders for the next session.
+
 Runs under the shared ``tick`` lease (``stocks_service.jobs``), so overlapping cron runs never
 ingest concurrently, and each run is recorded in ``jobs``. Idempotent: running it twice in a row
 fetches nothing new the second time and leaves the outlook as is.
@@ -95,6 +98,21 @@ def _alerts(db: Database, now: dt.datetime) -> dict:
             "errors": [c for c in created if c.get("type") == "ticket_error"]}
 
 
+def _paper(db: Database, now: dt.datetime) -> list[dict]:
+    """Advance every paper account through completed sessions, then let baseline accounts place orders."""
+    from .paper import baseline, broker
+    out = []
+    for acc in db.accounts.find({"kind": "paper"}, {"_id": 1, "policy": 1}):
+        try:
+            res = broker.process_account(db, acc["_id"], now)
+            if acc.get("policy") == baseline.POLICY_ID and not res["stalled"]:
+                res["baseline"] = baseline.run_baseline(db, acc["_id"], now)
+        except Exception as e:  # one account's problem must not block the others
+            res = {"account_id": acc["_id"], "error": f"{type(e).__name__}: {e}"}
+        out.append(res)
+    return out
+
+
 def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: float = 0.2,
              run_in_thread: bool = False) -> str:
     def work(log):
@@ -105,6 +123,8 @@ def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: 
         log(step="outlook", **out)
         alerts = _alerts(db, now)
         log(step="alerts", **alerts)
-        return {"ingest_1d": ing, "outlook": out, "alerts": alerts}
+        paper = _paper(db, now)
+        log(step="paper", accounts=len(paper))
+        return {"ingest_1d": ing, "outlook": out, "alerts": alerts, "paper": paper}
 
     return jobs.start_job(db, "tick", work, run_in_thread=run_in_thread)

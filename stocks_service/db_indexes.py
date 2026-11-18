@@ -87,6 +87,14 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("dedupe_key", ASCENDING)], name="dedupe_key", unique=True),
         IndexModel([("account_id", ASCENDING), ("created_at", DESCENDING)], name="account_created"),
     ],
+    "orders": [
+        IndexModel([("account_id", ASCENDING), ("idempotency_key", ASCENDING)], name="account_idem", unique=True),
+        IndexModel([("account_id", ASCENDING), ("status", ASCENDING)], name="account_status"),
+        IndexModel([("account_id", ASCENDING), ("placed_at", DESCENDING)], name="account_placed"),
+    ],
+    "equity_curve": [
+        IndexModel([("account_id", ASCENDING), ("session", ASCENDING)], name="account_session", unique=True),
+    ],
     "job_locks": [
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],
