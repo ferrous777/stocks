@@ -1,4 +1,5 @@
 import datetime as dt
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -221,3 +222,46 @@ def test_only_identifier_columns_are_pinned_on_phones(db):
         dashboard, research = c.get("/").text, c.get("/research").text
     assert 'class="table table--pin-first"' in dashboard          # symbol column stays visible
     assert "table--pin-first" not in research                       # long descriptive first cells scroll normally
+
+
+def test_connect_page_documents_the_live_mcp_server(db):
+    from stocks_service.paper import broker
+    db.risk_profiles.insert_one({"_id": "default@1"})
+    db.cost_profiles.insert_one({"_id": "market@1"})
+    broker.create_paper_account(db, account_id="paper-agent", name="AI agent", starting_cash=100_000.0,
+                                risk_profile="default@1", now=NOW)
+    db.accounts.insert_one({"_id": "fidelity", "kind": "real", "name": "Brokerage"})
+    with _client(db) as c:
+        _login(c)
+        page = c.get("/connect").text
+        mcp = c.app.state.mcp
+        import anyio
+        live = anyio.run(mcp.list_tools)
+    assert _current_nav(page) == ["Connect"]
+    endpoint = "https://testserver/mcp"
+    assert page.count(endpoint) >= 5                          # every snippet points at this server
+    for t in live:                                              # the tool table is the server's own registry
+        assert f"<code>{t.name}</code>" in page
+    assert "<code>idempotency_key</code>" in page and "<code>agent_id</code>, <code>model_id</code>, <code>prompt_version</code>" in page
+    assert "claude mcp add --transport http stocks " + endpoint in page
+    assert "mcp-client-2025-11-20" in page and "mcp_toolset" in page
+    assert "<code>paper-agent</code>" in page and "fidelity" not in page   # real accounts are never offered
+    assert "no baseline: " in page                                          # unpaired: says why, invents nothing
+    # With a baseline of identical capital and profiles, the agent's row names the same pairing the gate uses.
+    from stocks_service.paper import baseline as bl
+    broker.create_paper_account(db, account_id="paper-baseline", name="Baseline", starting_cash=100_000.0,
+                                risk_profile="default@1", policy=bl.POLICY_ID, now=NOW)
+    with _client(db) as c:
+        _login(c)
+        page = c.get("/connect").text
+    assert "<code>paper-baseline</code>" in page and "no baseline: " not in page
+    assert "1 key(s) configured" in page
+    assert "Bearer k" not in page and "Bearer $STOCKS_API_KEY" in page    # the real key is never rendered
+    # The curl sample's single quotes are escaped text inside <code>, not markup.
+    assert "-d &#39;{&#34;jsonrpc&#34;: &#34;2.0&#34;" in page
+
+
+def test_code_samples_are_escaped(db):
+    from stocks_service.web.routes import templates
+    html = templates.env.from_string('{% import "components.html" as ui %}{{ ui.code_block("<b>x</b> & y") }}').render()
+    assert "&lt;b&gt;x&lt;/b&gt; &amp; y" in html and "<b>" not in html

@@ -202,3 +202,31 @@ def outlook_status(db: Database, side: str | None = None) -> dict:
         doc["rows"] = [r for r in doc["rows"] if r["side"] == side]
     cal = db.calibrations.find_one(sort=[("created_at", -1), ("_id", -1)], projection={"buckets": 0})
     return {"outlook": doc, "calibration": cal, "side": side}
+
+
+IDENTITY_PARAMS = ("agent_id", "model_id", "prompt_version")
+
+
+def mcp_connect(db: Database, base_url: str, tools: list, api_keys: list[str]) -> dict:
+    """Facts for the Connect page, all read from the running server: its URL, the tools the MCP server
+    registers (name, description, parameters) and the paper accounts an agent may trade."""
+    rows = []
+    for t in tools:
+        schema = t.inputSchema or {}
+        required = set(schema.get("required") or [])
+        params = [{"name": n, "type": p.get("type") or "/".join(x.get("type", "?") for x in p.get("anyOf", [])),
+                   "required": n in required, "default": p.get("default")}
+                  for n, p in (schema.get("properties") or {}).items() if n not in IDENTITY_PARAMS]
+        rows.append({"name": t.name, "description": (t.description or "").strip(), "params": params})
+    from ..paper.report import matching_baseline
+    agents = []
+    for a in db.accounts.find({"kind": "paper", "policy": "agent"}).sort("_id", 1):
+        base, why = matching_baseline(db, a)          # the same pairing the Paper page and the gate use
+        agents.append({"_id": a["_id"], "name": a.get("name", ""), "baseline": base, "pairing": why})
+    return {
+        "endpoint": base_url.rstrip("/") + "/mcp",
+        "tools": rows,
+        "identity_params": IDENTITY_PARAMS,
+        "agent_accounts": agents,
+        "key_count": len(api_keys),
+    }

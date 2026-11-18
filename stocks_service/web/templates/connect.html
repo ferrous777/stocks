@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block title %}Connect an agent · Stocks{% endblock %}
+{% block content %}
+{% set agent_id = agent_accounts[0]._id if agent_accounts else "paper-agent" %}
+{% call ui.page_header("Connect an AI agent") %}An AI agent can read the six-month outlook and trade the
+<strong>paper</strong> accounts through this site's MCP (Model Context Protocol) server. Real accounts are refused,
+and every call is logged with the agent's identity.{% endcall %}
+
+<div class="stats">
+  {{ ui.stat("Endpoint", "/mcp", hint=endpoint) }}
+  {{ ui.stat("Transport", "Streamable HTTP", hint="stateless, JSON responses") }}
+  {{ ui.stat("Auth", "Bearer API key", hint=key_count ~ " key(s) configured") }}
+  {{ ui.stat("Tools", tools|length) }}
+</div>
+
+<h2>1. Get an API key</h2>
+<p class="prose">The bearer token is any one of the service's API keys: the comma-separated <code>STOCKS_API_KEYS</code>
+variable on the Railway <code>stocks</code> service. The examples below read it from an environment variable:</p>
+{{ ui.code_block('export STOCKS_API_KEY="your-api-key"', "environment variable") }}
+{% if key_count == 0 %}{% call ui.alert("negative", "No API keys are configured.") %} Set <code>STOCKS_API_KEYS</code>;
+until then the MCP server refuses every request.{% endcall %}{% endif %}
+
+<h2>2. Add the server to your client</h2>
+<div class="grid">
+{% call ui.card("Claude Code") %}
+  <p class="small muted mt-0">Run once in your terminal; the server is then available in every session.</p>
+  {{ ui.code_block('claude mcp add --transport http stocks ' ~ endpoint ~ ' \\\n  --header "Authorization: Bearer $STOCKS_API_KEY"', "Claude Code command") }}
+{% endcall %}
+{% call ui.card("Clients configured with JSON") %}
+  <p class="small muted mt-0">For clients that accept a remote server URL with headers (an <code>mcpServers</code> entry):</p>
+  {% set cfg %}{
+  "mcpServers": {
+    "stocks": {
+      "type": "http",
+      "url": "{{ endpoint }}",
+      "headers": { "Authorization": "Bearer YOUR_API_KEY" }
+    }
+  }
+}{% endset %}
+  {{ ui.code_block(cfg, "JSON configuration") }}
+  <p class="small muted">Clients that only launch local (stdio) servers can bridge with <code>mcp-remote</code>:</p>
+  {% set bridge %}{
+  "mcpServers": {
+    "stocks": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "{{ endpoint }}", "--header", "Authorization:${AUTH}"],
+      "env": { "AUTH": "Bearer YOUR_API_KEY" }
+    }
+  }
+}{% endset %}
+  {{ ui.code_block(bridge, "mcp-remote configuration") }}
+{% endcall %}
+</div>
+
+<h2>3. Or run an agent from code</h2>
+<div class="grid">
+{% call ui.card("Claude API (MCP connector)") %}
+  <p class="small muted mt-0">Anthropic connects to the server for you; the API key goes in <code>authorization_token</code>.
+  Run it after the daily outlook (built after the close) and before the next open.</p>
+  {% set api %}import os
+import anthropic
+
+client = anthropic.Anthropic()
+response = client.beta.messages.create(
+    model="claude-opus-5-5",
+    max_tokens=16000,
+    betas=["mcp-client-2025-11-20", "server-side-fallback-2026-07-01"],
+    fallbacks="default",
+    mcp_servers=[{
+        "type": "url",
+        "url": "{{ endpoint }}",
+        "name": "stocks",
+        "authorization_token": os.environ["STOCKS_API_KEY"],
+    }],
+    tools=[{"type": "mcp_toolset", "mcp_server_name": "stocks"}],
+    system=(
+        "You manage the paper account {{ agent_id }}. On every tool call pass "
+        "agent_id='my-agent', model_id='claude-opus-5-5', prompt_version='v1'."
+    ),
+    messages=[{"role": "user", "content": (
+        "Read today's outlook, check the account, and place the paper orders you "
+        "would make for the next session, with a rationale for each."
+    )}],
+)
+for block in response.content:
+    if block.type == "text":
+        print(block.text){% endset %}
+  {{ ui.code_block(api, "Claude API example") }}
+{% endcall %}
+{% call ui.card("Python MCP SDK") %}
+  <p class="small muted mt-0">Call the tools directly, e.g. from your own agent loop (<code>pip install mcp</code>).</p>
+  {% set sdk %}import asyncio, os
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+URL = "{{ endpoint }}"
+HEADERS = {"Authorization": "Bearer " + os.environ["STOCKS_API_KEY"]}
+WHO = {"agent_id": "my-agent", "model_id": "my-model", "prompt_version": "v1"}
+
+async def main():
+    async with streamablehttp_client(URL, headers=HEADERS) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            outlook = await session.call_tool("get_outlook", {**WHO, "limit": 10})
+            print(outlook.structuredContent)
+
+asyncio.run(main()){% endset %}
+  {{ ui.code_block(sdk, "Python MCP SDK example") }}
+{% endcall %}
+</div>
+
+<h2>4. Check the connection</h2>
+<p class="prose">This lists the tools. A <code>401</code> means the key is missing or wrong.</p>
+{% set curl %}curl -s {{ endpoint }} \
+  -H "Authorization: Bearer $STOCKS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}'{% endset %}
+{{ ui.code_block(curl, "curl check") }}
+
+<h2>How an agent should use it</h2>
+{% call ui.card() %}
+<ol class="steps">
+  <li><strong>Identify itself on every call.</strong> Every tool requires <code>agent_id</code>, <code>model_id</code> and
+    <code>prompt_version</code>; calls without them are rejected. Each call is logged with what the agent saw and did.</li>
+  <li><strong>Read the outlook</strong> with <code>get_outlook</code>: one row per symbol and side, with the plan (entry
+    limit, stop, target), expected six-month return, percentiles and evidence grade, and <code>placeable_until</code>.</li>
+  <li><strong>Check the account</strong> with <code>get_account</code> (cash, free buying power, positions).</li>
+  <li><strong>Place orders before the next open</strong> with <code>place_paper_order</code>, giving a unique
+    <code>idempotency_key</code> (at least 8 characters; reusing it returns the same order) and a <code>rationale</code>.
+    Orders are DAY limit orders at the row's entry limit, with its stop and target; they are refused after
+    <code>placeable_until</code>, above the account's risk limits, or when the symbol already has an open order or position.</li>
+  <li><strong>Review results</strong> with <code>list_orders</code> and <code>get_performance</code>; pass
+    <code>baseline_account</code> to get the paired comparison with the baseline policy and the influence gate.</li>
+</ol>
+{% endcall %}
+
+<h2>Accounts the agent can trade</h2>
+{% if agent_accounts %}
+{% call ui.table(["Account", "Name", "Compare with"]) %}
+  {% for a in agent_accounts %}
+  <tr><td><code>{{ a._id }}</code></td><td>{{ a.name }}</td>
+    <td>{% if a.baseline %}<code>{{ a.baseline }}</code> <span class="small muted">({{ a.pairing }})</span>{% else %}<span class="small muted">no baseline: {{ a.pairing }}</span>{% endif %}</td></tr>
+  {% endfor %}
+{% endcall %}
+<p class="muted small prose">Any paper account can be traded, but the rule-based accounts (the baseline and one per strategy) are
+traded by their own policies; give the agent an account with policy <code>agent</code> so the comparison stays clean. The agent
+stays shadow-only, never affecting real accounts, until it beats the baseline without a worse drawdown over at least 126
+shared sessions and 30 closed orders.</p>
+{% else %}
+{% call ui.alert("warning", "No agent paper account yet.") %} Create one with
+<code>POST /api/v1/paper-accounts</code> (policy <code>agent</code>, the same starting cash and profiles as the baseline).{% endcall %}
+{% endif %}
+
+<h2>Tools</h2>
+<p class="muted small">Read from the running MCP server. Each also takes {% for p in identity_params %}<code>{{ p }}</code>{{ ", " if not loop.last }}{% endfor %}.</p>
+{% call ui.table(["Tool", "What it does", "Parameters"]) %}
+  {% for t in tools %}
+  <tr><td><code>{{ t.name }}</code></td><td class="small" style="white-space:normal;min-width:260px">{{ t.description }}</td>
+    <td class="small">{% for p in t.params %}<code>{{ p.name }}</code><span class="muted">: {{ p.type }}{% if not p.required %} = {{ p.default if p.default is not none else 'null' }}{% endif %}</span>{% if not loop.last %}<br>{% endif %}{% else %}<span class="muted">none</span>{% endfor %}</td></tr>
+  {% endfor %}
+{% endcall %}
+{% endblock %}
+{% block scripts %}
+<script>
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target.closest("[data-copy]");
+    if (!btn) return;
+    var text = btn.parentElement.querySelector("code").textContent;
+    function done(ok) { btn.textContent = ok ? "Copied" : "Copy failed"; setTimeout(function () { btn.textContent = "Copy"; }, 1500); }
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+    else done(false);
+  });
+</script>
+{% endblock %}

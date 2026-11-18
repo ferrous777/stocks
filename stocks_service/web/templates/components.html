@@ -76,3 +76,11 @@
 {% macro empty_row(colspan, text) -%}
 <tr><td colspan="{{ colspan }}" class="empty">{{ text }}</td></tr>
 {%- endmacro %}
+
+{#- A copyable code sample. `label` names it for screen readers and the copy button. -#}
+{% macro code_block(code, label="Code") -%}
+<div class="code-block">
+  <button type="button" class="btn btn--sm code-block__copy" data-copy aria-label="Copy {{ label }}">Copy</button>
+  <pre><code>{{ code|string|forceescape }}</code></pre>
+</div>
+{%- endmacro %}
