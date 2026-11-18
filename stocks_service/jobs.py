@@ -18,7 +18,7 @@ from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
 LEASE = dt.timedelta(minutes=5)
-HEARTBEAT_SECONDS = 60
+HEARTBEAT_SECONDS = 60.0
 
 
 class JobConflict(RuntimeError):
@@ -76,8 +76,8 @@ def start_job(db: Database, kind: str, work: Callable[[Callable[..., None]], dic
             stop.set()
             db.job_locks.delete_one({"_id": lock, "holder": str(job_id)})
 
+    threading.Thread(target=heartbeat, daemon=True).start()  # renew the lease however the work runs
     if run_in_thread:
-        threading.Thread(target=heartbeat, daemon=True).start()
         threading.Thread(target=run, daemon=True).start()
     else:
         run()

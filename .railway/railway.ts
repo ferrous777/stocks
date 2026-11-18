@@ -65,8 +65,21 @@ export default defineRailway(() => {
     replicas: { "sfo": 1 },
   });
 
+  // Scheduled tick: incremental price ingest + outlook refresh, every 15 minutes 12:00-23:59 UTC on
+  // weekdays (covers the EST and EDT closes and early closes). Same image as the web service.
+  const tick = service("jobs-tick", {
+    source: github("ferrous777/stocks", { branch: "main", upstreamUrl: "https://github.com/ferrous777/stocks" }),
+    build: { builder: "DOCKERFILE", dockerfilePath: "Dockerfile" },
+    deploy: {
+      startCommand: "python -m stocks_service.cli tick",
+      cronSchedule: "*/15 12-23 * * 1-5",
+      restartPolicyType: "NEVER",
+    },
+    replicas: { "sfo": 1 },
+  });
+
   return project("heroic-adventure", {
     variables: { managed: false },
-    resources: [mongoData, mongo, stocks],
+    resources: [mongoData, mongo, stocks, tick],
   });
 });

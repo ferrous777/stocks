@@ -360,7 +360,7 @@ def _finite(x):
 
 
 def latest_report(db: Database) -> dict | None:
-    doc = db.research_reports.find_one(sort=[("created_at", -1)])
+    doc = db.research_reports.find_one(sort=[("created_at", -1), ("_id", -1)])
     if doc:
         doc.pop("_id", None)
         doc = _finite(doc)

@@ -178,6 +178,14 @@ def _exec_id(x: dict) -> str:
     return "h:" + hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
+def _legacy_exec_id(x: dict) -> str | None:
+    """Fallback id used before fees were part of the hash (PR #21). Matched only together with equal fees."""
+    if x.get("exec_id"):
+        return None
+    key = f"{x['symbol']}|{x['side']}|{x['qty']!r}|{x['price']!r}|{_utc(x['ts']).isoformat()}"
+    return "h:" + hashlib.sha256(key.encode()).hexdigest()[:32]
+
+
 def add_executions(db: Database, account_id: str, items: list[dict], *, now: dt.datetime) -> dict:
     out = {"inserted": 0, "duplicates": 0, "reconciled_snapshots": 0}
 
@@ -195,7 +203,11 @@ def add_executions(db: Database, account_id: str, items: list[dict], *, now: dt.
             doc = {"account_id": account_id, "exec_id": _exec_id(x), "symbol": x["symbol"], "side": x["side"],
                    "qty": x["qty"], "price": x["price"], "fees": x.get("fees", 0.0), "ts": ts,
                    "source": x.get("source", "manual"), "recorded_at": now}
-            if db.executions.find_one({"account_id": account_id, "exec_id": doc["exec_id"]}, session=session):
+            legacy = _legacy_exec_id(x)
+            dup = db.executions.find_one({"account_id": account_id, "exec_id": doc["exec_id"]}, session=session) or (
+                legacy and db.executions.find_one({"account_id": account_id, "exec_id": legacy, "fees": doc["fees"]},
+                                                  session=session))
+            if dup:
                 out["duplicates"] += 1
                 continue
             db.executions.insert_one(doc, session=session)

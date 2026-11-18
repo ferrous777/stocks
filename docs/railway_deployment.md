@@ -84,3 +84,17 @@ TCP proxy on `mongo` (`directConnection=true`), then remove the proxy.
 
 - Scheduled MongoDB backups (needed before real portfolio data is stored).
 - Custom domain.
+
+## Scheduled tick (`jobs-tick` cron service)
+
+`.railway/railway.ts` defines a second service built from the same Dockerfile:
+- Start command: `python -m stocks_service.cli tick`.
+- Cron schedule: `*/15 12-23 * * 1-5` (UTC). Every 15 minutes on weekdays from 12:00 to 23:45 UTC, which covers the EST and EDT closes and early closes.
+
+Each run does the following:
+1. Fetches completed daily bars for every enabled symbol that already has history. A failing symbol is recorded, and the others continue.
+2. Rebuilds the outlook when a new SPY session is stored, using the existing calibration.
+
+Runs are leased (`job_locks` `job:tick`), so overlapping runs exit with `skipped`. Each run is recorded in `jobs` (`kind: tick`). To run one by hand, call `POST /api/v1/admin/tick`.
+
+Variables the service needs (unmanaged, so set them on the service): `STOCKS_MONGO_URL`, `STOCKS_MONGO_DB`.

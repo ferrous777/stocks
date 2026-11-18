@@ -75,7 +75,7 @@ def run_calibration(db: Database, *, now: dt.datetime, log=None, symbols: list[s
 
 
 def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = None) -> dict:
-    cal = calibration or db.calibrations.find_one(sort=[("created_at", -1)])
+    cal = calibration or db.calibrations.find_one(sort=[("created_at", -1), ("_id", -1)])
     if cal is None:
         raise OutlookUnavailable("no calibration yet; run the outlook job with the calibrate step")
     cost = latest_cost_profile(db, "market")
@@ -165,7 +165,10 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
     doc = {"created_at": now, "version": OUTLOOK_VERSION, "asof": asof.isoformat(), "calibration_id": cal["_id"],
            "cost_profile": cost.key, "cost": dataclasses.asdict(cost), "execution_policy": cal["execution_policy"],
            "reference_notional": 10_000.0, "shorts_enabled": shorts_ok, **common, "cash_return_6m": cash_6m, "horizon_end": horizon_end.isoformat(),
-           "rows": rows}
+           "rows": rows,
+           # Symbols without a bar on asof when this outlook was built; the tick rebuilds the same
+           # session's outlook once any of them arrives.
+           "missing_inputs": sorted({r["symbol"] for r in rows if r.get("last_close") is None})}
     db.outlook_runs.insert_one(doc)
     return doc
 
@@ -180,7 +183,7 @@ def _brief(b: dict | None) -> dict | None:
 
 
 def latest_outlook(db: Database) -> dict | None:
-    doc = db.outlook_runs.find_one(sort=[("created_at", -1)])
+    doc = db.outlook_runs.find_one(sort=[("created_at", -1), ("_id", -1)])
     if doc:
         doc.pop("_id", None)
         doc["calibration_id"] = str(doc["calibration_id"])
