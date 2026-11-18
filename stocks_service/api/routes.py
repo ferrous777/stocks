@@ -225,6 +225,18 @@ def admin_load(body: LoadRequest, request: Request, db: Database = Depends(get_d
     return {"job_id": job_id, "status_url": f"/api/v1/admin/jobs/{job_id}"}
 
 
+@router.get("/admin/jobs")
+def admin_jobs(kind: str | None = Query(None, pattern=r"^[a-z_]{1,30}$"), limit: int = Query(20, ge=1, le=200),
+               db: Database = Depends(get_db)):
+    """Recent background jobs (newest first), e.g. ``kind=tick`` for the cron runs and their results."""
+    q = {"kind": kind} if kind else {}
+    out = []
+    for d in db.jobs.find(q, {"traceback": 0}).sort("started_at", -1).limit(limit):
+        d["id"] = str(d.pop("_id"))
+        out.append(d)
+    return out
+
+
 @router.get("/admin/jobs/{job_id}")
 def admin_job(job_id: str, db: Database = Depends(get_db)):
     from .. import admin
