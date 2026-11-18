@@ -739,3 +739,68 @@ def paper_compare(agent: str = Query(pattern=ACCOUNT_PATTERN), baseline: str = Q
         if acc is None or acc.get("kind") != "paper":
             raise HTTPException(404, f"paper account {a} not found")
     return compare(db, agent, baseline)
+
+
+# --- strategy lifecycle (phase 6) ------------------------------------------------------------
+
+STRATEGY_KEY = r"^[a-z][a-z0-9_]{1,40}@[0-9]+$"
+
+
+class TransitionIn(BaseModel):
+    to: Literal["candidate", "active", "paused", "retired"]
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.get("/strategy-versions")
+def strategy_versions(db: Database = Depends(get_db)):
+    return list(db.strategy_versions.find().sort("_id", 1))
+
+
+@router.post("/strategy-versions/{key}/status")
+def strategy_transition(body: TransitionIn, key: str = Path(pattern=STRATEGY_KEY), db: Database = Depends(get_db)):
+    """Move a version through the lifecycle; promotions require their evidence (recorded)."""
+    from .. import lifecycle
+    try:
+        return lifecycle.transition(db, key, body.to, reason=body.reason, now=_now())
+    except lifecycle.LifecycleError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.get("/strategy-versions/{key}/monitor")
+def strategy_monitor(key: str = Path(pattern=STRATEGY_KEY), db: Database = Depends(get_db)):
+    from .. import lifecycle
+    return {"monitor": lifecycle.monitor(db, f"signal:{key}"),
+            "events": [{k: v for k, v in e.items() if k != "_id"}
+                       for e in db.lifecycle_events.find({"strategy": key}).sort("at", -1).limit(50)]}
+
+
+class FreezeIn(BaseModel):
+    candidates: list[str] = Field(min_length=1)
+    dev_start: dt.date = dt.date(2006, 1, 3)
+    dev_end: dt.date = dt.date(2024, 11, 15)
+
+
+@router.post("/research/holdout/freeze")
+def holdout_freeze(body: FreezeIn, db: Database = Depends(get_db)):
+    """Pre-register the candidates for the single-use holdout. Returns the protocol hash."""
+    from ..research.protocol import HoldoutError, freeze_protocol
+    try:
+        return {"protocol_hash": freeze_protocol(db, candidates=body.candidates,
+                                                 dev_window=(body.dev_start, body.dev_end), now=_now())}
+    except (HoldoutError, KeyError) as e:
+        raise HTTPException(409, str(e))
+
+
+class RevealIn(BaseModel):
+    protocol_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    confirm: Literal["reveal the holdout once"]
+
+
+@router.post("/research/holdout/reveal")
+def holdout_reveal(body: RevealIn, db: Database = Depends(get_db)):
+    """Evaluate the frozen protocol on the holdout. Irreversible: the holdout can be used only once."""
+    from ..research.protocol import HoldoutError, _finite, reveal_holdout
+    try:
+        return _finite(reveal_holdout(db, protocol_hash=body.protocol_hash, now=_now()))
+    except HoldoutError as e:
+        raise HTTPException(409, str(e))

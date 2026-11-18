@@ -27,6 +27,7 @@ from ..research.backtest import PolicyParams, _irx_rate
 from ..research.protocol import holdout_window, load_universe
 from ..sim import CostProfile, ExecutionPolicy
 from ..strategies import all_specs, decide
+from ..strategies.runner import LIVE, persist_decision
 from .calibration import CALIBRATION_VERSION, calibrate
 from .labels import BASE, LABEL_VERSION, STRIDE, build_labels
 
@@ -115,6 +116,8 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
             continue
         view = series.view_at(asof)
         decisions = {spec.key: decide(view, spec) for spec in all_specs() if len(view) >= spec.min_bars}
+        for dec in decisions.values():  # immutable live record; the nightly parity check replays it
+            persist_decision(db, dec, source=LIVE, now=now)
         for side in ("long", "short"):
             if side == "short" and not shorts_ok:
                 rows.append(empty_row(sym, side, f"cost profile {cost.key} has no borrow rate, so shorts are disabled"))
@@ -134,7 +137,7 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
             options = []
             for sg in signals:
                 bk = sig_buckets.get((sg["strategy"], side))
-                if bk and bk["status"] == "calibrated":
+                if bk and bk["status"] == "calibrated" and sg["status"] not in ("paused", "retired"):
                     options.append(("A" if sg["status"] == "active" else "B", bk, f"signal:{sg['strategy']}"))
             if not options and base and base["status"] == "base_rate":
                 options.append(("C", base, "base_rate"))
@@ -153,13 +156,7 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
                 "base_rate": _brief(base),
                 "estimate": _brief(est),
             }
-            if est and est.get("mean_excess") is not None:
-                row["exp_excess_6m"] = est["mean_excess"]
-                row["exp_return_6m"] = est["mean_excess"] + cash_6m
-                row["p10_return_6m"] = est["p10_excess"] + cash_6m
-                row["p90_return_6m"] = est["p90_excess"] + cash_6m
-                held = est.get("mean_sessions_held")
-                row["exp_return_per_session"] = (est["mean_excess"] / held) if held else None
+            _set_estimate(row, est, cash_6m)
             rows.append(row)
     rows.sort(key=lambda r: (GRADE_ORDER[r["grade"]] == 3, -(r.get("exp_return_6m") or -1e9), r["symbol"], r["side"]))
     doc = {"created_at": now, "version": OUTLOOK_VERSION, "asof": asof.isoformat(), "calibration_id": cal["_id"],
@@ -170,6 +167,38 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
            # session's outlook once any of them arrives.
            "missing_inputs": sorted({r["symbol"] for r in rows if r.get("last_close") is None})}
     db.outlook_runs.insert_one(doc)
+    return doc
+
+
+EST_FIELDS = ("exp_excess_6m", "exp_return_6m", "p10_return_6m", "p90_return_6m", "exp_return_per_session")
+
+
+def _set_estimate(row: dict, est: dict | None, cash_6m: float) -> None:
+    for k in EST_FIELDS:
+        row.pop(k, None)
+    if est and est.get("mean_excess") is not None:
+        row["exp_excess_6m"] = est["mean_excess"]
+        row["exp_return_6m"] = est["mean_excess"] + cash_6m
+        row["p10_return_6m"] = est["p10_excess"] + cash_6m
+        row["p90_return_6m"] = est["p90_excess"] + cash_6m
+        held = est.get("mean_sessions_held")
+        row["exp_return_per_session"] = (est["mean_excess"] / held) if held else None
+
+
+def apply_current_status(doc: dict, statuses: dict[str, str]) -> dict:
+    """Rows sourced from a version that is now paused or retired fall back to the base rate (or
+    insufficient) — a paused version supplies no estimates or entries even from an earlier build."""
+    for r in doc["rows"]:
+        src = r.get("source", "")
+        if not src.startswith("signal:") or statuses.get(src.removeprefix("signal:")) not in ("paused", "retired"):
+            continue
+        base = r.get("base_rate")
+        if base and base.get("status") == "base_rate" and base.get("mean_excess") is not None:
+            r.update(grade="C", source="base_rate", estimate=base, validated=False)
+        else:
+            r.update(grade="insufficient", source="none", estimate=None, validated=False)
+        r["reasons"] = r.get("reasons", []) + [f"{src.removeprefix('signal:')} is paused; its estimate is withheld"]
+        _set_estimate(r, r["estimate"], doc["cash_return_6m"])
     return doc
 
 
@@ -187,6 +216,7 @@ def latest_outlook(db: Database) -> dict | None:
     if doc:
         doc["run_id"] = str(doc.pop("_id"))   # immutable id of exactly this outlook build
         doc["calibration_id"] = str(doc["calibration_id"])
+        apply_current_status(doc, {v["_id"]: v.get("status") for v in db.strategy_versions.find({}, {"status": 1})})
     return doc
 
 

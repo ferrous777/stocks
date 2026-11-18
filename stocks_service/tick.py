@@ -12,6 +12,8 @@
    the strategy's status — and a pre-open ticket notification per account when active strategies
    produce tickets.
 
+   Then the lifecycle checks: replay every new live decision (parity; a mismatch pauses the
+   version), score resolved forecasts against what happened, and run the monitors.
 4. Paper accounts: process completed sessions through the shared simulator, then the baseline
    policy places its orders for the next session.
 
@@ -98,6 +100,13 @@ def _alerts(db: Database, now: dt.datetime) -> dict:
             "errors": [c for c in created if c.get("type") == "ticket_error"]}
 
 
+def _lifecycle(db: Database, now: dt.datetime) -> dict:
+    """Parity replay of live decisions, forecast-vs-actual scoring, monitors (may pause versions)."""
+    from . import lifecycle
+    return {"parity": lifecycle.run_parity(db, now), "forecasts": lifecycle.track_forecasts(db, now),
+            "monitors": lifecycle.run_monitors(db, now)}
+
+
 def _paper(db: Database, now: dt.datetime) -> list[dict]:
     """Advance every paper account through completed sessions, then let baseline accounts place orders."""
     from .paper import baseline, broker
@@ -121,10 +130,13 @@ def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: 
         log(step="ingest_1d", **{k: v for k, v in ing.items() if k != "failures"}, failed=len(ing["failures"]))
         out = _refresh_outlook(db, now)
         log(step="outlook", **out)
+        life = _lifecycle(db, now)
+        log(step="lifecycle", parity=life["parity"], forecasts=life["forecasts"],
+            breaches=[m["source"] for m in life["monitors"] if m["status"] == "breach"])
         alerts = _alerts(db, now)
         log(step="alerts", **alerts)
         paper = _paper(db, now)
         log(step="paper", accounts=len(paper))
-        return {"ingest_1d": ing, "outlook": out, "alerts": alerts, "paper": paper}
+        return {"ingest_1d": ing, "outlook": out, "lifecycle": life, "alerts": alerts, "paper": paper}
 
     return jobs.start_job(db, "tick", work, run_in_thread=run_in_thread)

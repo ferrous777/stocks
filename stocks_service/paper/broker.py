@@ -166,6 +166,11 @@ def place_order(db: Database, account_id: str, *, symbol: str, side: str, qty: i
         row = next((r for r in o["rows"] if r["symbol"] == symbol and r["side"] == side), None)
         if row is None or not row.get("plan"):
             raise AccountError(f"{symbol} {side} has no plan in the {o['asof']} outlook")
+        if row["source"].startswith("signal:"):  # latest_outlook already demotes paused sources; re-check here
+            v = db.strategy_versions.find_one({"_id": row["source"].removeprefix("signal:")}, {"status": 1},
+                                              session=session)
+            if v and v.get("status") in ("paused", "retired"):
+                raise AccountError(f"{row['source']} is {v['status']}; it supplies no new entries")
         deadline = dt.datetime.fromisoformat(row["placeable_until"])
         if now >= deadline:
             raise AccountError(f"placement window for the {o['asof']} outlook closed at {deadline.isoformat()}")
