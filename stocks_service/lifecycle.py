@@ -10,9 +10,10 @@
   forecasts: the realized mean must stay above the predicted mean's lower 95% band, and the Brier
   score of the win forecast must not exceed that of the pooled base rate. A breach pauses an
   ``active``/``candidate`` version (research versions are flagged only).
-* **Pause blocks new entries only**: the version's outlook rows lose their estimate, tickets are
-  withheld, open paper *entry* orders from it are cancelled; filled positions keep their exits and
-  protective alerts.
+* **Pause blocks new entries only**: the version's outlook rows lose their estimate (also in an
+  outlook built before the pause), tickets and new paper orders from it are refused, open paper
+  *entry* orders whose session has not opened are cancelled; filled positions keep their exits and
+  protective alerts. Parity violations go through the same pause.
 * **Transitions** are explicit and recorded in ``lifecycle_events``:
   research -> candidate (passed the development gate), candidate -> active (passed the holdout and a
   live shadow period without breaches), active|candidate -> paused, paused -> candidate (must earn
@@ -39,7 +40,7 @@ WINDOW = 30
 SHADOW_MIN = 30
 POLICY = ExecutionPolicy()
 TRANSITIONS = {
-    ("research", "candidate"), ("candidate", "active"), ("active", "paused"), ("candidate", "paused"),
+    ("research", "candidate"), ("research", "paused"), ("candidate", "active"), ("active", "paused"), ("candidate", "paused"),
     ("paused", "candidate"), ("research", "retired"), ("candidate", "retired"), ("active", "retired"),
     ("paused", "retired"),
 }
@@ -55,7 +56,12 @@ def run_parity(db: Database, now: dt.datetime, limit: int = 2000) -> dict:
     """Replay unchecked live decisions; mismatches pause their version (inside ``check_parity``)."""
     checked = violations = 0
     for s in db.signals.find({"source": LIVE, "parity_checked_at": {"$exists": False}}).limit(limit):
-        ok = check_parity(db, s["strategy"], s["symbol"], s["asof"].date(), now=now)
+        ok = check_parity(db, s["strategy"], s["symbol"], s["asof"].date(), now=now, pause=False)
+        if not ok:
+            v = db.strategy_versions.find_one({"_id": s["strategy"]})
+            if v and v.get("status") not in ("paused", "retired"):
+                pause(db, s["strategy"], reason="parity_violation", now=now, by="parity",
+                      evidence={"symbol": s["symbol"], "asof": s["asof"].date().isoformat()})
         db.signals.update_one({"_id": s["_id"]}, {"$set": {"parity_checked_at": now, "parity_ok": ok}})
         checked += 1
         violations += 0 if ok else 1
@@ -83,7 +89,7 @@ def track_forecasts(db: Database, now: dt.datetime) -> dict:
                 continue
             s = cache.get(row["symbol"]) or cache.setdefault(row["symbol"], SymbolSeries.from_db(db, row["symbol"]))
             p = row["plan"]
-            plan = TradePlan(row["side"], d, round(p["entry_limit"], 2), round(p["stop"], 2), round(p["target"], 2))
+            plan = TradePlan(row["side"], d, p["entry_limit"], p["stop"], p["target"])  # as the labels do
             bars = s.bars_after(d, POLICY.timeout_sessions + 3)
             if not bars:
                 pending += 1
@@ -169,14 +175,22 @@ def pause(db: Database, key: str, *, reason: str, now: dt.datetime, by: str, evi
     v = db.strategy_versions.find_one({"_id": key})
     if v is None:
         raise LifecycleError(f"unknown strategy version {key}")
-    if v.get("status") not in ("active", "candidate"):
-        raise LifecycleError(f"{key} is {v.get('status')}; only active or candidate versions can be paused")
-    db.strategy_versions.update_one({"_id": key}, {"$set": {"status": "paused", "paused_reason": reason,
-                                                            "paused_at": now}})
-    cancelled = db.orders.update_many({"status": "open", "source": f"signal:{key}"},
-                                      {"$set": {"status": "cancelled", "cancelled_at": now,
-                                                "cancel_reason": f"strategy {key} paused"}}).modified_count
-    _event(db, key, v["status"], "paused", reason, now, by, {**(evidence or {}), "cancelled_entry_orders": cancelled})
+    frm = v.get("status", "research")
+    if frm not in ("active", "candidate", "research"):
+        raise LifecycleError(f"{key} is {frm}; only research, candidate or active versions can be paused")
+    res = db.strategy_versions.update_one({"_id": key, "status": v.get("status")},
+                                          {"$set": {"status": "paused", "paused_reason": reason, "paused_at": now,
+                                                    "paused_from": frm}})
+    if res.matched_count == 0:
+        raise LifecycleError(f"{key} changed status concurrently; retry")
+    # Only orders whose session has not opened: earlier ones are settled by the broker as usual.
+    cancelled = 0
+    for o in db.orders.find({"status": "open", "source": f"signal:{key}"}, {"eligible_session": 1}):
+        if now < sessions.session_bounds(o["eligible_session"].date())[0]:
+            cancelled += db.orders.update_one({"_id": o["_id"], "status": "open"},
+                                              {"$set": {"status": "cancelled", "cancelled_at": now,
+                                                        "cancel_reason": f"strategy {key} paused"}}).modified_count
+    _event(db, key, frm, "paused", reason, now, by, {**(evidence or {}), "cancelled_entry_orders": cancelled})
     return {"strategy": key, "status": "paused", "cancelled_entry_orders": cancelled}
 
 
@@ -233,6 +247,7 @@ def transition(db: Database, key: str, to: str, *, reason: str, now: dt.datetime
     update = {"$set": {"status": to, f"{to}_at": now}}
     if to != "retired":
         update["$unset"] = {"paused_reason": ""}
-    db.strategy_versions.update_one({"_id": key}, update)
+    if db.strategy_versions.update_one({"_id": key, "status": v.get("status")}, update).matched_count == 0:
+        raise LifecycleError(f"{key} changed status concurrently; retry")
     _event(db, key, frm, to, reason, now, by, evidence)
     return {"strategy": key, "from": frm, "to": to, "evidence": evidence}

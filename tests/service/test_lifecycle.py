@@ -31,7 +31,10 @@ def test_outlook_decisions_are_replayed_and_a_mismatch_pauses_the_version(db, wo
     db.signals.update_one({"_id": s["_id"]}, {"$set": {"strength": s["strength"] + 0.5},
                                               "$unset": {"parity_checked_at": ""}})
     assert lifecycle.run_parity(db, NOW) == {"checked": 1, "violations": 1}
-    assert db.strategy_versions.find_one({"_id": s["strategy"]})["status"] == "paused"
+    v = db.strategy_versions.find_one({"_id": s["strategy"]})
+    assert v["status"] == "paused" and v["paused_from"] == "research"
+    ev = db.lifecycle_events.find_one({"strategy": s["strategy"], "to": "paused", "by": "parity"})
+    assert ev and ev["evidence"]["symbol"] == s["symbol"]
     assert db.parity_violations.count_documents({"strategy": s["strategy"]}) == 1
 
 
@@ -50,9 +53,8 @@ def test_forecasts_are_scored_with_the_label_rules_once_resolved(db, world):  # 
         s = SymbolSeries.from_db(db, f["symbol"])
         d = dt.date.fromisoformat(f["asof"])
         p = row["plan"]
-        oc = simulate_trade(TradePlan(f["side"], d, round(p["entry_limit"], 2), round(p["stop"], 2),
-                                      round(p["target"], 2)), s.bars_after(d, 129), sessions.next_session(d),
-                            ExecutionPolicy())
+        oc = simulate_trade(TradePlan(f["side"], d, p["entry_limit"], p["stop"], p["target"]),
+                            s.bars_after(d, 129), sessions.next_session(d), ExecutionPolicy())
         assert f["result"] == oc.result
         if oc.result != "not_filled":
             nt = net_trade(oc, f["side"], 10_000.0 / oc.fill_price, cost, s.dividends_on_basis(d))
@@ -111,10 +113,20 @@ def test_pause_blocks_new_entries_only(db, world, monkeypatch):  # noqa: F811
                  and r["symbol"] != row["symbol"] and r.get("plan"))
     broker.place_order(db, "p", symbol=other["symbol"], side=other["side"], qty=1, idempotency_key="base-order",
                        decided_by={}, now=EVENING)
-    res = lifecycle.transition(db, key, "paused", reason="manual review", now=NOW)
+    res = lifecycle.transition(db, key, "paused", reason="manual review", now=EVENING)  # before the open
     assert res["cancelled_entry_orders"] == 1
     assert db.orders.find_one({"idempotency_key": "signal-order"})["status"] == "cancelled"
     assert db.orders.find_one({"idempotency_key": "base-order"})["status"] == "open"   # other sources untouched
+    served = build.latest_outlook(db)                       # built before the pause: demoted when served
+    r = next(x for x in served["rows"] if x["symbol"] == row["symbol"] and x["side"] == row["side"])
+    assert r["source"] != f"signal:{key}" and "paused" in r["reasons"][-1]
+    # A new order on that row is now a base-rate (or refused) order: never one sourced from the paused version.
+    try:
+        after = broker.place_order(db, "p", symbol=row["symbol"], side=row["side"], qty=1,
+                                   idempotency_key="after-pause", decided_by={}, now=EVENING)["order"]
+        assert after["source"] == "base_rate"
+    except broker.AccountError:
+        pass
     o = build.build_outlook(db, now=EVENING + dt.timedelta(seconds=2))
     assert not any(r["source"] == f"signal:{key}" for r in o["rows"])                   # no new estimates from it
 
@@ -131,3 +143,25 @@ def test_monitor_breach_pauses_an_active_version(db, world, monkeypatch):  # noq
     v = db.strategy_versions.find_one({"_id": key})
     assert v["status"] == "paused" and v["paused_reason"] == "test breach"
     assert db.lifecycle_events.find_one({"strategy": key, "to": "paused", "by": "monitor"})
+
+
+def test_pause_spares_orders_whose_session_opened_and_rejects_stale_transitions(db, world, monkeypatch):  # noqa: F811
+    row, key = _signal_world(db, world, monkeypatch)
+    db.strategy_versions.update_one({"_id": key}, {"$set": {"status": "active"}})
+    broker.create_paper_account(db, account_id="p", name="P", starting_cash=100_000.0, risk_profile="default@1",
+                                now=EVENING)
+    broker.place_order(db, "p", symbol=row["symbol"], side=row["side"], qty=1, idempotency_key="signal-order",
+                       decided_by={}, now=EVENING)
+    during = dt.datetime(2025, 4, 1, 15, tzinfo=UTC)        # the order's session is open: broker settles it
+    assert lifecycle.pause(db, key, reason="review", now=during, by="api")["cancelled_entry_orders"] == 0
+    assert db.orders.find_one({"idempotency_key": "signal-order"})["status"] == "open"
+    # A transition based on a stale read cannot resurrect a version.
+    real_find = db.strategy_versions.find_one
+    monkeypatch.setattr(type(db.strategy_versions), "find_one", lambda self, *a, **k: (
+        {**real_find(*a, **k), "status": "candidate"} if a and a[0] == {"_id": key} else real_find(*a, **k)))
+    with pytest.raises(lifecycle.LifecycleError, match="concurrently"):
+        lifecycle.transition(db, key, "retired", reason="stale", now=NOW)
+
+
+def test_research_versions_can_be_paused_manually(db, world):  # noqa: F811
+    assert lifecycle.transition(db, "momentum@1", "paused", reason="operator review", now=NOW)["status"] == "paused"

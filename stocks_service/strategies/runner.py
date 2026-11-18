@@ -98,8 +98,10 @@ class ParityViolation(RuntimeError):
     pass
 
 
-def check_parity(db: Database, strategy_key: str, symbol: str, asof: dt.date, *, now: dt.datetime) -> bool:
-    """Recompute the stored *live* decision; on mismatch record a violation and pause the version."""
+def check_parity(db: Database, strategy_key: str, symbol: str, asof: dt.date, *, now: dt.datetime,
+                 pause: bool = True) -> bool:
+    """Recompute the stored *live* decision; on mismatch record a violation and (unless the caller
+    handles it, e.g. ``lifecycle.run_parity``) pause the version."""
     stored = db.signals.find_one({"strategy": strategy_key, "symbol": symbol, "asof": _d(asof), "source": LIVE})
     if stored is None:
         raise LookupError(f"no stored live decision for {strategy_key} {symbol} {asof}")
@@ -110,6 +112,8 @@ def check_parity(db: Database, strategy_key: str, symbol: str, asof: dt.date, *,
         return True
     db.parity_violations.insert_one({"strategy": strategy_key, "symbol": symbol, "asof": _d(asof), "diffs": diffs,
                                      "detected_at": now})
+    if not pause:
+        return False
     db.strategy_versions.update_one(
         {"_id": strategy_key},
         {"$set": {"status": "paused", "paused_reason": "parity_violation", "paused_at": now}},
