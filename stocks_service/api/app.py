@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from pymongo.database import Database
 
@@ -14,7 +15,7 @@ from ..db import connect, get_database, require_replica_set
 from ..db_indexes import ensure_indexes
 from ..settings import Settings, get_settings
 from ..yahoo import ChartFetcher, YahooChartClient
-from ..web.routes import LoginRequired
+from ..web.routes import STATIC_DIR, LoginRequired
 from ..web.routes import router as web_router
 from .routes import router
 
@@ -78,6 +79,8 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
 
     app.include_router(router)
     app.include_router(web_router)
+    # Stylesheet etc. for the website; public, contains no data.
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     # MCP for the external AI agent: bearer = an API key; paper accounts only.
     app.mount("/mcp", _Auth(mcp.streamable_http_app(), keys))
     app.add_middleware(McpPath)

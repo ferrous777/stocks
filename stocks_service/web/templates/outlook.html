@@ -1,43 +1,45 @@
 {% extends "base.html" %}
+{% import "components.html" as ui %}
 {% block title %}Outlook · Stocks{% endblock %}
 {% block content %}
-<h1>Six-month outlook</h1>
-<p class="muted">Every watched symbol, long and short: the ATR plan for the next session, and what that plan has
-historically returned over a six-month (126-session) horizon after costs, sorted by expected return.</p>
+{% call ui.page_header("Six-month outlook") %}Every watched symbol, long and short: the ATR plan for the next session, and what that plan has
+historically returned over a six-month (126-session) horizon after costs, sorted by expected return.{% endcall %}
 
 {% if not outlook %}
-<div class="notice"><strong>No outlook yet.</strong> It needs the research holdout sealed, a <code>market</code> cost
-profile (<code>POST /api/v1/cost-profiles</code>) and a calibration run (<code>POST /api/v1/outlook/run</code>).</div>
+{% call ui.alert("warning", "No outlook yet.") %} It needs the research holdout sealed, a <code>market</code> cost
+profile (<code>POST /api/v1/cost-profiles</code>) and a calibration run (<code>POST /api/v1/outlook/run</code>).{% endcall %}
 {% else %}
 {% set o = outlook %}
-<div class="panel" style="margin:14px 0">
-  <strong>As of the {{ o.asof }} close</strong> · orders for the next session, placeable until
-  {{ o.placeable_until[11:16] if o.placeable_until else '—' }} UTC ·
-  costs {{ o.cost_profile }} ({{ o.cost.half_spread_bps }} bps half-spread + {{ o.cost.slippage_bps }} bps slippage per side) ·
-  T-bills over the horizon: {{ '%.2f%%'|format(o.cash_return_6m*100) }}
-  <p class="small muted" style="margin:6px 0 0">
-    <span class="chip">A</span> calibrated signal of a validated (active) strategy ·
-    <span class="chip">B</span> calibrated signal, strategy not validated ·
-    <span class="chip">C</span> no signal with demonstrated skill — this symbol's own history for the same plan (base rate, not a forecast) ·
-    insufficient — reasons shown. No strategy is validated yet, so nothing here is a recommendation to trade.
-  </p>
-  <p class="small" style="margin:6px 0 0">Show:
-    <a href="/outlook" class="{{ 'on' if not side }}">both</a> ·
-    <a href="/outlook?side=long">long</a> · <a href="/outlook?side=short">short</a></p>
+<div class="stats">
+  {{ ui.stat("As of close", o.asof) }}
+  {{ ui.stat("Placeable until", (o.placeable_until[11:16] ~ ' UTC') if o.placeable_until else '—', hint="orders for the next session") }}
+  {{ ui.stat("T-bills over the horizon", '%.2f%%'|format(o.cash_return_6m*100)) }}
+  {{ ui.stat("Costs", o.cost_profile, hint=o.cost.half_spread_bps ~ " bps half-spread + " ~ o.cost.slippage_bps ~ " bps slippage per side") }}
 </div>
 
-<div class="panel scroll"><table>
-  <thead><tr>
-    <th>Symbol</th><th>Side</th><th>Grade</th><th class="num">Exp. 6-mo return</th><th class="num">vs T-bills</th>
-    <th class="num">10th / 90th pct</th><th class="num">P(win)</th><th class="num">Target / stop / timeout / no fill</th>
-    <th class="num">Entry limit</th><th class="num">Stop</th><th class="num">Target</th><th class="num">n</th><th>Umpire</th><th>Signals today</th>
-  </tr></thead>
-  <tbody>
+{% call ui.card() %}
+  <div class="small muted">
+    {{ ui.badge("A", "positive") }} calibrated signal of a validated (active) strategy ·
+    {{ ui.badge("B", "positive") }} calibrated signal, strategy not validated ·
+    {{ ui.badge("C") }} no signal with demonstrated skill — this symbol's own history for the same plan (base rate, not a forecast) ·
+    insufficient — reasons shown. No strategy is validated yet, so nothing here is a recommendation to trade.
+  </div>
+{% endcall %}
+
+<div class="cluster my-3">
+  <span class="small muted">Show</span>
+  {{ ui.segmented([("/outlook", "Both", not side), ("/outlook?side=long", "Long", side == "long"),
+                   ("/outlook?side=short", "Short", side == "short")], label="Side") }}
+</div>
+
+{% call ui.table(["Symbol", "Side", "Grade", ("Exp. 6-mo return", "num"), ("vs T-bills", "num"), ("10th / 90th pct", "num"),
+                  ("P(win)", "num"), ("Target / stop / timeout / no fill", "num"), ("Entry limit", "num"), ("Stop", "num"),
+                  ("Target", "num"), ("n", "num"), "Umpire", "Signals today"], pin_first=True) %}
   {% for r in o.rows %}{% set e = r.estimate %}
   <tr>
     <td><a href="/symbol/{{ r.symbol }}">{{ r.symbol }}</a></td>
-    <td>{{ r.side }}</td>
-    <td><span class="chip {{ 'pos' if r.grade in ('A','B') else '' }}" title="{{ r.source }}{% for x in r.reasons %}&#10;{{ x }}{% endfor %}">{{ r.grade }}</span></td>
+    <td class="{{ r.side }}">{{ r.side }}</td>
+    <td>{{ ui.badge(r.grade, 'positive' if r.grade in ('A','B') else None, r.source ~ (('\n' ~ r.reasons|join('\n')) if r.reasons else '')) }}</td>
     {% if r.exp_return_6m is defined and r.exp_return_6m is not none %}
     <td class="num {{ 'pos' if r.exp_return_6m > o.cash_return_6m else 'neg' }}">{{ '%+.1f%%'|format(r.exp_return_6m*100) }}</td>
     <td class="num">{{ '%+.1f%%'|format(r.exp_excess_6m*100) }}</td>
@@ -53,16 +55,16 @@ profile (<code>POST /api/v1/cost-profiles</code>) and a calibration run (<code>P
     {% else %}<td colspan="3" class="muted">—</td>{% endif %}
     <td class="num small muted">{{ e.n if e else '—' }}</td>
     <td class="small">{% set u = r.umpires %}{% if u and u.status == 'annotated' %}
-      <span class="chip {{ 'neg' if u.knn == 'veto' and u.side_verdict == 'useful' else '' }}"
-        title="{{ '%.0f'|format(u.loser_share*100) }}% of the 50 most similar past setups were losers, {{ '%.0f'|format(u.winner_share*100) }}% winners. Walk-forward verdict for {{ r.side }}s: {{ u.side_verdict }}.">{{ u.knn }}</span>{% if u.loss_cluster %} <span class="chip neg" title="feature region where losers dominated">loss cluster</span>{% endif %}
+      {{ ui.badge(u.knn, 'negative' if u.knn == 'veto' and u.side_verdict == 'useful' else None,
+                  '%.0f'|format(u.loser_share*100) ~ "% of the 50 most similar past setups were losers, " ~ '%.0f'|format(u.winner_share*100) ~ "% winners. Walk-forward verdict for " ~ r.side ~ "s: " ~ u.side_verdict ~ ".") }}
+      {%- if u.loss_cluster %} {{ ui.badge("loss cluster", "negative", "feature region where losers dominated") }}{% endif %}
       {% if u.side_verdict != 'useful' %}<span class="muted">({{ u.side_verdict|replace('_', ' ') }})</span>{% endif %}
     {% else %}<span class="muted">{{ u.status if u else '—' }}</span>{% endif %}</td>
     <td class="small">{% for s in r.signals %}{{ s.strategy }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
   </tr>
   {% endfor %}
-  </tbody>
-</table></div>
-<p class="muted small">Returns are per position, after the cost profile's spread, slippage, commission and short borrow,
+{% endcall %}
+<p class="muted small prose">Returns are per position, after the cost profile's spread, slippage, commission and short borrow,
 with dividends; capital earns T-bills outside the trade. The plan is a DAY limit order for the next session only
 (fills only if price trades through the limit), with the stop and target placed after the fill and a 126-session timeout.
 Umpires annotate, never hide: the vote compares today's setup with the 50 most similar past setups (a veto

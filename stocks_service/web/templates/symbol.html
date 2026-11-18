@@ -1,49 +1,67 @@
 {% extends "base.html" %}
+{% import "components.html" as ui %}
 {% block title %}{{ d.symbol }} · Stocks{% endblock %}
 {% block content %}
-<p class="small"><a href="/">← Dashboard</a></p>
-<h1>{{ d.symbol }}</h1>
-<p class="muted">{{ d.meta.asset_class }}{% if d.meta.sector %} · {{ d.meta.sector }}{% endif %}
-  {% for g in d.meta.groups %} <span class="chip">{{ g }}</span>{% endfor %}
-  {% if d.meta.quarantine %} · <span class="neg">quarantined: {{ d.meta.quarantine.reason }}</span>{% endif %}</p>
+{% call ui.page_header(d.symbol, back=("/", "Dashboard")) %}{{ d.meta.asset_class }}{% if d.meta.sector %} · {{ d.meta.sector }}{% endif %}
+  {% for g in d.meta.groups %} {{ ui.badge(g) }}{% endfor %}
+  {% if d.meta.quarantine %} · <span class="neg">quarantined: {{ d.meta.quarantine.reason }}</span>{% endif %}{% endcall %}
 
 {% if not d.has_data %}
-<div class="panel"><strong>No price history loaded for {{ d.symbol }} yet.</strong></div>
+{% call ui.card() %}<strong>No price history loaded for {{ d.symbol }} yet.</strong>{% endcall %}
 {% else %}
-<div class="panel">
-  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-    <div><span style="font-size:24px;font-weight:650">{{ '%.2f'|format(d.last_close) }}</span>
+{% call ui.card() %}
+  <div class="cluster" style="justify-content:space-between">
+    <div><span class="big">{{ '%.2f'|format(d.last_close) }}</span>
       <span class="muted small"> close {{ d.asof }}</span></div>
-    {% if d.chart %}<div class="muted small">{{ d.chart.first }} – {{ d.chart.last }} · {{ d.chart.n }} sessions · {{ d.basis_note }}</div>{% endif %}
+    <div class="muted small">{{ d.basis_note }}</div>
   </div>
   {% if d.chart %}
-  <svg viewBox="0 0 {{ d.chart.width }} {{ d.chart.height }}" width="100%" role="img" aria-label="{{ d.symbol }} closing prices">
-    <polyline class="line" points="{{ d.chart.points }}"/>
-  </svg>
-  <div class="muted small" style="display:flex;justify-content:space-between"><span>low {{ '%.2f'|format(d.chart.lo) }}</span><span>high {{ '%.2f'|format(d.chart.hi) }}</span></div>
+  <div class="price-chart" data-chart-src="price-history">
+    <div class="price-chart__controls" hidden></div>
+    <div class="price-chart__plot">
+      <svg viewBox="0 0 {{ d.chart.width }} {{ d.chart.height }}" width="100%" preserveAspectRatio="none" style="height:clamp(160px,30vw,320px)" role="img" aria-label="{{ d.symbol }} closing prices">
+        <polyline class="sparkline" vector-effect="non-scaling-stroke" points="{{ d.chart.points }}"/>
+      </svg>
+    </div>
+    <p class="price-chart__caption small muted">Last {{ d.chart.n }} sessions · low {{ '%.2f'|format(d.chart.lo) }} · high {{ '%.2f'|format(d.chart.hi) }}</p>
+  </div>
+  <script type="application/json" id="price-history">{{ d.history|tojson }}</script>
   {% endif %}
-</div>
+{% endcall %}
+
+{% if d.years %}
+<h2>Calendar years</h2>
+{% call ui.table(["Year", ("Return", "num"), ("From", "num"), ("Close", "num"), ("High", "num"), ("Low", "num"), ("Sessions", "num")], compact=True, pin_first=True) %}
+  {% for y in d.years %}
+  <tr><td>{{ y.year }}{% if y.to_date %} <span class="muted small">to date</span>{% elif y.partial %} <span class="muted small">from {{ y.first }}</span>{% endif %}</td>
+    <td class="num {{ 'pos' if y['return'] > 0 else 'neg' if y['return'] < 0 }}">{{ '%+.1f%%'|format(y['return']*100) }}</td>
+    <td class="num">{{ '%.2f'|format(y.base) }}</td><td class="num">{{ '%.2f'|format(y.close) }}</td>
+    <td class="num">{{ '%.2f'|format(y.high) }}</td><td class="num">{{ '%.2f'|format(y.low) }}</td><td class="num muted">{{ y.sessions }}</td></tr>
+  {% endfor %}
+{% endcall %}
+<p class="muted small prose">Split-adjusted closes. Each year's return runs from the previous year's last close (the first year on
+file starts from its first close), the same base the "Compare years" chart uses.</p>
+{% endif %}
 
 <h2>Strategy decisions at the {{ d.asof }} close</h2>
-<div class="notice small">Research output from unvalidated strategies — not a recommendation.</div>
-<div class="panel scroll"><table>
-  <thead><tr><th>Strategy</th><th>Decision</th><th class="num">Strength</th><th>Why</th></tr></thead>
-  <tbody>{% for x in d.decisions %}
+{% call ui.alert("warning") %}<span class="small">Research output from unvalidated strategies — not a recommendation.</span>{% endcall %}
+{% call ui.table(["Strategy", "Decision", ("Strength", "num"), "Why"]) %}
+  {% for x in d.decisions %}
     <tr><td>{{ x.strategy }}</td><td class="{{ x.direction }}">{{ x.direction }}</td>
       <td class="num">{{ '%.2f'|format(x.strength) }}</td><td class="muted small">{{ x.reasons|join(', ') }}</td></tr>
-  {% endfor %}</tbody>
-</table></div>
+  {% endfor %}
+{% endcall %}
 
 <h2>ATR levels and time estimates</h2>
-<p class="muted small">Entry at the last close, stop 2×ATR(14), target 4×ATR(14) — initial parameters pending validation.
+<p class="muted small prose">Entry at the last close, stop 2×ATR(14), target 4×ATR(14) — initial parameters pending validation.
 Probabilities come from resampling this symbol's own past returns (no drift assumed); they are not calibrated yet.</p>
 <div class="grid">
 {% for side, s in d.sides.items() %}
-  <div class="panel">
-    <strong class="{{ side }}">{{ side|capitalize }}</strong>
+  {% call ui.card() %}
+    <div class="card__title {{ side }}">{{ side|capitalize }}</div>
     {% if s.error %}<p class="muted small">{{ s.error }}</p>{% else %}
     {% set lv = s.levels %}{% set e = s.estimate %}
-    <table class="small" style="margin-top:6px">
+    <table class="table table--compact small">
       <tr><td>Entry limit</td><td class="num">{{ '%.2f'|format(lv.entry_limit) }}</td></tr>
       <tr><td>Stop</td><td class="num">{{ '%.2f'|format(lv.stop) }} <span class="muted">({{ '%.1f'|format(lv.risk_pct*100) }}%)</span></td></tr>
       <tr><td>Target</td><td class="num">{{ '%.2f'|format(lv.target) }} <span class="muted">({{ '%.1f'|format(lv.reward_pct*100) }}%)</span></td></tr>
@@ -54,19 +72,19 @@ Probabilities come from resampling this symbol's own past returns (no drift assu
       <tr><td>Neither</td><td class="num">{{ '%.0f'|format(e.p_neither*100) }}%</td></tr>
       {% endif %}
     </table>{% endif %}
-  </div>
+  {% endcall %}
 {% endfor %}
 </div>
 {% endif %}
 
 <h2>Corporate actions</h2>
 {% if d.corporate_actions %}
-<div class="panel scroll"><table>
-  <thead><tr><th>Ex-date</th><th>Type</th><th class="num">Detail</th></tr></thead>
-  <tbody>{% for c in d.corporate_actions %}
+{% call ui.table(["Ex-date", "Type", ("Detail", "num")]) %}
+  {% for c in d.corporate_actions %}
     <tr><td>{{ c.ex_date.date() }}</td><td>{{ c.type }}</td>
       <td class="num">{% if c.type == 'split' %}{{ '%g'|format(c.ratio) }}:1{% else %}{{ '%.4f'|format(c.amount_raw) }} / share{% endif %}</td></tr>
-  {% endfor %}</tbody>
-</table></div>
+  {% endfor %}
+{% endcall %}
 {% else %}<p class="muted">None on file.</p>{% endif %}
 {% endblock %}
+{% block scripts %}<script src="{{ asset('chart.js') }}" defer></script>{% endblock %}

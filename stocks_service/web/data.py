@@ -82,6 +82,31 @@ def _chart_points(view, width: int = 760, height: int = 220, pad: int = 8) -> di
             "first": sessions[0], "last": sessions[-1], "n": len(closes)}
 
 
+def price_history(view) -> dict:
+    """Every daily close on the view's split-adjusted basis, for the interactive chart."""
+    return {"dates": [d.isoformat() for d in view.sessions], "closes": [float(f"{c:.6g}") for c in view.c]}
+
+
+def yearly_summary(view) -> list[dict]:
+    """Calendar-year rows, newest first: the return is measured from the previous year's last close (as
+    the year overlay chart is), or from the first close on file for the first year (``partial``)."""
+    rows: list[dict] = []
+    prev_close = None
+    by_year: dict[int, list[tuple[dt.date, float]]] = {}
+    for d, c in zip(view.sessions, view.c):
+        by_year.setdefault(d.year, []).append((d, float(c)))
+    for year in sorted(by_year):
+        pts = by_year[year]
+        base = prev_close if prev_close is not None else pts[0][1]
+        closes = [c for _, c in pts]
+        rows.append({"year": year, "sessions": len(pts), "first": pts[0][0], "last": pts[-1][0],
+                     "base": base, "close": closes[-1], "return": closes[-1] / base - 1,
+                     "high": max(closes), "low": min(closes),
+                     "partial": prev_close is None, "to_date": year == view.asof.year})
+        prev_close = closes[-1]
+    return rows[::-1]
+
+
 def symbol_detail(db: Database, symbol: str) -> dict | None:
     sym = db.symbols.find_one({"_id": symbol})
     if sym is None:
@@ -93,10 +118,13 @@ def symbol_detail(db: Database, symbol: str) -> dict | None:
         return out
     asof = last[0]["session"].date()
     view = load_view(db, symbol, asof)
+    full = load_view(db, symbol, asof, lookback=0)   # whole history for the chart and yearly table
     out.update({
         "asof": asof,
         "last_close": float(view.c[-1]),
         "chart": _chart_points(view),
+        "history": price_history(full),
+        "years": yearly_summary(full),
         "basis_note": "Split-adjusted as of " + asof.isoformat(),
         "decisions": [decide(view, spec) for spec in all_specs()],
         "splits": load_splits(db, symbol),

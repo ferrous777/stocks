@@ -1,31 +1,31 @@
 {% extends "base.html" %}
+{% import "components.html" as ui %}
 {% block title %}{{ acc.name }} · Stocks{% endblock %}
 {% block content %}
-<h1>{{ acc.name }} <span class="muted small">{{ acc._id }}</span></h1>
-{% if message %}<div class="notice">{{ message }}</div>{% endif %}
-{% if error %}<div class="notice"><strong class="neg">{{ error }}</strong></div>{% endif %}
+{{ ui.page_header(acc.name, meta=acc._id, back=("/accounts", "Accounts")) }}
+{% if message %}{% call ui.alert("positive") %}{{ message }}{% endcall %}{% endif %}
+{% if error %}{% call ui.alert("negative") %}<strong>{{ error }}</strong>{% endcall %}{% endif %}
 
-<div class="panel" style="margin:14px 0">
-  Cash {{ '{:,.2f}'.format(h.cash) }} ·
-  {% if h.equity is not none %}equity {{ '{:,.2f}'.format(h.equity) }}{% else %}equity unavailable (no price for {{ h.unmarked|join(', ') }}){% endif %} ·
-  realized {{ '{:+,.2f}'.format(h.realized) }} ·
-  latest snapshot {{ h.latest_snapshot.strftime('%Y-%m-%d') if h.latest_snapshot else 'none' }} ·
-  risk profile {{ acc.risk_profile or 'none' }} ·
-  <span class="{{ 'neg' if h.open_breaks else '' }}">{{ h.open_breaks }} open break(s)</span>
+<div class="stats">
+  {{ ui.stat("Cash", '{:,.2f}'.format(h.cash)) }}
+  {% if h.equity is not none %}{{ ui.stat("Equity", '{:,.2f}'.format(h.equity)) }}
+  {% else %}{{ ui.stat("Equity", "unavailable", hint="no price for " ~ h.unmarked|join(', ')) }}{% endif %}
+  {{ ui.stat("Realized", '{:+,.2f}'.format(h.realized), tone='pos' if h.realized > 0 else 'neg' if h.realized < 0 else None) }}
+  {{ ui.stat("Latest snapshot", h.latest_snapshot.strftime('%Y-%m-%d') if h.latest_snapshot else 'none') }}
+  {{ ui.stat("Risk profile", acc.risk_profile or 'none') }}
+  {{ ui.stat("Open breaks", h.open_breaks, tone='neg' if h.open_breaks else None) }}
 </div>
 
 {% if alerts %}
-<div class="notice"><strong>Alerts</strong>
-  <ul style="margin:6px 0 0">{% for a in alerts %}<li>{{ a.message }}</li>{% endfor %}</ul>
-  <p class="small muted" style="margin:6px 0 0">Acknowledge with <code>POST /api/v1/notifications/{id}/ack</code>.</p>
-</div>
+{% call ui.alert("warning", "Alerts") %}
+  <ul class="legend">{% for a in alerts %}<li>{{ a.message }}</li>{% endfor %}</ul>
+  <p class="small muted">Acknowledge with <code>POST /api/v1/notifications/{id}/ack</code>.</p>
+{% endcall %}
 {% endif %}
 
 <h2>Holdings</h2>
-<div class="panel scroll"><table>
-  <thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Last close</th>
-    <th class="num">Market value</th><th class="num">Unrealized</th><th class="num">Realized</th><th>Protection</th></tr></thead>
-  <tbody>
+{% call ui.table(["Symbol", ("Qty", "num"), ("Avg cost", "num"), ("Last close", "num"), ("Market value", "num"),
+                  ("Unrealized", "num"), ("Realized", "num"), "Protection"], pin_first=True) %}
   {% for p in h.positions %}
     <tr><td><a href="/symbol/{{ p.symbol }}">{{ p.symbol }}</a></td><td class="num">{{ '{:,.4g}'.format(p.qty) }}</td>
       <td class="num">{{ '%.2f'|format(p.avg_cost) if p.avg_cost else '—' }}</td>
@@ -34,28 +34,24 @@
       <td class="num {{ 'pos' if p.unrealized and p.unrealized > 0 else 'neg' }}">{{ '{:+,.2f}'.format(p.unrealized) if p.unrealized is not none else '—' }}</td>
       <td class="num">{{ '{:+,.2f}'.format(p.realized) }}</td>
       <td class="small">{% set lv = levels.get(p.symbol) %}{% if lv %}stop {{ '%.2f'|format(lv.stop) }}{% if lv.target %} · target {{ '%.2f'|format(lv.target) }}{% endif %}{% else %}<span class="muted">none</span>{% endif %}</td></tr>
-  {% else %}<tr><td colspan="8" class="muted">No positions. Upload a snapshot below.</td></tr>{% endfor %}
-  </tbody>
-</table></div>
+  {% else %}{{ ui.empty_row(8, "No positions. Upload a snapshot below.") }}{% endfor %}
+{% endcall %}
 
 {% if outlook %}
 <h2>Outlook for this account</h2>
-<p class="muted small">Six-month outlook rows for what you hold (and any validated new ideas). Grades and estimates
+<p class="muted small prose">Six-month outlook rows for what you hold (and any validated new ideas). Grades and estimates
 are the same as on the <a href="/outlook">Outlook</a> page; nothing here is a validated recommendation until a strategy is active.</p>
-<div class="panel scroll"><table>
-  <thead><tr><th>Symbol</th><th>Side</th><th>Relation</th><th>Grade</th><th class="num">Exp. 6-mo return</th>
-    <th class="num">10th / 90th pct</th><th class="num">Your qty</th><th class="num">Unrealized</th></tr></thead>
-  <tbody>
+{% call ui.table(["Symbol", "Side", "Relation", "Grade", ("Exp. 6-mo return", "num"), ("10th / 90th pct", "num"),
+                  ("Your qty", "num"), ("Unrealized", "num")], pin_first=True) %}
   {% for r in rows %}
-    <tr><td>{{ r.symbol }}</td><td>{{ r.side }}</td><td class="small">{{ r.kind|replace('_', ' ') }}</td>
-      <td><span class="chip" title="{{ r.reasons|join('; ') }}">{{ r.grade }}</span></td>
+    <tr><td>{{ r.symbol }}</td><td class="{{ r.side }}">{{ r.side }}</td><td class="small">{{ r.kind|replace('_', ' ') }}</td>
+      <td>{{ ui.badge(r.grade, title=r.reasons|join('; ')) }}</td>
       <td class="num">{{ '%+.1f%%'|format(r.exp_return_6m*100) if r.exp_return_6m is defined and r.exp_return_6m is not none else '—' }}</td>
       <td class="num small">{% if r.p10_return_6m is defined and r.p10_return_6m is not none %}{{ '%+.0f'|format(r.p10_return_6m*100) }} / {{ '%+.0f'|format(r.p90_return_6m*100) }}%{% else %}—{% endif %}</td>
       <td class="num">{{ '{:,.4g}'.format(r.holding.qty) if r.holding else '' }}</td>
       <td class="num">{{ '{:+,.2f}'.format(r.holding.unrealized) if r.holding and r.holding.unrealized is not none else '' }}</td></tr>
-  {% else %}<tr><td colspan="8" class="muted">No rows for your holdings.</td></tr>{% endfor %}
-  </tbody>
-</table></div>
+  {% else %}{{ ui.empty_row(8, "No rows for your holdings.") }}{% endfor %}
+{% endcall %}
 {% if outlook.unrecognized_holdings %}<p class="small muted">Not in the watched universe (add them on the API to get rows):
   {{ outlook.unrecognized_holdings|join(', ') }}</p>{% endif %}
 {% endif %}
@@ -63,9 +59,8 @@ are the same as on the <a href="/outlook">Outlook</a> page; nothing here is a va
 {% if tk %}
 <h2>Order tickets for the next session</h2>
 {% if tk.tickets %}
-<div class="panel scroll"><table>
-  <thead><tr><th>Symbol</th><th>Action</th><th class="num">Qty</th><th>Order</th><th class="num">Max loss</th><th class="num">Exp. 6-mo vs cash</th><th>Exits and notes</th></tr></thead>
-  <tbody>{% for t in tk.tickets %}
+{% call ui.table(["Symbol", "Action", ("Qty", "num"), "Order", ("Max loss", "num"), ("Exp. 6-mo vs cash", "num"), "Exits and notes"]) %}
+  {% for t in tk.tickets %}
     <tr><td>{{ t.symbol }}</td><td>{{ t.action }}</td><td class="num">{{ t.quantity }}</td>
       <td>Limit {{ '%.2f'|format(t.limit_price) }}, Day, before {{ t.place_before[:16]|replace('T', ' ') }} UTC</td>
       <td class="num">{{ '{:,.0f}'.format(t.max_loss_at_stop_with_gap) }}</td>
@@ -73,49 +68,44 @@ are the same as on the <a href="/outlook">Outlook</a> page; nothing here is a va
       <td class="small">After the fill, one OCO (one-cancels-the-other) order, Good 'til Canceled:
         {% for f in t.after_fill.legs %}{{ f.action }} {{ f.order_type }} {{ '%.2f'|format(f.stop_price or f.limit_price) }}{% if not loop.last %} / {% endif %}{% endfor %}.
         {{ t.timeout }}{% for n in t.notes %} <strong>{{ n }}</strong>{% endfor %}</td></tr>
-  {% endfor %}</tbody>
-</table></div>
+  {% endfor %}
+{% endcall %}
 {% else %}
 <p class="muted">{{ tk.note or 'No tickets.' }}{% for w in tk.withheld %}<br>{{ w.symbol }} {{ w.side }}: {{ w.reason }}{% endfor %}</p>
 {% endif %}
 {% endif %}
 
 <h2>Breaks</h2>
-<div class="panel scroll"><table>
-  <thead><tr><th>Snapshot</th><th>Symbol</th><th class="num">Ledger</th><th class="num">Reported</th><th class="num">Difference</th><th>Status</th></tr></thead>
-  <tbody>
+{% call ui.table(["Snapshot", "Symbol", ("Ledger", "num"), ("Reported", "num"), ("Difference", "num"), "Status"]) %}
   {% for b in breaks %}
     <tr><td>{{ b.as_of.strftime('%Y-%m-%d') }}</td><td>{{ b.symbol }}</td><td class="num">{{ '{:,.4g}'.format(b.expected) }}</td>
       <td class="num">{{ '{:,.4g}'.format(b.reported) }}</td><td class="num">{{ '{:+,.4g}'.format(b.diff) }}</td>
-      <td><span class="chip {{ 'neg' if b.status == 'open' else '' }}">{{ b.status }}{{ ' · ' ~ b.resolution.type if b.resolution else '' }}</span>
+      <td>{{ ui.badge(b.status ~ (' · ' ~ b.resolution.type if b.resolution else ''), 'negative' if b.status == 'open' else None) }}
         {% if b.status == 'open' %}<span class="small muted">id {{ b._id }}</span>{% endif %}</td></tr>
-  {% else %}<tr><td colspan="6" class="muted">No differences.</td></tr>{% endfor %}
-  </tbody>
-</table></div>
-<p class="small muted">An open break means a snapshot disagrees with the recorded history. Upload the missing fills, or resolve it as a
+  {% else %}{{ ui.empty_row(6, "No differences.") }}{% endfor %}
+{% endcall %}
+<p class="small muted prose">An open break means a snapshot disagrees with the recorded history. Upload the missing fills, or resolve it as a
 transfer or adjustment with <code>POST /api/v1/breaks/{id}/resolve</code>.</p>
 
 <h2>Upload</h2>
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
-<form method="post" action="/accounts/{{ acc._id }}/upload" class="panel">
-  <input type="hidden" name="kind" value="snapshot">
-  <strong>Positions snapshot</strong>
+<div class="grid">
+{% call ui.card("Positions snapshot") %}<form method="post" action="/accounts/{{ acc._id }}/upload">
   <p class="small muted">The first snapshot is the opening balance and needs avg_cost. Short positions use a negative qty.</p>
-  <textarea name="payload" required placeholder='Example:
+  <textarea class="textarea" name="payload" required aria-label="Snapshot JSON" placeholder='Example:
 {"as_of": "2026-11-17T21:00:00Z",
  "cash": 12500.00,
  "positions": [{"symbol": "QQQM", "qty": 40, "avg_cost": 182.10}]}'>{{ draft.snapshot or '' }}</textarea>
-  <button type="submit">Upload snapshot</button>
-</form>
-<form method="post" action="/accounts/{{ acc._id }}/upload" class="panel">
-  <input type="hidden" name="kind" value="executions">
-  <strong>Fills</strong>
+  <input type="hidden" name="kind" value="snapshot">
+  {{ ui.button("Upload snapshot", "primary") }}
+</form>{% endcall %}
+{% call ui.card("Fills") %}<form method="post" action="/accounts/{{ acc._id }}/upload">
   <p class="small muted">side: buy, sell, short or cover. exec_id (from the broker) prevents duplicates.</p>
-  <textarea name="payload" required placeholder='Example:
+  <textarea class="textarea" name="payload" required aria-label="Fills JSON" placeholder='Example:
 [{"exec_id": "broker-id", "symbol": "QQQM", "side": "buy",
   "qty": 5, "price": 190.25, "fees": 0, "ts": "2026-11-18T15:31:00Z"}]'>{{ draft.executions or '' }}</textarea>
-  <button type="submit">Record fills</button>
-</form>
+  <input type="hidden" name="kind" value="executions">
+  {{ ui.button("Record fills", "primary") }}
+</form>{% endcall %}
 </div>
 {% if snaps %}<p class="small muted">Recent snapshots: {% for s in snaps %}{{ s.as_of.strftime('%Y-%m-%d') }}{{ ' (opening)' if s.opening }}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
 {% endblock %}

@@ -3,6 +3,8 @@ session cookie (90 days)."""
 
 from __future__ import annotations
 
+import functools
+import hashlib
 import hmac
 from pathlib import Path
 
@@ -15,7 +17,17 @@ from ..api.deps import get_db
 from ..models import SYMBOL_PATTERN
 from . import data
 
+STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+def _asset_url(name: str) -> str:
+    """URL of a static file with a content hash, so browsers refetch it after each deploy."""
+    digest = hashlib.sha256((STATIC_DIR / name).read_bytes()).hexdigest()[:12]
+    return f"/static/{name}?v={digest}"
+
+
+templates.env.globals["asset"] = functools.cache(_asset_url)
 router = APIRouter(include_in_schema=False)
 
 

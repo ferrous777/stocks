@@ -139,3 +139,85 @@ def test_sign_in_link(db):
 def test_sign_in_token_must_be_long_and_url_safe(db, token):
     with pytest.raises(RuntimeError, match="URL-safe"):
         create_app(Settings(mongo_url="x", api_keys="k", login_token=token, session_secret=SECRET), db=db)
+
+
+def _current_nav(html):
+    """Labels of the main-nav links marked as the current page."""
+    import re
+    nav = html.split('aria-label="Main"', 1)[1].split("</nav>", 1)[0]
+    return re.findall(r'<a class="nav__link" href="[^"]*" aria-current="page">([^<]+)</a>', nav)
+
+
+def test_navigation_marks_the_current_page(db):
+    _load_nvda(db)
+    with _client(db) as c:
+        _login(c)
+        assert _current_nav(c.get("/").text) == ["Dashboard"]
+        assert _current_nav(c.get("/symbol/NVDA").text) == ["Dashboard"]   # a symbol page belongs to the dashboard
+        assert _current_nav(c.get("/outlook").text) == ["Outlook"]
+        assert _current_nav(c.get("/accounts").text) == ["Accounts"]
+        assert _current_nav(c.get("/paper").text) == ["Paper"]
+        assert _current_nav(c.get("/research").text) == ["Research"]
+
+
+def test_outlook_side_filter_marks_the_selection(db, monkeypatch):
+    from stocks_service.web import data
+    outlook = {"asof": "2026-11-17", "placeable_until": "2026-11-18T14:30:00+00:00", "cash_return_6m": 0.02,
+            "cost_profile": "market@1", "cost": {"half_spread_bps": 2, "slippage_bps": 3}, "rows": []}
+    monkeypatch.setattr(data, "outlook_status", lambda db, side: {"outlook": outlook, "side": side})
+    with _client(db) as c:
+        _login(c)
+        html = c.get("/outlook?side=short").text
+    assert '<a class="segmented__item" href="/outlook?side=short" aria-current="true">Short</a>' in html
+    assert html.count('aria-current="true"') == 1   # only the selected filter, not "Both"
+
+
+def test_stylesheet_is_served_with_a_content_hash(db):
+    import hashlib
+    from stocks_service.web.routes import STATIC_DIR
+    css = (STATIC_DIR / "app.css").read_bytes()
+    with _client(db) as c:
+        html = c.get("/login").text
+        url = f"/static/app.css?v={hashlib.sha256(css).hexdigest()[:12]}"
+        assert f'href="{url}"' in html
+        r = c.get(url)   # public: the login page needs it before sign-in
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/css")
+    assert b"--color-accent" in r.content and b'[data-theme="dark"]' in r.content
+
+
+def test_symbol_page_carries_full_history_and_calendar_years(db):
+    import json
+    import re
+    from stocks_service.strategies.runner import load_view
+    from stocks_service.web.data import yearly_summary
+    _load_nvda(db)
+    with _client(db) as c:
+        _login(c)
+        page = c.get("/symbol/NVDA").text
+    assert "<polyline" in page                                           # no-JS fallback stays
+    assert re.search(r'src="/static/chart\.js\?v=\w{12}"', page)
+    hist = json.loads(re.search(r'<script type="application/json" id="price-history">(.*?)</script>', page, re.S).group(1))
+    full = load_view(db, "NVDA", dt.date(2025, 6, 2), lookback=0)
+    assert len(hist["dates"]) == len(full) > 400                        # whole history, not the 400-bar strategy window
+    assert hist["dates"][0] == full.sessions[0].isoformat() and hist["dates"][-1] == "2025-06-02"
+    # Split-adjusted: no 10x cliff across the 2024-06-10 split.
+    i = hist["dates"].index("2024-06-10")
+    assert 0.8 < hist["closes"][i] / hist["closes"][i - 1] < 1.2
+    years = yearly_summary(full)
+    assert "Calendar years" in page and f"{years[0]['year']}" in page and "to date" in page
+    by = {y["year"]: y for y in years}
+    # Each year is measured from the previous year's last close; the first year from its own first close.
+    assert by[2024]["base"] == by[2023]["close"]
+    assert by[2024]["return"] == pytest.approx(by[2024]["close"] / by[2023]["close"] - 1)
+    first = years[-1]
+    assert first["partial"] and first["base"] == float(full.c[0])
+    assert years[0]["to_date"] and not years[1]["to_date"]
+
+
+def test_only_identifier_columns_are_pinned_on_phones(db):
+    _load_nvda(db)
+    with _client(db) as c:
+        _login(c)
+        dashboard, research = c.get("/").text, c.get("/research").text
+    assert 'class="table table--pin-first"' in dashboard          # symbol column stays visible
+    assert "table--pin-first" not in research                       # long descriptive first cells scroll normally

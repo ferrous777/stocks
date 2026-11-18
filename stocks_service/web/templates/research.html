@@ -1,37 +1,28 @@
 {% extends "base.html" %}
+{% import "components.html" as ui %}
 {% block title %}Research · Stocks{% endblock %}
 {% block content %}
 {% macro pct(x) %}{{ '%.1f%%'|format(x*100) if x is not none else 'n/a' }}{% endmacro %}
-<h1>Research</h1>
-<p class="muted">Which strategies made money after costs on data they never saw — and did they beat QQQM, SPY and cash?</p>
+{% call ui.page_header("Research") %}Which strategies made money after costs on data they never saw — and did they beat QQQM, SPY and cash?{% endcall %}
 
 {% if not report %}
-<div class="notice"><strong>No research report yet.</strong> Run the validation (<code>POST /api/v1/research/run</code>)
-after the price history is loaded.</div>
+{% call ui.alert("warning", "No research report yet.") %} Run the validation (<code>POST /api/v1/research/run</code>)
+after the price history is loaded.{% endcall %}
 {% else %}
 {% set r = report %}
-<div class="panel" style="margin:14px 0">
-  {% if r.eligible %}
-  <strong class="pos">Eligible after the gate: {{ r.eligible|join(', ') }}</strong>
-  {% else %}
-  <strong class="neg">No strategy passed the gate.</strong>
-  {% endif %}
-  <p class="small muted" style="margin:6px 0 0">
+{% call ui.alert("positive" if r.eligible else "negative",
+                 ("Eligible after the gate: " ~ r.eligible|join(', ')) if r.eligible else "No strategy passed the gate.") %}
+  <p class="small muted">
     Development window {{ r.dev_window[0] }} → {{ r.dev_window[1] }} · holdout {{ r.holdout_window[0] }} → {{ r.holdout_window[1] }}
     ({{ holdout.status if holdout else 'unknown' }}) · {{ r.trial_count }} recorded trials ·
     probability of backtest overfitting {{ '%.2f'|format(r.pbo.pbo) if r.pbo else 'n/a' }} · generated {{ r.created_at.strftime('%Y-%m-%d %H:%M UTC') }}
   </p>
-</div>
+{% endcall %}
 
 <h2>Strategies vs. cash and benchmarks (after costs)</h2>
-<div class="panel scroll"><table>
-  <thead><tr>
-    <th>Strategy</th><th class="num">CAGR</th><th class="num">Sharpe</th><th class="num">Max DD</th>
-    <th class="num">vs cash</th><th class="num">95% CI</th><th class="num">vs SPY</th><th class="num">vs QQQM</th>
-    <th class="num">vs equal-wt</th><th class="num">Deflated Sharpe</th><th class="num">vs cash at 2× costs</th>
-    <th class="num">Trades</th><th class="num">Exposure</th><th>Gate</th>
-  </tr></thead>
-  <tbody>
+{% call ui.table(["Strategy", ("CAGR", "num"), ("Sharpe", "num"), ("Max DD", "num"), ("vs cash", "num"), ("95% CI", "num"),
+                  ("vs SPY", "num"), ("vs QQQM", "num"), ("vs equal-wt", "num"), ("Deflated Sharpe", "num"),
+                  ("vs cash at 2× costs", "num"), ("Trades", "num"), ("Exposure", "num"), "Gate"]) %}
   {% for key, v in r.results.items() %}{% set m = v.metrics %}{% set c = v.comparisons %}
   <tr>
     <td>{{ key }}</td>
@@ -47,62 +38,59 @@ after the price history is loaded.</div>
     <td class="num">{{ '%+.1f%%'|format(v.stress.costs_x2.excess_vs_cash*100) }}</td>
     <td class="num">{{ v.trades }}</td>
     <td class="num">{{ '%.0f%%'|format(v.avg_exposure*100) }}</td>
-    <td>{% if v.gate.eligible %}<span class="chip pos">eligible</span>{% else %}
-      <span class="chip neg" title="{% for k, ok in v.gate.checks.items() %}{{ k }}: {{ 'pass' if ok else 'FAIL' }}&#10;{% endfor %}">fails {{ v.gate.checks.values()|reject|list|length }}/{{ v.gate.checks|length }}</span>{% endif %}</td>
+    <td>{% if v.gate.eligible %}{{ ui.badge("eligible", "positive") }}{% else %}
+      {% set why %}{% for k, ok in v.gate.checks.items() %}{{ k }}: {{ 'pass' if ok else 'FAIL' }}
+{% endfor %}{% endset %}
+      {{ ui.badge("fails " ~ v.gate.checks.values()|reject|list|length ~ "/" ~ v.gate.checks|length, "negative", why) }}{% endif %}</td>
   </tr>
   {% endfor %}
-  </tbody>
-</table></div>
-<p class="muted small">"vs" columns are annualized differences in daily returns over the same sessions; the 95% CI is a seeded
+{% endcall %}
+<p class="muted small prose">"vs" columns are annualized differences in daily returns over the same sessions; the 95% CI is a seeded
 block bootstrap. Gate: CI lower bound vs cash &gt; 0, deflated Sharpe ≥ 0.95, max drawdown ≤ 35%, still beats cash at 2× costs.</p>
 
 <h2>Benchmarks over the same window</h2>
 {% set b = (r.results.values()|first).comparisons %}
-<div class="panel scroll"><table>
-  <thead><tr><th>Benchmark</th><th class="num">CAGR</th><th class="num">Sharpe</th><th class="num">Max DD</th></tr></thead>
-  <tbody>{% for name in ['SPY', 'QQQM (QQQ before 2020-10-13)', 'equal_weight_universe', 'cash'] %}{% set m = b[name].baseline %}
+{% call ui.table(["Benchmark", ("CAGR", "num"), ("Sharpe", "num"), ("Max DD", "num")]) %}
+  {% for name in ['SPY', 'QQQM (QQQ before 2020-10-13)', 'equal_weight_universe', 'cash'] %}{% set m = b[name].baseline %}
     <tr><td>{{ name }}</td><td class="num">{{ '%.1f%%'|format(m.cagr*100) }}</td>
       <td class="num">{{ '%.2f'|format(m.sharpe) if m.sharpe is not none else '—' }}</td><td class="num">{{ '%.0f%%'|format(m.max_drawdown*100) }}</td></tr>
-  {% endfor %}</tbody>
-</table></div>
+  {% endfor %}
+{% endcall %}
 
 <h2>Assumptions and caveats</h2>
-<div class="panel small">
-  <p>Policy {{ r.policy }}: up to {{ r.policy_params.max_positions }} positions, {{ '%.0f%%'|format(r.policy_params.risk_per_trade*100) }} of equity at risk per trade,
+{% call ui.card(class_="small") %}
+  <p class="mt-0">Policy {{ r.policy }}: up to {{ r.policy_params.max_positions }} positions, {{ '%.0f%%'|format(r.policy_params.risk_per_trade*100) }} of equity at risk per trade,
   ≤ {{ '%.0f%%'|format(r.policy_params.max_position_pct*100) }} per position; idle cash earns the 13-week T-bill rate.
   Costs ({{ r.cost_profile.profile_id }}): ${{ r.cost_profile.commission_per_share }} commission, {{ r.cost_profile.half_spread_bps }} bps half-spread,
   {{ r.cost_profile.slippage_bps }} bps slippage per side, {{ '%.1f%%'|format(r.cost_profile.borrow_rate_annual*100) }} annual short borrow.</p>
-  <ul>{% for c in r.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
-</div>
+  <ul class="legend mb-0">{% for c in r.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
+{% endcall %}
 {% endif %}
 
 <h2>Strategy versions and live tracking</h2>
-<div class="panel scroll"><table>
-  <thead><tr><th>Version</th><th>Status</th><th class="num">Resolved live forecasts</th><th>Monitor (last {{ 30 }})</th><th>Description</th></tr></thead>
-  <tbody>{% for v in versions %}{% set m = v.monitor %}
-    <tr><td>{{ v._id }}</td><td><span class="chip {{ 'neg' if v.status == 'paused' else 'pos' if v.status == 'active' else '' }}">{{ v.status }}</span>
+{% call ui.table(["Version", "Status", ("Resolved live forecasts", "num"), "Monitor (last 30)", "Description"]) %}
+  {% for v in versions %}{% set m = v.monitor %}
+    <tr><td>{{ v._id }}</td><td>{{ ui.badge(v.status, 'negative' if v.status == 'paused' else 'positive' if v.status == 'active' else None) }}
         {% if v.paused_reason %}<span class="small muted">{{ v.paused_reason }}</span>{% endif %}</td>
       <td class="num">{{ v.resolved_forecasts }}</td>
       <td class="small">{% if m.status == 'insufficient' %}<span class="muted">needs {{ m.window }} resolved</span>{% elif m.status == 'breach' %}<span class="neg">{{ m.breaches|join('; ') }}</span>{% else %}ok · realized {{ '%+.1f%%'|format(m.realized_mean*100) }} vs forecast {{ '%+.1f%%'|format(m.predicted_mean*100) }}{% endif %}</td>
       <td class="muted small">{{ v.description }}</td></tr>
-  {% endfor %}</tbody>
-</table></div>
-<p class="small muted">Promotion: research → candidate needs the development gate; candidate → active needs the single-use
+  {% endfor %}
+{% endcall %}
+<p class="small muted prose">Promotion: research → candidate needs the development gate; candidate → active needs the single-use
 holdout and a live shadow period of 30 resolved forecasts without a monitor breach. Parity violations and breaches pause a version.</p>
 {% if events %}<p class="small muted">Recent lifecycle events: {% for e in events %}{{ e.strategy }} {{ e['from'] }}→{{ e.to }} ({{ e.by }}){% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
 
 <h2>Overlays, tuning and umpires</h2>
-<p class="muted small">Each is compared with the same strategy without it, out of sample, and changes nothing unless it clears the bar.</p>
-<div class="panel scroll"><table>
-  <thead><tr><th>What</th><th>Without → with</th><th class="num">Paired excess / yr</th><th class="num">95% CI</th><th>Verdict</th></tr></thead>
-  <tbody>
+<p class="muted small prose">Each is compared with the same strategy without it, out of sample, and changes nothing unless it clears the bar.</p>
+{% call ui.table(["What", "Without → with", ("Paired excess / yr", "num"), ("95% CI", "num"), "Verdict"]) %}
   {% for ov in overlays %}
     <tr><td>{{ ov.overlay }} on {{ ov.strategy }}</td>
       <td class="small">CAGR {{ pct(ov.without.metrics.cagr) }} → {{ pct(ov.with.metrics.cagr) }},
         max DD {{ '%.0f%%'|format(ov.without.metrics.max_drawdown*100) }} → {{ '%.0f%%'|format(ov.with.metrics.max_drawdown*100) }}</td>
       <td class="num">{{ '%+.2f%%'|format(ov.paired_excess_annual.mean*100) }}</td>
       <td class="num small">[{{ '%+.2f'|format(ov.paired_excess_annual.ci95[0]*100) }}, {{ '%+.2f'|format(ov.paired_excess_annual.ci95[1]*100) }}]</td>
-      <td><span class="chip {{ 'pos' if ov.verdict == 'adds_value' else '' }}">{{ ov.verdict|replace('_', ' ') }}</span></td></tr>
+      <td>{{ ui.badge(ov.verdict|replace('_', ' '), 'positive' if ov.verdict == 'adds_value' else None) }}</td></tr>
   {% endfor %}
   {% if tuning %}{% set t = tuning %}
     <tr><td>ATR stop/target tuning on {{ t.strategy }} (chosen: {{ t.folds|map(attribute='chosen')|unique|join(', ') }})</td>
@@ -110,27 +98,23 @@ holdout and a live shadow period of 30 resolved forecasts without a monitor brea
         max DD {{ '%.0f%%'|format(t.oos.default.max_drawdown*100) }} → {{ '%.0f%%'|format(t.oos.tuned.max_drawdown*100) }}</td>
       <td class="num">{{ '%+.2f%%'|format(t.paired_excess_annual.mean*100) }}</td>
       <td class="num small">[{{ '%+.2f'|format(t.paired_excess_annual.ci95[0]*100) }}, {{ '%+.2f'|format(t.paired_excess_annual.ci95[1]*100) }}]</td>
-      <td><span class="chip {{ 'pos' if t.status == 'adopt' else '' }}">{{ t.status }}</span></td></tr>
+      <td>{{ ui.badge(t.status, 'positive' if t.status == 'adopt' else None) }}</td></tr>
   {% endif %}
-  {% if not overlays and not tuning %}<tr><td colspan="5" class="muted">Not run yet.</td></tr>{% endif %}
-  </tbody>
-</table></div>
-<p class="small muted">Paired excess: annualized mean daily-return difference (with − without), block-bootstrap 95% CI.</p>
+  {% if not overlays and not tuning %}{{ ui.empty_row(5, "Not run yet.") }}{% endif %}
+{% endcall %}
+<p class="small muted prose">Paired excess: annualized mean daily-return difference (with − without), block-bootstrap 95% CI.</p>
 
 <h3>Umpires (walk-forward)</h3>
-<div class="panel scroll"><table>
-  <thead><tr><th>Umpire</th><th>Mean outcome: vetoed vs others</th><th class="num">Difference per label</th><th class="num">95% CI</th><th>Verdict</th></tr></thead>
-  <tbody>
+{% call ui.table(["Umpire", "Mean outcome: vetoed vs others", ("Difference per label", "num"), ("95% CI", "num"), "Verdict"]) %}
   {% if umpires %}{% for side, ev in umpires.evaluation.items() %}
     <tr><td>Veto ({{ side }}s)</td>
       <td class="small">{% if ev.mean_vetoed is defined %}{{ '%+.1f%%'|format(ev.mean_vetoed*100) }} (n={{ ev.vetoed }}) vs {{ '%+.1f%%'|format(ev.mean_not_vetoed*100) }}{% else %}{{ ev.vetoed }} vetoed{% endif %}</td>
       <td class="num">{{ '%+.2f%%'|format(ev.difference*100) if ev.difference is defined else '—' }}</td>
       <td class="num small">{% if ev.ci95 is defined %}[{{ '%+.2f'|format(ev.ci95[0]*100) }}, {{ '%+.2f'|format(ev.ci95[1]*100) }}]{% else %}—{% endif %}</td>
-      <td><span class="chip {{ 'pos' if ev.verdict == 'useful' else '' }}">{{ ev.verdict|replace('_', ' ') }}</span></td></tr>
-  {% endfor %}{% else %}<tr><td colspan="5" class="muted">Not trained yet.</td></tr>{% endif %}
-  </tbody>
-</table></div>
-<p class="small muted">Umpire difference: mean six-month excess over T-bills of a not-vetoed label minus a vetoed one
+      <td>{{ ui.badge(ev.verdict|replace('_', ' '), 'positive' if ev.verdict == 'useful' else None) }}</td></tr>
+  {% endfor %}{% else %}{{ ui.empty_row(5, "Not trained yet.") }}{% endif %}
+{% endcall %}
+<p class="small muted prose">Umpire difference: mean six-month excess over T-bills of a not-vetoed label minus a vetoed one
 (per label, not annualized); 95% CI from a block bootstrap over decision dates.</p>
 <p class="muted small">Experiments recorded: {{ experiments }}</p>
 {% endblock %}

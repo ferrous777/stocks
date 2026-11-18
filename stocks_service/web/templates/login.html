@@ -1,17 +1,20 @@
 {% extends "base.html" %}
+{% import "components.html" as ui %}
 {% block title %}Sign in · Stocks{% endblock %}
 {% block content %}
-<div class="panel" style="max-width:380px;margin:40px auto">
+<div style="max-width:400px;margin:var(--space-7) auto">
+{% call ui.card() %}
   <h1>Sign in</h1>
   <p class="muted">Open your sign-in link (the bookmark) to sign in. You stay signed in on this device for 90 days.</p>
   <form id="link-form" method="post" action="/login/link" hidden><input type="hidden" name="token"></form>
   {% if password_enabled %}
-  <form method="post" action="/login" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
-    <input type="password" name="password" placeholder="Password" required style="flex:1;min-width:160px">
-    <button type="submit">Sign in</button>
+  <form method="post" action="/login" class="form-row" style="margin-top:var(--space-3)">
+    <input class="input" type="password" name="password" placeholder="Password" required aria-label="Password">
+    {{ ui.button("Sign in", "primary") }}
   </form>
   {% endif %}
-  {% if error %}<p class="neg small">{{ error }}</p>{% endif %}
+  {% if error %}{% call ui.alert("negative") %}{{ error }}{% endcall %}{% endif %}
+{% endcall %}
 </div>
 <script>
   // The sign-in token is in the URL fragment (/login#token), which is never sent to the server or logged.
