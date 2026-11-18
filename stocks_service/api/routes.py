@@ -355,3 +355,148 @@ def outlook_calibration(db: Database = Depends(get_db)):
         raise HTTPException(404, "no calibration yet; run POST /api/v1/outlook/run")
     cal["id"] = str(cal.pop("_id"))
     return cal
+
+
+# --- real accounts (phase 4b): JSON snapshots, executions, reconciliation ------------------
+
+ACCOUNT_PATTERN = r"^[a-z0-9][a-z0-9_-]{1,40}$"
+AccountPath = Path(pattern=ACCOUNT_PATTERN)
+
+
+class AccountIn(BaseModel):
+    account_id: str = Field(pattern=ACCOUNT_PATTERN)
+    name: str = Field(min_length=1, max_length=100)
+
+
+class SnapshotPosition(BaseModel):
+    symbol: str = Field(pattern=SYMBOL_PATTERN)
+    qty: float = Field(description="shares; negative for a short position")
+    avg_cost: float | None = Field(default=None, gt=0, description="average cost per share (required for the opening snapshot)")
+
+
+class SnapshotIn(BaseModel):
+    as_of: dt.datetime = Field(description="when the broker positions were taken, with timezone")
+    cash: float
+    positions: list[SnapshotPosition] = Field(default_factory=list)
+    opening: bool = Field(default=False, description="treat as the opening balance (only for an account with no history)")
+
+
+class ExecutionIn(BaseModel):
+    exec_id: str | None = Field(default=None, max_length=100, description="broker execution id (dedupe key)")
+    symbol: str = Field(pattern=SYMBOL_PATTERN)
+    side: Literal["buy", "sell", "short", "cover"]
+    qty: float = Field(gt=0)
+    price: float = Field(gt=0)
+    fees: float = Field(default=0.0, ge=0)
+    ts: dt.datetime
+
+
+class ResolveIn(BaseModel):
+    kind: Literal["transfer_in", "transfer_out", "manual_adjustment"]
+    note: str = Field(min_length=3, max_length=500)
+    cost_basis: float | None = Field(default=None, description="total cost of shares coming in; default: diff x snapshot avg_cost")
+
+
+def _acct_call(fn, *a, **k):
+    from ..accounts.service import AccountError, NotFound
+    try:
+        return fn(*a, **k)
+    except NotFound as e:
+        raise HTTPException(404, str(e))
+    except AccountError as e:
+        raise HTTPException(409, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+def _now():
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def _snap_out(res: dict) -> dict:
+    snap = dict(res["snapshot"])
+    snap["id"] = str(snap.pop("_id"))
+    return {"snapshot": snap, "breaks": [_break_out(b) for b in res["breaks"]]}
+
+
+def _break_out(b: dict) -> dict:
+    b = dict(b)
+    b["id"] = str(b.pop("_id"))
+    b["snapshot_id"] = str(b["snapshot_id"])
+    return b
+
+
+@router.post("/accounts", status_code=status.HTTP_201_CREATED)
+def create_account(body: AccountIn, db: Database = Depends(get_db)):
+    from ..accounts import service
+    return _acct_call(service.create_account, db, account_id=body.account_id, name=body.name, now=_now())
+
+
+@router.get("/accounts")
+def list_accounts(db: Database = Depends(get_db)):
+    return list(db.accounts.find().sort("_id", 1))
+
+
+@router.post("/accounts/{account_id}/snapshots", status_code=status.HTTP_201_CREATED)
+def upload_snapshot(body: SnapshotIn, account_id: str = AccountPath, db: Database = Depends(get_db)):
+    """Upload broker positions. The first snapshot of a new account is its opening balance; later ones are
+    reconciled against the ledger and differences come back as breaks (never as trades). The response
+    includes the account's outlook when one exists."""
+    from ..accounts import service
+    res = _acct_call(service.upload_snapshot, db, account_id, as_of=body.as_of, cash=body.cash,
+                     positions=[p.model_dump() for p in body.positions], opening=body.opening, now=_now())
+    out = _snap_out(res)
+    try:
+        out["outlook"] = service.account_outlook(db, account_id, _now())
+    except service.NotFound as e:
+        out["outlook"] = None
+        out["outlook_unavailable"] = str(e)
+    return out
+
+
+@router.get("/accounts/{account_id}/snapshots")
+def list_snapshots(account_id: str = AccountPath, db: Database = Depends(get_db)):
+    docs = list(db.portfolio_snapshots.find({"account_id": account_id}).sort("as_of", -1))
+    for d in docs:
+        d["id"] = str(d.pop("_id"))
+    return docs
+
+
+@router.post("/accounts/{account_id}/executions", status_code=status.HTTP_201_CREATED)
+def add_executions(body: list[ExecutionIn], account_id: str = AccountPath, db: Database = Depends(get_db)):
+    from ..accounts import service
+    return _acct_call(service.add_executions, db, account_id, [x.model_dump() for x in body], now=_now())
+
+
+@router.get("/accounts/{account_id}/executions")
+def list_executions(account_id: str = AccountPath, db: Database = Depends(get_db)):
+    return [{k: v for k, v in x.items() if k != "_id"}
+            for x in db.executions.find({"account_id": account_id}).sort("ts", -1)]
+
+
+@router.get("/accounts/{account_id}/breaks")
+def list_breaks(account_id: str = AccountPath, status_: Literal["open", "resolved"] | None = Query(None, alias="status"),
+                db: Database = Depends(get_db)):
+    q = {"account_id": account_id, **({"status": status_} if status_ else {})}
+    return [_break_out(b) for b in db.reconciliation_breaks.find(q).sort([("as_of", -1), ("symbol", 1)])]
+
+
+@router.post("/breaks/{break_id}/resolve")
+def resolve_break(break_id: str, body: ResolveIn, db: Database = Depends(get_db)):
+    from ..accounts import service
+    res = _acct_call(service.resolve_break, db, break_id, kind=body.kind, note=body.note, now=_now(),
+                     cost_basis=body.cost_basis)
+    ev = {k: v for k, v in res["event"].items() if k != "_id"}
+    return {"event": ev, "breaks": [_break_out(b) for b in res["breaks"]]}
+
+
+@router.get("/accounts/{account_id}/positions")
+def account_positions(account_id: str = AccountPath, db: Database = Depends(get_db)):
+    from ..accounts import service
+    return _acct_call(service.holdings, db, account_id, _now())
+
+
+@router.get("/accounts/{account_id}/outlook")
+def account_outlook(account_id: str = AccountPath, db: Database = Depends(get_db)):
+    from ..accounts import service
+    return _acct_call(service.account_outlook, db, account_id, _now())

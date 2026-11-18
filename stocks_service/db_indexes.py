@@ -56,6 +56,23 @@ INDEXES: dict[str, list[IndexModel]] = {
     "jobs": [
         IndexModel([("kind", ASCENDING), ("status", ASCENDING)], name="kind_status"),
     ],
+    "ledger_events": [
+        IndexModel([("account_id", ASCENDING), ("kind", ASCENDING), ("ref", ASCENDING)], name="account_kind_ref",
+                   unique=True),
+        IndexModel([("account_id", ASCENDING), ("ts", ASCENDING)], name="account_ts"),
+    ],
+    "executions": [
+        IndexModel([("account_id", ASCENDING), ("exec_id", ASCENDING)], name="account_exec", unique=True),
+        IndexModel([("account_id", ASCENDING), ("ts", ASCENDING)], name="account_ts"),
+        IndexModel([("account_id", ASCENDING), ("symbol", ASCENDING), ("ts", ASCENDING)], name="account_symbol_ts"),
+    ],
+    "portfolio_snapshots": [
+        IndexModel([("account_id", ASCENDING), ("as_of", DESCENDING)], name="account_asof"),
+    ],
+    "reconciliation_breaks": [
+        IndexModel([("snapshot_id", ASCENDING), ("symbol", ASCENDING)], name="snapshot_symbol", unique=True),
+        IndexModel([("account_id", ASCENDING), ("status", ASCENDING)], name="account_status"),
+    ],
     "job_locks": [
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],
