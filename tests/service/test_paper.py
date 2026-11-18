@@ -207,3 +207,72 @@ def test_cancel_validates_ids_and_refuses_real_accounts(db, world):
         c.post("/api/v1/accounts", json={"account_id": "real", "name": "Real"}, headers=H)
         assert c.delete("/api/v1/accounts/real/orders/not-an-id", headers=H).status_code == 422
         assert c.delete("/api/v1/accounts/real/orders/" + "a" * 24, headers=H).status_code == 403
+
+
+def test_every_strategy_gets_a_paper_account_trading_only_its_signals(db, world, monkeypatch):
+    from stocks_service.paper import strategy_accounts as sa
+    from stocks_service.strategies import all_specs
+    assert sa.ensure_strategy_accounts(db, EVENING) == {
+        "created": [], "reason": "no baseline paper account to copy capital, risk and cost profiles from"}
+    broker.create_paper_account(db, account_id="base", name="Baseline", starting_cash=75_000.0,
+                                risk_profile="default@1", policy=baseline.POLICY_ID, now=EVENING)
+    keys = [s.key for s in all_specs()]
+    assert "ensemble@1" in keys
+    assert sorted(sa.ensure_strategy_accounts(db, EVENING)["created"]) == sorted(keys)
+    assert sa.ensure_strategy_accounts(db, EVENING) == {"created": []}            # idempotent
+    for k in keys:
+        acc = db.accounts.find_one({"_id": sa.account_id_for(k)})
+        assert (acc["kind"], acc["policy"], acc["strategy"], acc["starting_cash"], acc["risk_profile"]) == (
+            "paper", sa.POLICY_ID, k, 75_000.0, "default@1")
+    assert sa.account_id_for("ma_crossover@1") == "paper-ma-crossover-v1"
+
+    # Orders follow only that strategy's signals in the outlook, strongest first, under the risk limits.
+    o = build.latest_outlook(db)
+    placed_any = False
+    for k in keys:
+        aid = sa.account_id_for(k)
+        res = sa.run_strategy(db, aid, EVENING)
+        signalled = {(r["symbol"], r["side"]): next(s["strength"] for s in r["signals"] if s["strategy"] == k)
+                     for r in o["rows"] if r.get("plan") and any(s["strategy"] == k for s in r["signals"])}
+        orders = list(db.orders.find({"account_id": aid}).sort("_id", 1))   # insertion order (same placed_at)
+        assert len(orders) == len(res["placed"]) <= baseline.MAX_POSITIONS
+        assert all((x["symbol"], x["side"]) in signalled for x in orders)
+        assert all(x["decided_by"] == {"policy": f"{sa.POLICY_ID}:{k}"} for x in orders)
+        strengths = [signalled[(x["symbol"], x["side"])] for x in orders]
+        assert strengths == sorted(strengths, reverse=True)
+        assert sa.run_strategy(db, aid, EVENING)["placed"] == []                   # re-run: no duplicates
+        placed_any |= bool(orders)
+    assert placed_any
+
+    # A paused version places no new entries.
+    k = keys[0]
+    db.strategy_versions.update_one({"_id": k}, {"$set": {"status": "paused"}}, upsert=True)
+    db.orders.delete_many({"account_id": sa.account_id_for(k)})
+    assert sa.run_strategy(db, sa.account_id_for(k), EVENING) == {"placed": [], "reason": f"{k} is paused; no new entries"}
+
+    # A strategy added to the library gets its account on the next call (the tick calls this every run).
+    new = dataclasses.replace(all_specs()[0], name="new_rule", version=1)
+    monkeypatch.setattr(sa, "all_specs", lambda: [*all_specs(), new])
+    assert sa.ensure_strategy_accounts(db, LATER)["created"] == ["new_rule@1"]
+    assert db.accounts.find_one({"_id": "paper-new-rule-v1"})["strategy"] == "new_rule@1"
+
+
+def test_ensure_refuses_an_ambiguous_baseline(db, world):
+    from stocks_service.paper import strategy_accounts as sa
+    for b in ("b1", "b2"):
+        broker.create_paper_account(db, account_id=b, name=b, starting_cash=100_000.0, risk_profile="default@1",
+                                    policy=baseline.POLICY_ID, now=EVENING)
+    assert sa.ensure_strategy_accounts(db, EVENING)["created"] == []
+    assert "more than one baseline" in sa.ensure_strategy_accounts(db, EVENING)["reason"]
+
+
+def test_paper_page_lists_strategy_accounts_in_a_leaderboard(db, world):
+    from stocks_service.paper import strategy_accounts as sa
+    broker.create_paper_account(db, account_id="base", name="Baseline", starting_cash=100_000.0,
+                                risk_profile="default@1", policy=baseline.POLICY_ID, now=EVENING)
+    sa.ensure_strategy_accounts(db, EVENING)
+    with _client(db) as c:
+        c.post("/login", data={"password": "pw"})
+        page = c.get("/paper").text
+    assert "All paper accounts" in page
+    assert 'href="#acct-paper-ensemble-v1"' in page and "strategy ensemble@1" in page and 'id="acct-paper-ensemble-v1"' in page

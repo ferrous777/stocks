@@ -108,14 +108,17 @@ def _lifecycle(db: Database, now: dt.datetime) -> dict:
 
 
 def _paper(db: Database, now: dt.datetime) -> list[dict]:
-    """Advance every paper account through completed sessions, then let baseline accounts place orders."""
-    from .paper import baseline, broker
+    """Advance every paper account through completed sessions, then let the rule-based accounts
+    (the baseline and one per strategy) place orders."""
+    from .paper import baseline, broker, strategy_accounts
     out = []
     for acc in db.accounts.find({"kind": "paper"}, {"_id": 1, "policy": 1}):
         try:
             res = broker.process_account(db, acc["_id"], now)
             if acc.get("policy") == baseline.POLICY_ID and not res["stalled"]:
                 res["baseline"] = baseline.run_baseline(db, acc["_id"], now)
+            elif acc.get("policy") == strategy_accounts.POLICY_ID and not res["stalled"]:
+                res["strategy"] = strategy_accounts.run_strategy(db, acc["_id"], now)
         except Exception as e:  # one account's problem must not block the others
             res = {"account_id": acc["_id"], "error": f"{type(e).__name__}: {e}"}
         out.append(res)
@@ -141,8 +144,11 @@ def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: 
             breaches=[m["source"] for m in life["monitors"] if m["status"] == "breach"])
         alerts = _alerts(db, now)
         log(step="alerts", **alerts)
+        from .paper.strategy_accounts import ensure_strategy_accounts
+        accounts = ensure_strategy_accounts(db, now)   # new strategies get their paper account here
         paper = _paper(db, now)
-        log(step="paper", accounts=len(paper))
-        return {"ingest_1d": ing, "outlook": out, "lifecycle": life, "alerts": alerts, "paper": paper}
+        log(step="paper", accounts=len(paper), created=accounts["created"])
+        return {"ingest_1d": ing, "outlook": out, "lifecycle": life, "alerts": alerts, "paper_accounts": accounts,
+                "paper": paper}
 
     return jobs.start_job(db, "tick", work, run_in_thread=run_in_thread)

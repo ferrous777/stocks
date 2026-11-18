@@ -178,6 +178,11 @@ def paper_status(db: Database) -> dict:
         a["open_orders"] = db.orders.count_documents({"account_id": a["_id"], "status": {"$in": ["open", "filled"]}})
         a["closed"] = db.orders.count_documents({"account_id": a["_id"], "status": "closed"})
         a["recent_orders"] = list(db.orders.find({"account_id": a["_id"]}).sort("placed_at", -1).limit(10))
+        a["return"] = a["equity"] / a["starting_cash"] - 1
+        a["kind_label"] = ("AI agent" if a.get("policy") == "agent" else "baseline" if a.get("policy", "").startswith("baseline")
+                           else f"strategy {a['strategy']}" if a.get("strategy") else a.get("policy", ""))
+    # Leaderboard: best return first; ties (e.g. no sessions yet) by id.
+    leaderboard = sorted(accounts, key=lambda a: (-a["return"], a["_id"]))
     from ..paper.report import matching_baseline
     comparisons = []
     for a in (x for x in accounts if x.get("policy") == "agent"):
@@ -187,7 +192,7 @@ def paper_status(db: Database) -> dict:
         else:
             comparisons.append({**compare(db, a["_id"], base), "pairing": why})
     decisions = db.agent_decisions.count_documents({})
-    return {"accounts": accounts, "comparisons": comparisons, "decisions": decisions}
+    return {"accounts": accounts, "leaderboard": leaderboard, "comparisons": comparisons, "decisions": decisions}
 
 
 def outlook_status(db: Database, side: str | None = None) -> dict:
