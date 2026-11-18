@@ -835,8 +835,11 @@ def analytics_similar(symbol: str = SymbolPath, n: int = Query(10, ge=1, le=50),
 @router.get("/analytics/correlations")
 def analytics_correlations(symbol: str | None = Query(None, pattern=SYMBOL_PATTERN), window: Literal[60, 252] = 252,
                            db: Database = Depends(get_db)):
-    q = {"window": window, **({"$or": [{"a": symbol}, {"b": symbol}]} if symbol else {})}
-    return [{k: v for k, v in r.items() if k not in ("_id", "computed_at")}
+    from ..research.protocol import _finite
+    members = [s["_id"] for s in db.symbols.find({}, {"_id": 1})]
+    q = {"window": window, "a": {"$in": members}, "b": {"$in": members},
+         **({"$or": [{"a": symbol}, {"b": symbol}]} if symbol else {})}
+    return [_finite({k: v for k, v in r.items() if k not in ("_id", "computed_at")})
             for r in db.relationships.find(q).sort([("a", 1), ("b", 1)])]
 
 

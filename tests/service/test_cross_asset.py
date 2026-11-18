@@ -102,3 +102,37 @@ def test_similar_api(db):
         sim = c.get("/api/v1/analytics/similar/SPY", headers=H).json()["similar"]
         assert sim[0]["symbol"] in ("QQQ", "QQQM") and sim[0]["pearson"] > 0.8 and sim[0]["link_candidate"]
         assert c.get("/api/v1/analytics/correlations?symbol=SPY&window=60", headers=H).json()
+
+
+# --- review fixes (PR #29) ---------------------------------------------------------------------
+
+def test_spearman_uses_average_ranks_and_constant_series_are_undefined():
+    r = cross_asset.aligned_returns(_universe(), ["SPY", "QQQ"], ASOF, 252)
+    a = np.round(r["SPY"], 3)        # rounding creates many real ties
+    b = np.round(r["QQQ"], 3)
+    st = cross_asset.pair_stats(a, b, 252)
+    assert st["spearman"] == pytest.approx(pd.Series(a[-252:]).corr(pd.Series(b[-252:]), method="spearman"))
+    flat = np.zeros_like(a)
+    st = cross_asset.pair_stats(a, flat, 252)
+    assert st["pearson"] is None and st["spearman"] is None and st["best_lag"] is None
+
+
+def test_relationships_cover_watched_symbols_refresh_on_late_arrivals_and_drop_deleted(db):
+    _load_db(db)
+    db.symbols.update_one({"_id": "^IRX"}, {"$set": {"enabled": True}})          # an index, not tradable
+    last = dt.datetime(2025, 6, 2, tzinfo=dt.timezone.utc)
+    held = db.bars.find_one({"symbol": "INTC", "session": last})
+    db.bars.delete_one({"_id": held["_id"]})
+    first = cross_asset.run_relationships(db, NOW)
+    syms = db.relationship_runs.find_one({"_id": "latest"})["symbols"]
+    assert "^IRX" in syms and "INTC" not in syms
+    assert cross_asset.run_relationships(db, NOW)["status"] == "current"
+    db.bars.insert_one(held)                                                       # INTC's close arrives later
+    again = cross_asset.run_relationships(db, NOW)
+    assert again["status"] == "computed" and "INTC" in db.relationship_runs.find_one({"_id": "latest"})["symbols"]
+    db.symbols.delete_one({"_id": "QQQM"})
+    out = cross_asset.run_relationships(db, NOW)
+    assert out["removed_obsolete"] > 0
+    assert not db.relationships.find_one({"$or": [{"a": "QQQM"}, {"b": "QQQM"}]})
+    assert all(x["symbol"] != "QQQM" for x in cross_asset.similar(db, "SPY", 20)["similar"])
+    assert first["pairs"] > 0

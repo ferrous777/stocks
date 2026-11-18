@@ -42,9 +42,25 @@ def aligned_returns(series: dict[str, SymbolSeries], symbols: list[str], asof: d
 
 
 def _rank(x: np.ndarray) -> np.ndarray:
-    r = np.empty(len(x))
-    r[np.argsort(x, kind="mergesort")] = np.arange(len(x))
-    return r
+    """Average ranks (ties share the mean of their positions), as Spearman's rho requires."""
+    order = np.argsort(x, kind="mergesort")
+    xs = x[order]
+    ranks = np.empty(len(x))
+    i = 0
+    while i < len(x):
+        j = i
+        while j + 1 < len(x) and xs[j + 1] == xs[i]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2.0
+        i = j + 1
+    return ranks
+
+
+def _corr(x: np.ndarray, y: np.ndarray) -> float | None:
+    """Pearson correlation, or None when undefined (a constant series)."""
+    if np.std(x) == 0 or np.std(y) == 0:
+        return None
+    return float(np.corrcoef(x, y)[0, 1])
 
 
 def lagged(a: np.ndarray, b: np.ndarray, window: int, lag: int) -> tuple[np.ndarray, np.ndarray]:
@@ -59,16 +75,16 @@ def lagged(a: np.ndarray, b: np.ndarray, window: int, lag: int) -> tuple[np.ndar
 def pair_stats(a: np.ndarray, b: np.ndarray, window: int) -> dict:
     """Statistics of the last ``window`` returns of a vs b."""
     x, y = a[-window:], b[-window:]
-    pear = float(np.corrcoef(x, y)[0, 1])
-    spear = float(np.corrcoef(_rank(x), _rank(y))[0, 1])
+    pear = _corr(x, y)
+    spear = _corr(_rank(x), _rank(y))
     sign = float(np.mean(np.sign(x) * np.sign(y)))
     beta = float(np.cov(x, y, ddof=1)[0, 1] / np.var(y, ddof=1)) if np.var(y) > 0 else None
-    best_lag, best = 0, pear
+    best_lag, best = (0, pear) if pear is not None else (None, None)
     for lag in range(-MAX_LAG, MAX_LAG + 1):
         if lag:
             xa, yb = lagged(a, b, window, lag)
-            c = float(np.corrcoef(xa, yb)[0, 1])
-            if abs(c) > abs(best) + 1e-12:
+            c = _corr(xa, yb)
+            if c is not None and (best is None or abs(c) > abs(best) + 1e-12):
                 best_lag, best = lag, c
     return {"pearson": pear, "spearman": spear, "sign": sign, "beta": beta, "best_lag": best_lag,
             "best_lag_corr": best, "n": window}
@@ -83,29 +99,47 @@ def compute_relationships(series: dict[str, SymbolSeries], symbols: list[str], a
     return out
 
 
+def _watched_series(db: Database) -> dict[str, SymbolSeries]:
+    """Every enabled symbol with stored daily bars, whatever its asset class or tradability."""
+    have = set(db.bars.distinct("symbol", {"interval": "1d"}))
+    return {s["_id"]: SymbolSeries.from_db(db, s["_id"])
+            for s in db.symbols.find({"enabled": {"$ne": False}}, {"_id": 1}) if s["_id"] in have}
+
+
 def run_relationships(db: Database, now: dt.datetime) -> dict:
-    from .research.protocol import load_universe
-    uni, tradable = load_universe(db)
-    spy = uni["SPY"]
-    asof = spy.sessions[-1]
-    latest = db.relationships.find_one({}, {"asof": 1}, sort=[("asof", -1)])
-    if latest and latest["asof"] >= asof.isoformat():
-        return {"status": "current", "asof": latest["asof"]}
-    syms = [s for s in tradable if uni[s].has_bar(asof)]
+    """Recompute when the latest session or the set of symbols with a bar on it changed (late arrivals,
+    interrupted runs); the completion marker is written only after every pair is stored."""
+    uni = _watched_series(db)
+    if not uni:
+        return {"status": "skipped", "reason": "no price history"}
+    asof = max(s.sessions[-1] for s in uni.values())
+    syms = sorted(s for s, ser in uni.items() if ser.has_bar(asof))
+    marker = db.relationship_runs.find_one({"_id": "latest"})
+    if marker and marker.get("asof") == asof.isoformat() and marker.get("symbols") == syms and marker.get("complete"):
+        return {"status": "current", "asof": marker["asof"]}
+    db.relationship_runs.update_one({"_id": "latest"}, {"$set": {"asof": asof.isoformat(), "symbols": syms,
+                                                                 "complete": False, "started_at": now}}, upsert=True)
     docs = compute_relationships(uni, syms, asof)
     for d in docs:
         db.relationships.update_one({"a": d["a"], "b": d["b"], "window": d["window"]},
                                     {"$set": {**d, "computed_at": now}}, upsert=True)
-    return {"status": "computed", "asof": asof.isoformat(), "pairs": len(docs)}
+    current = set(uni)
+    removed = db.relationships.delete_many({"$or": [{"a": {"$nin": list(current)}},
+                                                   {"b": {"$nin": list(current)}}]}).deleted_count
+    db.relationship_runs.update_one({"_id": "latest"}, {"$set": {"complete": True, "completed_at": now}})
+    return {"status": "computed", "asof": asof.isoformat(), "pairs": len(docs), "removed_obsolete": removed}
 
 
 def similar(db: Database, symbol: str, n: int = 10) -> dict:
     groups = {s["_id"]: set(s.get("groups", [])) for s in db.symbols.find({}, {"groups": 1})}
-    rows = list(db.relationships.find({"window": 252, "$or": [{"a": symbol}, {"b": symbol}]}))
+    rows = list(db.relationships.find({"window": 252, "$or": [{"a": symbol}, {"b": symbol}],
+                                       "pearson": {"$ne": None}}))
     out = []
     for r in rows:
         other = r["b"] if r["a"] == symbol else r["a"]
-        lag = r["best_lag"] if r["a"] == symbol else -r["best_lag"]
+        if other not in groups:      # deleted from the universe since the last refresh
+            continue
+        lag = None if r["best_lag"] is None else (r["best_lag"] if r["a"] == symbol else -r["best_lag"])
         out.append({"symbol": other, "pearson": r["pearson"], "spearman": r["spearman"], "sign": r["sign"],
                     "best_lag": lag, "shared_groups": sorted(groups.get(symbol, set()) & groups.get(other, set())),
                     "asof": r["asof"]})
