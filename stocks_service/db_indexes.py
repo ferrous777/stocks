@@ -103,6 +103,13 @@ INDEXES: dict[str, list[IndexModel]] = {
     "lifecycle_events": [
         IndexModel([("strategy", ASCENDING), ("at", DESCENDING)], name="strategy_at"),
     ],
+    "relationships": [
+        IndexModel([("a", ASCENDING), ("b", ASCENDING), ("window", ASCENDING)], name="a_b_window", unique=True),
+        IndexModel([("b", ASCENDING), ("window", ASCENDING)], name="b_window"),
+    ],
+    "overlay_evaluations": [
+        IndexModel([("created_at", DESCENDING)], name="created_at"),
+    ],
     "job_locks": [
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],

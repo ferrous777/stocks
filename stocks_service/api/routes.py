@@ -816,3 +816,59 @@ def holdout_reveal(body: RevealIn, db: Database = Depends(get_db)):
         return _finite(reveal_holdout(db, protocol_hash=body.protocol_hash, now=_now()))
     except HoldoutError as e:
         raise HTTPException(409, str(e))
+
+
+# --- cross-asset analytics and overlay evaluation (phase 9) --------------------------------
+
+@router.get("/analytics/similar/{symbol}")
+def analytics_similar(symbol: str = SymbolPath, n: int = Query(10, ge=1, le=50), db: Database = Depends(get_db)):
+    """Most correlated symbols (252 sessions), with lead/lag and link candidates (no shared group)."""
+    from ..cross_asset import similar
+    if db.symbols.find_one({"_id": symbol}) is None:
+        raise HTTPException(404, f"{symbol} is not in the universe")
+    out = similar(db, symbol, n)
+    if not out["similar"]:
+        raise HTTPException(404, "no relationships computed yet; they are computed by the tick")
+    return out
+
+
+@router.get("/analytics/correlations")
+def analytics_correlations(symbol: str | None = Query(None, pattern=SYMBOL_PATTERN), window: Literal[60, 252] = 252,
+                           db: Database = Depends(get_db)):
+    from ..research.protocol import _finite
+    members = [s["_id"] for s in db.symbols.find({}, {"_id": 1})]
+    q = {"window": window, "a": {"$in": members}, "b": {"$in": members},
+         **({"$or": [{"a": symbol}, {"b": symbol}]} if symbol else {})}
+    return [_finite({k: v for k, v in r.items() if k not in ("_id", "computed_at")})
+            for r in db.relationships.find(q).sort([("a", 1), ("b", 1)])]
+
+
+class OverlayRunIn(BaseModel):
+    strategy: str = Field(default="ensemble@1", pattern=STRATEGY_KEY)
+    weight: float = Field(default=0.5, gt=0, le=2)
+    start: dt.date = dt.date(2006, 1, 3)
+    end: dt.date = dt.date(2024, 11, 15)
+
+
+@router.post("/research/overlays/run", status_code=status.HTTP_202_ACCEPTED)
+def overlay_run(body: OverlayRunIn, db: Database = Depends(get_db)):
+    """Paired evaluation of the cross-asset overlay vs the same strategy without it (development window)."""
+    from ..jobs import JobConflict
+    from ..research.overlays import start_overlay_job
+    from ..strategies import get_spec
+    try:
+        get_spec(body.strategy)
+    except KeyError:
+        raise HTTPException(404, f"unknown strategy {body.strategy}")
+    try:
+        return {"job_id": start_overlay_job(db, strategy=body.strategy, weight=body.weight, start=body.start,
+                                            end=body.end)}
+    except JobConflict as e:
+        raise HTTPException(409, str(e))
+
+
+@router.get("/research/overlays")
+def overlay_results(db: Database = Depends(get_db)):
+    from ..research.protocol import _finite
+    return [_finite({k: v for k, v in d.items() if k != "_id"})
+            for d in db.overlay_evaluations.find().sort("created_at", -1).limit(20)]

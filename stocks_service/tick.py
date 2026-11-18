@@ -128,6 +128,12 @@ def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: 
         now = dt.datetime.now(dt.timezone.utc)
         ing = _ingest_all(db, fetcher, settings, now, pause)
         log(step="ingest_1d", **{k: v for k, v in ing.items() if k != "failures"}, failed=len(ing["failures"]))
+        from .cross_asset import run_relationships
+        try:
+            rel = run_relationships(db, now)
+        except Exception as e:  # analytics only: never block the trading pipeline
+            rel = {"status": "failed", "error": f"{type(e).__name__}: {e}"}
+        log(step="relationships", **rel)
         out = _refresh_outlook(db, now)
         log(step="outlook", **out)
         life = _lifecycle(db, now)
