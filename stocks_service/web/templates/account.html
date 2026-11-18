@@ -72,23 +72,19 @@ transfer or adjustment with <code>POST /api/v1/breaks/{id}/resolve</code>.</p>
   <input type="hidden" name="kind" value="snapshot">
   <strong>Positions snapshot</strong>
   <p class="small muted">The first snapshot is the opening balance and needs avg_cost. Short positions use a negative qty.</p>
-  <textarea name="payload" required>{{ draft.snapshot or '{
-  "as_of": "2026-11-17T21:00:00Z",
-  "cash": 12500.00,
-  "positions": [
-    {"symbol": "QQQM", "qty": 40, "avg_cost": 182.10}
-  ]
-}' }}</textarea>
+  <textarea name="payload" required placeholder='Example:
+{"as_of": "2026-11-17T21:00:00Z",
+ "cash": 12500.00,
+ "positions": [{"symbol": "QQQM", "qty": 40, "avg_cost": 182.10}]}'>{{ draft.snapshot or '' }}</textarea>
   <button type="submit">Upload snapshot</button>
 </form>
 <form method="post" action="/accounts/{{ acc._id }}/upload" class="panel">
   <input type="hidden" name="kind" value="executions">
   <strong>Fills</strong>
   <p class="small muted">side: buy, sell, short or cover. exec_id (from the broker) prevents duplicates.</p>
-  <textarea name="payload" required>{{ draft.executions or '[
-  {"exec_id": "...", "symbol": "QQQM", "side": "buy", "qty": 5,
-   "price": 190.25, "fees": 0, "ts": "2026-11-18T15:31:00Z"}
-]' }}</textarea>
+  <textarea name="payload" required placeholder='Example:
+[{"exec_id": "broker-id", "symbol": "QQQM", "side": "buy",
+  "qty": 5, "price": 190.25, "fees": 0, "ts": "2026-11-18T15:31:00Z"}]'>{{ draft.executions or '' }}</textarea>
   <button type="submit">Record fills</button>
 </form>
 </div>

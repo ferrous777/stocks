@@ -170,3 +170,120 @@ def test_account_pages_and_pasted_json_upload(db):
         assert c.get("/accounts/missing").status_code == 404
         assert c.post("/accounts/missing/upload", data={"kind": "snapshot", "payload":
                       '{"as_of": "2024-06-03T21:00:00Z", "cash": 1}'}).status_code == 404
+
+
+# --- review fixes (PR #21) -----------------------------------------------------------------
+
+def test_non_finite_values_are_rejected(db):
+    for bad in (float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="finite"):
+            Execution(T(2024, 1, 3), "AAA", "buy", 1, bad)
+        with pytest.raises(ValueError, match="finite"):
+            Execution(T(2024, 1, 3), "AAA", "buy", 1, 10.0, bad)
+    from stocks_service.accounts import service
+    service.create_account(db, account_id="acct", name="A", now=NOW)
+    with pytest.raises(service.AccountError, match="finite"):
+        service.upload_snapshot(db, "acct", as_of=T(2024, 6, 3, 21), cash=float("nan"), positions=[], opening=False, now=NOW)
+    with pytest.raises(service.AccountError, match="finite"):
+        service.upload_snapshot(db, "acct", as_of=T(2024, 6, 3, 21), cash=1.0, opening=False, now=NOW,
+                                positions=[{"symbol": "SPY", "qty": 1, "avg_cost": float("inf")}])
+    assert db.portfolio_snapshots.count_documents({}) == 0 and db.ledger_events.count_documents({}) == 0
+
+
+def test_resolutions_replay_after_same_time_fills():
+    t = T(2024, 1, 5, 21)
+    ev = [LedgerEvent(T(2024, 1, 2), "opening_balance", "AAA", qty=10, cost_basis=1000.0),
+          LedgerEvent(t, "transfer_out", "AAA", qty=-5)]
+    xs = [Execution(t, "AAA", "buy", 10, 200.0)]
+    h = state_as_of(T(2024, 2, 1), ev, xs, {}).holdings["AAA"]
+    # Fill first (avg 150 on 20 shares), then 5 leave at that average: avg stays 150, nothing realized.
+    assert h.qty == 15 and h.avg_cost == pytest.approx(150.0) and h.realized == 0
+
+
+def test_fallback_dedupe_key_includes_fees(db):
+    from stocks_service.accounts import service
+    service.create_account(db, account_id="acct", name="A", now=NOW)
+    x = {"symbol": "SPY", "side": "buy", "qty": 1, "price": 500.0, "ts": T(2024, 6, 4, 15)}
+    assert service.add_executions(db, "acct", [{**x, "fees": 0.0}, {**x, "fees": 1.0}], now=NOW)["inserted"] == 2
+    assert service.add_executions(db, "acct", [{**x, "fees": 1.0}], now=NOW)["duplicates"] == 1
+
+
+def test_concurrent_first_uploads_create_one_opening_balance(db):
+    import threading
+    from stocks_service.accounts import service
+    service.create_account(db, account_id="acct", name="A", now=NOW)
+    barrier, errors = threading.Barrier(4), []
+
+    def up():
+        barrier.wait()
+        try:
+            service.upload_snapshot(db, "acct", as_of=T(2024, 6, 3, 21), cash=1000.0, opening=False, now=NOW,
+                                    positions=[{"symbol": "SPY", "qty": 2, "avg_cost": 500.0}])
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    ts = [threading.Thread(target=up) for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errors
+    assert db.portfolio_snapshots.count_documents({"opening": True}) == 1
+    assert db.ledger_events.count_documents({"kind": "opening_balance"}) == 2  # cash + SPY, once
+    assert db.reconciliation_breaks.count_documents({"status": "open"}) == 0   # the others reconcile cleanly
+
+
+def test_resolution_reconciles_later_snapshots_and_can_resolve_a_reopened_break(db):
+    from stocks_service.accounts import service
+    _load_db(db)
+    service.create_account(db, account_id="acct", name="A", now=NOW)
+    up = lambda d, cash: service.upload_snapshot(db, "acct", as_of=d, cash=cash, positions=[], opening=False, now=NOW)  # noqa: E731
+    up(T(2024, 6, 3, 21), 1000.0)
+    first = up(T(2024, 6, 4, 21), 1500.0)["breaks"][0]
+    up(T(2024, 6, 5, 21), 1500.0)  # same unrecorded deposit
+    service.resolve_break(db, str(first["_id"]), kind="transfer_in", note="deposit", now=NOW)
+    assert db.reconciliation_breaks.count_documents({"status": "open"}) == 0  # the later snapshot too
+    # A late fill before the first snapshot reopens both; resolving again with the same kind works.
+    service.add_executions(db, "acct", [{"symbol": "SPY", "side": "buy", "qty": 1, "price": 100.0,
+                                         "ts": T(2024, 6, 4, 15)}], now=NOW)
+    reopened = db.reconciliation_breaks.find_one({"status": "open", "symbol": "SPY", "as_of": T(2024, 6, 4, 21)})
+    assert reopened is not None
+    assert reopened["diff"] == -1  # the ledger now holds the share the snapshot did not
+    service.resolve_break(db, str(reopened["_id"]), kind="transfer_out", note="moved out", now=NOW)
+    cash_break = db.reconciliation_breaks.find_one({"status": "open", "symbol": CASH, "as_of": T(2024, 6, 4, 21)})
+    service.resolve_break(db, str(cash_break["_id"]), kind="transfer_in", note="second deposit", now=NOW)
+    assert db.ledger_events.count_documents({"kind": "transfer_in"}) == 2
+
+
+def test_cost_basis_sign_is_checked(db):
+    from stocks_service.accounts import service
+    _load_db(db)
+    service.create_account(db, account_id="acct", name="A", now=NOW)
+    service.upload_snapshot(db, "acct", as_of=T(2024, 6, 3, 21), cash=0.0, positions=[], opening=False, now=NOW)
+    b = service.upload_snapshot(db, "acct", as_of=T(2024, 6, 4, 21), cash=0.0, opening=False, now=NOW,
+                                positions=[{"symbol": "SPY", "qty": 3}])["breaks"][0]
+    for bad in (-300.0, 0.0, float("inf")):
+        with pytest.raises(service.AccountError, match="cost_basis"):
+            service.resolve_break(db, str(b["_id"]), kind="transfer_in", note="x" * 3, now=NOW, cost_basis=bad)
+    service.resolve_break(db, str(b["_id"]), kind="transfer_in", note="ACAT", now=NOW, cost_basis=1500.0)
+
+
+def test_marks_use_the_share_basis_effective_now(db):
+    from stocks_service.accounts import service
+    _load_db(db)
+    db.bars.delete_many({"symbol": "NVDA", "session": {"$gte": dt.datetime(2024, 6, 10, tzinfo=UTC)}})
+    service.create_account(db, account_id="acct", name="A", now=NOW)
+    service.upload_snapshot(db, "acct", as_of=T(2024, 6, 7, 21), cash=0.0, opening=False, now=NOW,
+                            positions=[{"symbol": "NVDA", "qty": 10, "avg_cost": 1000.0}])
+    pre = db.bars.find_one({"symbol": "NVDA"}, sort=[("session", -1)])["c"]
+    h = service.holdings(db, "acct", T(2024, 6, 10, 15))  # after the ex-date open, before a new close
+    p = h["positions"][0]
+    assert p["qty"] == 100 and p["mark"] == pytest.approx(pre / 10) and p["market_value"] == pytest.approx(10 * pre)
+
+
+def test_upload_forms_are_not_prefilled(db):
+    with _client(db) as c:
+        c.post("/login", data={"password": "pw"})
+        c.post("/accounts", data={"account_id": "brokerage", "name": "Brokerage"})
+        page = c.get("/accounts/brokerage").text
+        assert page.count("placeholder='Example:") == 2
+        import re
+        assert all(not body.strip() for body in re.findall(r"<textarea[^>]*>(.*?)</textarea>", page, re.S))

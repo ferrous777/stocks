@@ -14,6 +14,7 @@ realized P&L. Nothing here touches the database, so backtests, tests and the API
 from __future__ import annotations
 
 import datetime as dt
+import math
 from dataclasses import dataclass, field
 
 from .. import sessions
@@ -46,6 +47,8 @@ class Execution:
     def __post_init__(self) -> None:
         if self.side not in SIDES:
             raise ValueError(f"side must be one of {sorted(SIDES)}, got {self.side!r}")
+        if not all(math.isfinite(v) for v in (self.qty, self.price, self.fees)):
+            raise ValueError("qty, price and fees must be finite numbers")
         if not self.qty > 0 or not self.price > 0 or self.fees < 0:
             raise ValueError("qty and price must be positive and fees non-negative")
 
@@ -102,7 +105,9 @@ def state_as_of(as_of: dt.datetime, events: list[LedgerEvent], executions: list[
     items: list[tuple[dt.datetime, int, object]] = []
     for e in events:
         if e.ts <= as_of:
-            items.append((e.ts, 1, e))
+            # Opening balances precede fills at the same instant; break resolutions are computed from a
+            # snapshot state that already includes same-time fills, so they replay after them.
+            items.append((e.ts, 1 if e.kind == "opening_balance" else 3, e))
     for x in executions:
         if x.ts <= as_of:
             items.append((x.ts, 2, x))
@@ -110,7 +115,7 @@ def state_as_of(as_of: dt.datetime, events: list[LedgerEvent], executions: list[
         for ex_date, ratio in ss:
             t = split_time(ex_date)
             if t <= as_of:
-                items.append((t, 0, (sym, ratio)))   # before any trade at the same instant
+                items.append((t, 0, (sym, ratio)))   # before anything else at the same instant
     items.sort(key=lambda it: (it[0], it[1]))
     st = LedgerState(as_of)
     for _, kind, it in items:
@@ -119,7 +124,7 @@ def state_as_of(as_of: dt.datetime, events: list[LedgerEvent], executions: list[
             h = st.holdings.get(sym)
             if h:
                 h.qty *= ratio
-        elif kind == 1:
+        elif kind in (1, 3):
             if it.symbol is None:
                 st.cash += it.amount
             else:
