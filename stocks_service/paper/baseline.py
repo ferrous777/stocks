@@ -31,10 +31,10 @@ def run_baseline(db: Database, account_id: str, now: dt.datetime) -> dict:
                  and r["symbol"] not in busy]
         cands.sort(key=lambda r: (-r["exp_return_6m"], r["symbol"], r["side"]))
         return cands
-    return place_ranked(db, account_id, now, pick=pick, policy_id=POLICY_ID, key_prefix="baseline")
+    return place_ranked(db, account_id, now, pick=pick, decided_by={"policy": POLICY_ID}, key_prefix="baseline")
 
 
-def place_ranked(db: Database, account_id: str, now: dt.datetime, *, pick, policy_id: str, key_prefix: str,
+def place_ranked(db: Database, account_id: str, now: dt.datetime, *, pick, decided_by: dict, key_prefix: str,
                  max_positions: int = MAX_POSITIONS) -> dict:
     """Shared order placement for rule-based paper policies: ``pick(outlook, busy_symbols)`` returns
     outlook rows in priority order; free position slots are filled in that order, each sized with the
@@ -72,7 +72,7 @@ def place_ranked(db: Database, account_id: str, now: dt.datetime, *, pick, polic
         try:
             res = place_order(db, account_id, symbol=r["symbol"], side=r["side"], qty=qty,
                               idempotency_key=f"{key_prefix}:{o['asof']}:{r['symbol']}:{r['side']}",
-                              decided_by={"policy": policy_id}, now=now)
+                              decided_by=decided_by, now=now)
         except AccountError as e:
             skipped.append({"symbol": r["symbol"], "side": r["side"], "reason": str(e)})
             continue

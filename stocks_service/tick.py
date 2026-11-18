@@ -145,9 +145,9 @@ def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: 
         alerts = _alerts(db, now)
         log(step="alerts", **alerts)
         from .paper.strategy_accounts import ensure_strategy_accounts
-        accounts = ensure_strategy_accounts(db, now)   # new strategies get their paper account here
+        accounts = ensure_strategy_accounts(db, now)   # new strategies get their paper account here; never raises
         paper = _paper(db, now)
-        log(step="paper", accounts=len(paper), created=accounts["created"])
+        log(step="paper", accounts=len(paper), created=accounts["created"], failed=accounts["failed"])
         return {"ingest_1d": ing, "outlook": out, "lifecycle": life, "alerts": alerts, "paper_accounts": accounts,
                 "paper": paper}
 

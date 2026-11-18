@@ -213,13 +213,13 @@ def test_every_strategy_gets_a_paper_account_trading_only_its_signals(db, world,
     from stocks_service.paper import strategy_accounts as sa
     from stocks_service.strategies import all_specs
     assert sa.ensure_strategy_accounts(db, EVENING) == {
-        "created": [], "reason": "no baseline paper account to copy capital, risk and cost profiles from"}
+        "created": [], "failed": [], "reason": "no baseline paper account to copy capital, risk and cost profiles from"}
     broker.create_paper_account(db, account_id="base", name="Baseline", starting_cash=75_000.0,
                                 risk_profile="default@1", policy=baseline.POLICY_ID, now=EVENING)
     keys = [s.key for s in all_specs()]
     assert "ensemble@1" in keys
     assert sorted(sa.ensure_strategy_accounts(db, EVENING)["created"]) == sorted(keys)
-    assert sa.ensure_strategy_accounts(db, EVENING) == {"created": []}            # idempotent
+    assert sa.ensure_strategy_accounts(db, EVENING) == {"created": [], "failed": []}   # idempotent
     for k in keys:
         acc = db.accounts.find_one({"_id": sa.account_id_for(k)})
         assert (acc["kind"], acc["policy"], acc["strategy"], acc["starting_cash"], acc["risk_profile"]) == (
@@ -237,7 +237,7 @@ def test_every_strategy_gets_a_paper_account_trading_only_its_signals(db, world,
         orders = list(db.orders.find({"account_id": aid}).sort("_id", 1))   # insertion order (same placed_at)
         assert len(orders) == len(res["placed"]) <= baseline.MAX_POSITIONS
         assert all((x["symbol"], x["side"]) in signalled for x in orders)
-        assert all(x["decided_by"] == {"policy": f"{sa.POLICY_ID}:{k}"} for x in orders)
+        assert all(x["decided_by"] == {"policy": sa.POLICY_ID, "strategy": k} for x in orders)
         strengths = [signalled[(x["symbol"], x["side"])] for x in orders]
         assert strengths == sorted(strengths, reverse=True)
         assert sa.run_strategy(db, aid, EVENING)["placed"] == []                   # re-run: no duplicates
@@ -276,3 +276,42 @@ def test_paper_page_lists_strategy_accounts_in_a_leaderboard(db, world):
         page = c.get("/paper").text
     assert "All paper accounts" in page
     assert 'href="#acct-paper-ensemble-v1"' in page and "strategy ensemble@1" in page and 'id="acct-paper-ensemble-v1"' in page
+
+
+def test_a_taken_account_id_is_reported_and_does_not_block_other_strategies(db, world):
+    from stocks_service.paper import strategy_accounts as sa
+    from stocks_service.strategies import all_specs
+    broker.create_paper_account(db, account_id="base", name="Baseline", starting_cash=100_000.0,
+                                risk_profile="default@1", policy=baseline.POLICY_ID, now=EVENING)
+    broker.create_paper_account(db, account_id="paper-ensemble-v1", name="Someone else's", starting_cash=1_000.0,
+                                risk_profile="default@1", now=EVENING)      # occupies the ensemble's generated id
+    res = sa.ensure_strategy_accounts(db, EVENING)                         # must not raise
+    assert [f["strategy"] for f in res["failed"]] == ["ensemble@1"] and "already exists" in res["failed"][0]["error"]
+    assert sorted(res["created"]) == sorted(s.key for s in all_specs() if s.key != "ensemble@1")
+    assert db.accounts.find_one({"_id": "paper-ensemble-v1"})["policy"] == "agent"   # the other account is untouched
+
+
+def test_pausing_a_strategy_cancels_its_accounts_unopened_orders_whatever_the_estimate_source(db, world):
+    from stocks_service import lifecycle
+    from stocks_service.paper import strategy_accounts as sa
+    from stocks_service.strategies import sync_strategy_versions
+    sync_strategy_versions(db, EVENING)
+    broker.create_paper_account(db, account_id="base", name="Baseline", starting_cash=100_000.0,
+                                risk_profile="default@1", policy=baseline.POLICY_ID, now=EVENING)
+    sa.ensure_strategy_accounts(db, EVENING)
+    key, orders = None, []
+    for spec_key in sorted(d["_id"] for d in db.strategy_versions.find()):
+        sa.run_strategy(db, sa.account_id_for(spec_key), EVENING)
+        orders = list(db.orders.find({"account_id": sa.account_id_for(spec_key), "status": "open"}))
+        if any(o["source"] != f"signal:{spec_key}" for o in orders):
+            key = spec_key
+            break
+    assert key is not None, "fixture should give some strategy an order whose estimate is not its own signal"
+    baseline.run_baseline(db, "base", EVENING)
+    other = list(db.orders.find({"account_id": "base", "status": "open", "source": {"$ne": f"signal:{key}"}}))
+    assert other, "the baseline should hold open orders not estimated from the paused strategy"
+    res = lifecycle.pause(db, key, reason="test", now=EVENING, by="test")   # after placement, before the open
+    assert res["cancelled_entry_orders"] >= len(orders)
+    for o in orders:
+        assert db.orders.find_one({"_id": o["_id"]})["status"] == "cancelled"
+    assert all(db.orders.find_one({"_id": o["_id"]})["status"] == "open" for o in other)   # other decision-makers untouched
