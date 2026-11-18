@@ -110,6 +110,9 @@ INDEXES: dict[str, list[IndexModel]] = {
     "overlay_evaluations": [
         IndexModel([("created_at", DESCENDING)], name="created_at"),
     ],
+    "umpire_models": [
+        IndexModel([("created_at", DESCENDING)], name="created_at"),
+    ],
     "job_locks": [
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],

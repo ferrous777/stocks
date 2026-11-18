@@ -872,3 +872,24 @@ def overlay_results(db: Database = Depends(get_db)):
     from ..research.protocol import _finite
     return [_finite({k: v for k, v in d.items() if k != "_id"})
             for d in db.overlay_evaluations.find().sort("created_at", -1).limit(20)]
+
+
+@router.post("/research/umpires/train", status_code=status.HTTP_202_ACCEPTED)
+def umpires_train(db: Database = Depends(get_db)):
+    """Train the umpires on pre-holdout base-rate outcomes and evaluate them walk-forward (background)."""
+    from .. import jobs, umpires
+    try:
+        return {"job_id": jobs.start_job(db, "umpires", lambda log: umpires.train(
+            db, now=dt.datetime.now(dt.timezone.utc), log=log))}
+    except jobs.JobConflict as e:
+        raise HTTPException(409, str(e))
+
+
+@router.get("/research/umpires")
+def umpires_latest(db: Database = Depends(get_db)):
+    doc = db.umpire_models.find_one(sort=[("created_at", -1), ("_id", -1)],
+                                    projection={"sides.long.data": 0, "sides.short.data": 0})
+    if doc is None:
+        raise HTTPException(404, "no umpire model yet; run POST /api/v1/research/umpires/train")
+    doc["id"] = str(doc.pop("_id"))
+    return doc
