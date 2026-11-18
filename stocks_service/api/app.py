@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -23,8 +25,9 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
     keys = settings.api_key_list()
     if not keys:
         raise RuntimeError("STOCKS_API_KEYS is empty: refusing to start an unauthenticated API")
-    if settings.login_token and len(settings.login_token) < 32:
-        raise RuntimeError("STOCKS_LOGIN_TOKEN must be at least 32 characters (it is the whole secret of the sign-in link)")
+    if settings.login_token and not re.fullmatch(r"[A-Za-z0-9_-]{32,}", settings.login_token):
+        raise RuntimeError("STOCKS_LOGIN_TOKEN must be at least 32 URL-safe characters (A-Z a-z 0-9 _ -), "
+                           "e.g. python -c 'import secrets; print(secrets.token_urlsafe(32))'")
     if (settings.admin_password or settings.login_token) and len(settings.session_secret) < 32:
         raise RuntimeError("STOCKS_SESSION_SECRET must be set (>= 32 chars) when a website login is configured")
 

@@ -46,9 +46,13 @@ def login_form(request: Request):
     return _render(request, "login.html", error=None, password_enabled=bool(request.app.state.settings.admin_password))
 
 
-@router.get("/login/{token}", response_class=HTMLResponse)
-def login_link(request: Request, token: str):
-    """Sign in by opening the secret link. Redirects to the dashboard so the token leaves the address bar."""
+@router.post("/login/link", response_class=HTMLResponse)
+def login_link(request: Request, token: str = Form(...)):
+    """Sign in with the token from the bookmark ``/login#<token>``.
+
+    The token lives in the URL *fragment*, which browsers never send to the server, so it cannot
+    appear in access or proxy logs; the login page's script posts it here in the request body.
+    """
     secret = request.app.state.settings.login_token
     if not secret or not hmac.compare_digest(token.encode("utf-8"), secret.encode("utf-8")):
         return _render(request, "login.html", error="That sign-in link is not valid.",

@@ -123,16 +123,19 @@ def test_sign_in_link(db):
         assert c.get("/", follow_redirects=False).headers["location"] == "/login"
         page = c.get("/login").text
         assert "sign-in link" in page and 'type="password"' not in page  # no password form without a password
-        bad = c.get("/login/" + "x" * 40, follow_redirects=False)
-        assert bad.status_code == 200 and "not valid" in bad.text and "user" not in bad.headers.get("set-cookie", "")
+        assert 'action="/login/link"' in page and "location.hash" in page  # token read from the fragment
+        bad = c.post("/login/link", data={"token": "x" * 40}, follow_redirects=False)
+        assert bad.status_code == 200 and "not valid" in bad.text
         assert c.get("/", follow_redirects=False).status_code == 303
-        r = c.get("/login/" + TOKEN, follow_redirects=False)
+        assert c.get("/login/" + TOKEN).status_code in (404, 405)  # never accepted in the URL path (logged)
+        r = c.post("/login/link", data={"token": TOKEN}, follow_redirects=False)
         assert (r.status_code, r.headers["location"]) == (303, "/")
         assert "max-age=7776000" in r.headers["set-cookie"].lower()  # 90 days
         assert c.get("/", follow_redirects=False).status_code == 200
         assert c.post("/login", data={"password": "anything"}).status_code == 404  # password sign-in disabled
 
 
-def test_sign_in_link_must_be_long(db):
-    with pytest.raises(RuntimeError, match="LOGIN_TOKEN"):
-        create_app(Settings(mongo_url="x", api_keys="k", login_token="short", session_secret=SECRET), db=db)
+@pytest.mark.parametrize("token", ["short", "a/b" + "c" * 40, "+" * 40, "x" * 31])
+def test_sign_in_token_must_be_long_and_url_safe(db, token):
+    with pytest.raises(RuntimeError, match="URL-safe"):
+        create_app(Settings(mongo_url="x", api_keys="k", login_token=token, session_secret=SECRET), db=db)
