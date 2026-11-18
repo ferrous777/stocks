@@ -185,7 +185,10 @@ def pause(db: Database, key: str, *, reason: str, now: dt.datetime, by: str, evi
         raise LifecycleError(f"{key} changed status concurrently; retry")
     # Only orders whose session has not opened: earlier ones are settled by the broker as usual.
     cancelled = 0
-    for o in db.orders.find({"status": "open", "source": f"signal:{key}"}, {"eligible_session": 1}):
+    # An order is "from" the version when its estimate came from the version's signal, or when the
+    # version decided to place it (its per-strategy paper account), whatever the estimate source.
+    q = {"status": "open", "$or": [{"source": f"signal:{key}"}, {"decided_by.strategy": key}]}
+    for o in db.orders.find(q, {"eligible_session": 1}):
         if now < sessions.session_bounds(o["eligible_session"].date())[0]:
             cancelled += db.orders.update_one({"_id": o["_id"], "status": "open"},
                                               {"$set": {"status": "cancelled", "cancelled_at": now,

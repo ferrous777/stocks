@@ -26,6 +26,20 @@ MAX_POSITIONS = 10
 
 
 def run_baseline(db: Database, account_id: str, now: dt.datetime) -> dict:
+    def pick(o: dict, busy: set[str]) -> list[dict]:
+        cands = [r for r in o["rows"] if r.get("plan") and r.get("exp_excess_6m") is not None and r["exp_excess_6m"] > 0
+                 and r["symbol"] not in busy]
+        cands.sort(key=lambda r: (-r["exp_return_6m"], r["symbol"], r["side"]))
+        return cands
+    return place_ranked(db, account_id, now, pick=pick, decided_by={"policy": POLICY_ID}, key_prefix="baseline")
+
+
+def place_ranked(db: Database, account_id: str, now: dt.datetime, *, pick, decided_by: dict, key_prefix: str,
+                 max_positions: int = MAX_POSITIONS) -> dict:
+    """Shared order placement for rule-based paper policies: ``pick(outlook, busy_symbols)`` returns
+    outlook rows in priority order; free position slots are filled in that order, each sized with the
+    account's risk profile (the same server-side limits the agent faces), entries only at the row's
+    limit. Idempotency keys (``<key_prefix>:<asof>:<symbol>:<side>``) make re-runs no-ops."""
     acc = db.accounts.find_one({"_id": account_id})
     o = latest_outlook(db)
     if acc is None or o is None:
@@ -35,10 +49,8 @@ def run_baseline(db: Database, account_id: str, now: dt.datetime) -> dict:
     st = ledger_state(db, account_id, now)
     busy = {s for s, h in st.holdings.items() if abs(h.qty) > QTY_TOL}
     busy |= {x["symbol"] for x in db.orders.find({"account_id": account_id, "status": {"$in": list(OPEN_STATUSES)}})}
-    slots = MAX_POSITIONS - len(busy)
-    cands = [r for r in o["rows"] if r.get("plan") and r.get("exp_excess_6m") is not None and r["exp_excess_6m"] > 0
-             and r["symbol"] not in busy]
-    cands.sort(key=lambda r: (-r["exp_return_6m"], r["symbol"], r["side"]))
+    slots = max_positions - len(busy)
+    cands = pick(o, busy)
     profile = RiskProfile.from_doc(db.risk_profiles.find_one({"_id": acc["risk_profile"]}))
     cost = _cost(db, acc)
     cmap = cluster_map(db, o["asof"], profile.corr_threshold)
@@ -59,8 +71,8 @@ def run_baseline(db: Database, account_id: str, now: dt.datetime) -> dict:
             continue
         try:
             res = place_order(db, account_id, symbol=r["symbol"], side=r["side"], qty=qty,
-                              idempotency_key=f"baseline:{o['asof']}:{r['symbol']}:{r['side']}",
-                              decided_by={"policy": POLICY_ID}, now=now)
+                              idempotency_key=f"{key_prefix}:{o['asof']}:{r['symbol']}:{r['side']}",
+                              decided_by=decided_by, now=now)
         except AccountError as e:
             skipped.append({"symbol": r["symbol"], "side": r["side"], "reason": str(e)})
             continue

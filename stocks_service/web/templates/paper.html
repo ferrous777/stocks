@@ -23,8 +23,25 @@
 {% endcall %}
 {% endfor %}
 
+{% if accounts %}
+<h2>All paper accounts</h2>
+{% call ui.table(["Account", "Trades for", ("Return", "num"), ("Equity", "num"), ("Sessions", "num"), ("Open / filled", "num"),
+                  ("Closed", "num"), "Processed through"]) %}
+  {% for a in leaderboard %}
+  <tr><td><a href="#acct-{{ a._id }}">{{ a._id }}</a></td><td>{{ a.kind_label }}</td>
+    <td class="num {{ 'pos' if a['return'] > 0 else 'neg' if a['return'] < 0 }}">{{ '%+.2f%%'|format(a['return']*100) }}</td>
+    <td class="num">{{ '{:,.0f}'.format(a.equity) }}</td><td class="num">{{ a.sessions }}</td>
+    <td class="num">{{ a.open_orders }}</td><td class="num">{{ a.closed }}</td>
+    <td>{{ a.last_session_executed.strftime('%Y-%m-%d') }}{% if a.stalled %} {{ ui.badge('stalled', 'negative', a.stalled) }}{% endif %}</td></tr>
+  {% endfor %}
+{% endcall %}
+<p class="muted small prose">Each strategy (the ensemble included) has its own paper account, created automatically on the first
+tick after the strategy is added. It trades only that strategy's signals from the outlook, strongest first, with the baseline's
+capital, risk profile and costs, starting from the session after it was created; a paused strategy places no new entries.</p>
+{% endif %}
+
 {% for a in accounts %}
-<h2>{{ a.name }} <span class="muted small">{{ a._id }} · {{ a.policy }}</span></h2>
+<h2 id="acct-{{ a._id }}">{{ a.name }} <span class="muted small">{{ a._id }} · {{ a.policy }}</span></h2>
 <div class="stats">
   {{ ui.stat("Equity", '{:,.2f}'.format(a.equity), hint="start " ~ '{:,.0f}'.format(a.starting_cash),
              tone='pos' if a.equity > a.starting_cash else 'neg' if a.equity < a.starting_cash else None) }}

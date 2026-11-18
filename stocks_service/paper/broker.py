@@ -54,7 +54,7 @@ def _date(x) -> dt.date:
 
 def create_paper_account(db: Database, *, account_id: str, name: str, starting_cash: float, risk_profile: str,
                          cost_profile: str = "market@1", policy: str = "agent", now: dt.datetime,
-                         paired_baseline: str | None = None) -> dict:
+                         paired_baseline: str | None = None, strategy: str | None = None) -> dict:
     if not starting_cash > 0:
         raise AccountError("starting_cash must be positive")
     if db.risk_profiles.find_one({"_id": risk_profile}) is None:
@@ -72,7 +72,8 @@ def create_paper_account(db: Database, *, account_id: str, name: str, starting_c
     doc = {"_id": account_id, "name": name, "kind": "paper", "policy": policy, "starting_cash": starting_cash,
            "risk_profile": risk_profile, "cost_profile": cost_profile, "execution_policy": POLICY.key,
            "last_session_executed": _dt(start), "created_at": now, "ledger_version": 0,
-           **({"paired_baseline": paired_baseline} if paired_baseline else {})}
+           **({"paired_baseline": paired_baseline} if paired_baseline else {}),
+           **({"strategy": strategy} if strategy else {})}
 
     def txn(session):
         db.accounts.insert_one(doc, session=session)
