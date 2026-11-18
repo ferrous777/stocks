@@ -161,7 +161,7 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
             }
             _set_estimate(row, est, cash_6m)
             rows.append(row)
-    _annotate_umpires(db, rows, feats)
+    _annotate_umpires(db, rows, feats, cost.key)
     rows.sort(key=lambda r: (GRADE_ORDER[r["grade"]] == 3, -(r.get("exp_return_6m") or -1e9), r["symbol"], r["side"]))
     doc = {"created_at": now, "version": OUTLOOK_VERSION, "asof": asof.isoformat(), "calibration_id": cal["_id"],
            "cost_profile": cost.key, "cost": dataclasses.asdict(cost), "execution_policy": cal["execution_policy"],
@@ -174,15 +174,18 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
     return doc
 
 
-def _annotate_umpires(db: Database, rows: list[dict], feats: dict) -> None:
+def _annotate_umpires(db: Database, rows: list[dict], feats: dict, cost_key: str) -> None:
     """Umpire annotations (never filtering): kNN vote and loss-cluster flag per row, or why not."""
-    model_id, models, evaluation = umpires.latest_models(db)
+    model_id, models, evaluation = umpires.latest_models(db, cost_key)
+    stale = None
+    if model_id is None and db.umpire_models.find_one({}, {"_id": 1}):
+        stale = f"umpires were trained under another cost profile; retrain for {cost_key}"
     for side in ("long", "short"):
         todo = [r for r in rows if r["side"] == side and r.get("plan") and feats.get(r["symbol"]) is not None]
         m = models.get(side)
         if m is None or not todo:
             for r in todo:
-                r["umpires"] = {"status": "untrained"}
+                r["umpires"] = {"status": "untrained", **({"reason": stale} if stale else {})}
             continue
         import numpy as _np
         verdict = evaluation.get(side, {}).get("verdict", "unevaluated")

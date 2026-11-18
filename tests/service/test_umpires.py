@@ -87,3 +87,31 @@ def test_outlook_page_shows_umpires(db):
         c.post("/login", data={"password": "pw"})
         page = c.get("/outlook").text
         assert "Umpire" in page and "most similar past setups" in page
+
+
+def test_block_bootstrap_widens_with_dependence_and_handles_groups():
+    dates = np.repeat(np.arange(200), 10)                 # 10 labels share each decision date
+    rng = np.random.default_rng(0)
+    shock = rng.normal(0, 0.05, 200)[dates]               # common market shock per date
+    y = shock + rng.normal(0, 0.01, len(dates))
+    v = (dates % 2 == 0) & (rng.random(len(dates)) < 0.3)   # vetoes fall on different dates
+    lo, hi = umpires._block_bootstrap_diff(dates[~v], y[~v], dates[v], y[v], seed=1)
+    iid = [rng.choice(y[~v], (~v).sum()).mean() - rng.choice(y[v], v.sum()).mean() for _ in range(500)]
+    ilo, ihi = np.percentile(iid, [2.5, 97.5])
+    assert lo < hi and (hi - lo) > 1.2 * (ihi - ilo)   # same-date shocks: the naive CI is too narrow
+
+
+def test_api_hides_training_arrays_and_cost_mismatch_marks_models_stale(db):
+    from fastapi.testclient import TestClient
+    from stocks_service.api.app import create_app
+    from stocks_service.settings import Settings
+    test_outlook_rows_carry_annotations_never_filtering(db)
+    s = Settings(mongo_url="x", api_keys="k")
+    with TestClient(create_app(s, db=db), base_url="https://testserver") as c:
+        doc = c.get("/api/v1/research/umpires", headers={"X-API-Key": "k"}).json()
+        assert set(doc["sides"]) == {"long", "short"} and all("data" not in v for v in doc["sides"].values())
+    db.umpire_models.update_many({}, {"$set": {"cost_profile": "market@0"}})
+    cal = db.calibrations.find_one(sort=[("created_at", -1)])
+    o = build.build_outlook(db, now=NOW + dt.timedelta(seconds=5), calibration=cal)
+    u = next(r["umpires"] for r in o["rows"] if r.get("plan"))
+    assert u["status"] == "untrained" and "another cost profile" in u["reason"]

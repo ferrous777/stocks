@@ -888,7 +888,7 @@ def umpires_train(db: Database = Depends(get_db)):
 @router.get("/research/umpires")
 def umpires_latest(db: Database = Depends(get_db)):
     doc = db.umpire_models.find_one(sort=[("created_at", -1), ("_id", -1)],
-                                    projection={"sides.data": 0})
+                                    projection={"sides.long.data": 0, "sides.short.data": 0})
     if doc is None:
         raise HTTPException(404, "no umpire model yet; run POST /api/v1/research/umpires/train")
     doc["id"] = str(doc.pop("_id"))

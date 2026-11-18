@@ -16,7 +16,8 @@ sampled every 5 sessions, resolved before the sealed holdout. Per side:
 
 Walk-forward evaluation: for each year T, train on labels resolved before T and annotate labels
 decided in that year; compare the mean realized excess of vetoed vs. not-vetoed labels with a
-seeded bootstrap CI. Verdict ``useful`` only if the CI of (not vetoed - vetoed) is above 0.
+seeded **block bootstrap over decision dates** (labels overlap in time and share market dates).
+Verdict ``useful`` only if the CI of (not vetoed - vetoed) is above 0.
 """
 
 from __future__ import annotations
@@ -187,6 +188,35 @@ class SideModel:
 
 # --- evaluation and training job -----------------------------------------------------------------
 
+BLOCK_DATES = 26   # ~6 months of 5-session samples: longer than the 126-session outcome horizon
+
+
+def _block_bootstrap_diff(keep_dates, keep_y, veto_dates, veto_y, seed: int, n: int = 1000) -> tuple[float, float]:
+    """95% CI of mean(not vetoed) - mean(vetoed), resampling contiguous blocks of decision dates
+    jointly for both groups and all symbols (outcomes overlap in time and share market dates)."""
+    rng = np.random.default_rng(seed)
+    dates = np.array(sorted(set(keep_dates) | set(veto_dates)))
+    pos = {d: i for i, d in enumerate(dates)}
+    ki = np.array([pos[d] for d in keep_dates])
+    vi = np.array([pos[d] for d in veto_dates])
+    k_sum = np.bincount(ki, weights=keep_y, minlength=len(dates))
+    k_n = np.bincount(ki, minlength=len(dates))
+    v_sum = np.bincount(vi, weights=veto_y, minlength=len(dates))
+    v_n = np.bincount(vi, minlength=len(dates))
+    nb = int(np.ceil(len(dates) / BLOCK_DATES))
+    diffs = []
+    for _ in range(n):
+        starts = rng.integers(0, max(1, len(dates) - BLOCK_DATES + 1), size=nb)
+        idx = (starts[:, None] + np.arange(BLOCK_DATES)[None, :]).ravel()
+        idx = idx[idx < len(dates)]
+        kn, vn = k_n[idx].sum(), v_n[idx].sum()
+        if kn == 0 or vn == 0:
+            continue
+        diffs.append(k_sum[idx].sum() / kn - v_sum[idx].sum() / vn)
+    lo, hi = np.percentile(diffs, [2.5, 97.5])
+    return float(lo), float(hi)
+
+
 def walk_forward(data: dict, holdout_start: dt.date, seed: int = 11) -> dict:
     out = {}
     for side, o in data.items():
@@ -195,7 +225,7 @@ def walk_forward(data: dict, holdout_start: dt.date, seed: int = 11) -> dict:
         dec = np.array(o["decided"])
         res = np.array(o["resolved"])
         years = sorted({d.year for d in dec})
-        vet, keep = [], []
+        vet, keep, vet_d, keep_d = [], [], [], []
         for yr in years[3:]:
             T = dt.date(yr, 1, 1)
             T1 = min(dt.date(yr + 1, 1, 1), holdout_start)
@@ -207,14 +237,15 @@ def walk_forward(data: dict, holdout_start: dt.date, seed: int = 11) -> dict:
             ann = m.annotate(o["X"][te])
             yt = o["y"][te]
             v = np.array([a["knn"] == "veto" for a in ann])
+            dt_te = dec[te]
             vet += list(yt[v])
             keep += list(yt[~v])
-        rng = np.random.default_rng(seed)
+            vet_d += list(dt_te[v])
+            keep_d += list(dt_te[~v])
         r = {"vetoed": len(vet), "not_vetoed": len(keep)}
         if len(vet) >= 30 and len(keep) >= 30:
             vet_a, keep_a = np.array(vet), np.array(keep)
-            boots = [rng.choice(keep_a, len(keep_a)).mean() - rng.choice(vet_a, len(vet_a)).mean() for _ in range(1000)]
-            lo, hi = np.percentile(boots, [2.5, 97.5])
+            lo, hi = _block_bootstrap_diff(np.array(keep_d), keep_a, np.array(vet_d), vet_a, seed)
             r.update(mean_vetoed=float(vet_a.mean()), mean_not_vetoed=float(keep_a.mean()),
                      difference=float(keep_a.mean() - vet_a.mean()), ci95=[float(lo), float(hi)],
                      verdict="useful" if lo > 0 else "not_useful")
@@ -248,9 +279,11 @@ def train(db: Database, *, now: dt.datetime, log=None) -> dict:
 _loaded: dict = {}
 
 
-def latest_models(db: Database) -> tuple[str | None, dict[str, SideModel], dict]:
-    """(model id, side models, walk-forward evaluation per side)."""
-    doc = db.umpire_models.find_one(sort=[("created_at", -1), ("_id", -1)], projection={"_id": 1, "evaluation": 1})
+def latest_models(db: Database, cost_profile: str | None = None) -> tuple[str | None, dict[str, SideModel], dict]:
+    """(model id, side models, walk-forward evaluation per side) of the latest model trained under
+    ``cost_profile`` (outcomes, and so votes and verdicts, depend on the costs)."""
+    q = {"cost_profile": cost_profile} if cost_profile else {}
+    doc = db.umpire_models.find_one(q, sort=[("created_at", -1), ("_id", -1)], projection={"_id": 1, "evaluation": 1})
     if doc is None:
         return None, {}, {}
     key = (db.name, str(doc["_id"]))
