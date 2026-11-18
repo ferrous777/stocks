@@ -231,8 +231,9 @@ def _excess_sharpe(r: BacktestResult, irx: SymbolSeries) -> float | None:
     return float(x.mean() / sd) if sd > 0 else None
 
 
-def _record(db: Database, r: BacktestResult, *, kind: str, now: dt.datetime, excess_sharpe: float | None) -> None:
-    db.experiments.insert_one({
+def _record(db: Database, r: BacktestResult, *, kind: str, now: dt.datetime, excess_sharpe: float | None,
+            params: dict | None = None) -> None:
+    db.experiments.insert_one({"params": params,
         "kind": kind, "protocol_version": PROTOCOL_VERSION, "excess_sharpe": excess_sharpe,
         "sessions": len(r.equity), "strategy": r.strategy, "policy": r.policy, "cost_profile": r.cost_profile,
         "execution_policy": r.execution_policy, "start": dt.datetime.combine(r.start, dt.time(), dt.timezone.utc),

@@ -893,3 +893,30 @@ def umpires_latest(db: Database = Depends(get_db)):
         raise HTTPException(404, "no umpire model yet; run POST /api/v1/research/umpires/train")
     doc["id"] = str(doc.pop("_id"))
     return doc
+class TuningRunIn(BaseModel):
+    strategy: str = Field(default="ma_crossover@1", pattern=STRATEGY_KEY)
+    start: dt.date = dt.date(2006, 1, 3)
+    end: dt.date = dt.date(2024, 11, 15)
+
+
+@router.post("/research/tuning/run", status_code=status.HTTP_202_ACCEPTED)
+def tuning_run(body: TuningRunIn, db: Database = Depends(get_db)):
+    """Walk-forward grid search of ATR stop/target multiples (every configuration recorded as a trial)."""
+    from ..jobs import JobConflict
+    from ..research.tuning import start_tuning_job
+    from ..strategies import get_spec
+    try:
+        get_spec(body.strategy)
+    except KeyError:
+        raise HTTPException(404, f"unknown strategy {body.strategy}")
+    try:
+        return {"job_id": start_tuning_job(db, strategy=body.strategy, start=body.start, end=body.end)}
+    except JobConflict as e:
+        raise HTTPException(409, str(e))
+
+
+@router.get("/research/tuning")
+def tuning_results(db: Database = Depends(get_db)):
+    from ..research.protocol import _finite
+    return [_finite({k: v for k, v in d.items() if k != "_id"})
+            for d in db.param_sets.find().sort("created_at", -1).limit(20)]
