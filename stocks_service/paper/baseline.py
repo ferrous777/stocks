@@ -14,11 +14,12 @@ import datetime as dt
 from pymongo.database import Database
 
 from ..accounts.ledger import QTY_TOL
-from ..accounts.risk import RiskProfile, avg_dollar_volume, cluster_keys, size_ticket
+from ..accounts.risk import RiskProfile
 from ..accounts.service import AccountError, ledger_state
 from ..outlook.build import latest_outlook
 from ..research.series import SymbolSeries
-from .broker import OPEN_STATUSES, account_book, place_order
+from .broker import OPEN_STATUSES, _cost, account_book, max_order_qty, place_order
+from .clusters import cluster_map, keys_for
 
 POLICY_ID = "baseline_v1@1"
 MAX_POSITIONS = 10
@@ -39,20 +40,22 @@ def run_baseline(db: Database, account_id: str, now: dt.datetime) -> dict:
              and r["symbol"] not in busy]
     cands.sort(key=lambda r: (-r["exp_return_6m"], r["symbol"], r["side"]))
     profile = RiskProfile.from_doc(db.risk_profiles.find_one({"_id": acc["risk_profile"]}))
+    cost = _cost(db, acc)
+    cmap = cluster_map(db, o["asof"], profile.corr_threshold)
     placed, skipped = [], []
     for r in cands:
         if slots <= 0:
             break
         if r["symbol"] in busy:
             continue
-        book, _ = account_book(db, acc, now, profile=profile)
-        groups = (db.symbols.find_one({"_id": r["symbol"]}, {"groups": 1}) or {}).get("groups", [])
-        qty, why, _ = size_ticket(r, book, profile, keys=cluster_keys(r["symbol"], {r["symbol"]: groups}, {}),
-                                  adv_usd=avg_dollar_volume(SymbolSeries.from_db(db, r["symbol"]),
-                                                            dt.date.fromisoformat(o["asof"])),
-                                  shortable=True)
+        if r["side"] == "short" and cost.borrow_rate_annual is None:
+            skipped.append({"symbol": r["symbol"], "side": r["side"], "reason": "shorts disabled (no borrow rate)"})
+            continue
+        book, _ = account_book(db, acc, now, profile=profile, clusters=cmap)
+        qty, why = max_order_qty(r, book, profile, cost, keys_for(r["symbol"], *cmap),
+                                 SymbolSeries.from_db(db, r["symbol"]), dt.date.fromisoformat(o["asof"]))
         if qty < 1:
-            skipped.append({"symbol": r["symbol"], "side": r["side"], "reason": why[0]})
+            skipped.append({"symbol": r["symbol"], "side": r["side"], "reason": why})
             continue
         try:
             res = place_order(db, account_id, symbol=r["symbol"], side=r["side"], qty=qty,

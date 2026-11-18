@@ -702,12 +702,18 @@ def place_paper_order(body: PaperOrderIn, request: Request, account_id: str = Ac
 
 
 @router.delete("/accounts/{account_id}/orders/{order_id}")
-def cancel_paper_order(order_id: str, account_id: str = AccountPath, db: Database = Depends(get_db)):
+def cancel_paper_order(order_id: str = Path(pattern=r"^[0-9a-f]{24}$"), account_id: str = AccountPath,
+                       db: Database = Depends(get_db)):
+    from ..accounts.service import AccountError, NotFound
     from ..paper import broker
     try:
-        return _order_out(_acct_call(broker.cancel_order, db, account_id, order_id, now=_now()))
-    except broker.PaperOnly as e:
+        return _order_out(broker.cancel_order(db, account_id, order_id, now=_now()))
+    except broker.PaperOnly as e:          # subclass of AccountError: map it first
         raise HTTPException(403, str(e))
+    except NotFound as e:
+        raise HTTPException(404, str(e))
+    except AccountError as e:
+        raise HTTPException(409, str(e))
 
 
 @router.get("/accounts/{account_id}/orders")

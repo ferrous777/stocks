@@ -26,7 +26,7 @@ from pymongo.errors import DuplicateKeyError
 
 from .. import sessions
 from ..accounts.ledger import QTY_TOL
-from ..accounts.risk import Book, RiskProfile, avg_dollar_volume, size_ticket
+from ..accounts.risk import Book, RiskProfile, avg_dollar_volume, size_ticket  # noqa: F401
 from ..accounts.service import AccountError, NotFound, _lock_account, ledger_state
 from ..outlook.build import cost_profile_from_doc, latest_outlook
 from ..research.series import SymbolSeries
@@ -105,7 +105,7 @@ def _marks(db: Database, symbols, session=None) -> dict[str, float]:
 
 
 def account_book(db: Database, acc: dict, now: dt.datetime, session=None,
-                 profile: RiskProfile | None = None) -> tuple[Book, dict]:
+                 profile: RiskProfile | None = None, clusters: tuple[dict, dict] | None = None) -> tuple[Book, dict]:
     """Equity, free cash and committed exposure of a paper account (holdings + open orders).
 
     Fully collateralized: a short's proceeds stay locked and the same amount again is held as
@@ -126,6 +126,15 @@ def account_book(db: Database, acc: dict, now: dt.datetime, session=None,
     book = Book(equity=equity, cash=free)
     book.gross = sum(abs(v) for v in mv.values()) + sum(o["qty"] * o["limit"] for o in orders)
     book.short = short_mv + sum(o["qty"] * o["limit"] for o in orders if o["side"] == "short")
+    if clusters is not None:  # |exposure| per cluster: holdings at market + open orders at their limit
+        from .clusters import keys_for
+        groups, corr = clusters
+        for sym, v in mv.items():
+            for k in keys_for(sym, groups, corr):
+                book.clusters[k] = book.clusters.get(k, 0.0) + abs(v)
+        for o in orders:
+            for k in keys_for(o["symbol"], groups, corr):
+                book.clusters[k] = book.clusters.get(k, 0.0) + o["qty"] * o["limit"]
     if profile is not None:  # heat: loss to the stop incl. gap stress, open orders and filled positions
         for o in db.orders.find({"account_id": acc["_id"], "status": {"$in": list(OPEN_STATUSES)}}, session=session):
             if o["status"] == "open":
@@ -169,17 +178,19 @@ def place_order(db: Database, account_id: str, *, symbol: str, side: str, qty: i
         p = row["plan"]
         limit, stop, target = round(p["entry_limit"], 2), round(p["stop"], 2), round(p["target"], 2)
         plan = TradePlan(side, dt.date.fromisoformat(o["asof"]), limit, stop, target)  # validates ordering
-        profile = RiskProfile.from_doc(db.risk_profiles.find_one({"_id": acc["risk_profile"]}))
-        book, _ = account_book(db, acc, now, session, profile)
-        series = SymbolSeries.from_db(db, symbol)
-        from ..accounts.risk import cluster_keys
-        sym = db.symbols.find_one({"_id": symbol}, {"groups": 1}, session=session) or {}
-        allowed, why, _ = size_ticket(row, book, profile, keys=cluster_keys(symbol, {symbol: sym.get("groups", [])}, {}),
-                                      adv_usd=avg_dollar_volume(series, plan.decided), shortable=True)
-        if qty > allowed:
-            raise AccountError(f"qty {qty} exceeds the risk limit of {allowed} ({why[0]})")
         cost = _cost(db, acc)
-        reservation = qty * limit + (entry_costs(cost, limit, qty) if side == "long" else 0.0)
+        if side == "short" and cost.borrow_rate_annual is None:
+            raise AccountError(f"cost profile {cost.key} has no borrow rate, so this account cannot short")
+        profile = RiskProfile.from_doc(db.risk_profiles.find_one({"_id": acc["risk_profile"]}))
+        from .clusters import cluster_map, keys_for
+        cmap = cluster_map(db, o["asof"], profile.corr_threshold)
+        book, _ = account_book(db, acc, now, session, profile, cmap)
+        allowed, why = max_order_qty(row, book, profile, cost, keys_for(symbol, *cmap),
+                                     SymbolSeries.from_db(db, symbol), plan.decided)
+        if qty > allowed:
+            raise AccountError(f"qty {qty} exceeds the risk limit of {allowed} ({why})")
+        # Reservation: notional + entry costs (a buy's cash, or a short's 100% margin); <= free cash by construction.
+        reservation = qty * limit + entry_costs(cost, limit, qty)
         doc = {"_id": ObjectId(), "account_id": account_id, "idempotency_key": idempotency_key, "symbol": symbol,
                "side": side, "qty": qty, "limit": limit, "stop": stop, "target": target, "atr": p["atr"],
                "decided": _dt(plan.decided), "eligible_session": _dt(sessions.next_session(plan.decided)),
@@ -192,6 +203,21 @@ def place_order(db: Database, account_id: str, *, symbol: str, side: str, qty: i
     with db.client.start_session() as s:
         s.with_transaction(txn)
     return out
+
+
+def max_order_qty(row: dict, book: Book, profile: RiskProfile, cost: CostProfile, keys: set[str],
+                  series: SymbolSeries, asof: dt.date) -> tuple[int, str]:
+    """Largest order the account may place: risk limits, then buying power including entry costs."""
+    allowed, why, _ = size_ticket(row, Book(book.equity, book.cash, book.gross, book.short, book.heat,
+                                            dict(book.clusters)),
+                                  profile, keys=keys, adv_usd=avg_dollar_volume(series, asof), shortable=True)
+    reason = why[0] if why else "risk limits"
+    limit = round(row["plan"]["entry_limit"], 2)
+    per_share = limit * (1 + (cost.half_spread_bps + cost.slippage_bps) / 10_000) + cost.commission_per_share
+    cash_cap = int(max(0.0, book.cash - cost.min_commission) // per_share)
+    if cash_cap < allowed:
+        return cash_cap, "buying power incl. entry costs"
+    return allowed, reason
 
 
 def cancel_order(db: Database, account_id: str, order_id: str, *, now: dt.datetime) -> dict:

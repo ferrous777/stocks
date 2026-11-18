@@ -149,3 +149,61 @@ def test_baseline_is_deterministic_and_respects_limits(db, world):
         assert r["exp_excess_6m"] > 0
     exp = [o["exp_return_6m"] for o in sorted(orders, key=lambda o: o["placed_at"])]
     assert exp == sorted(exp, reverse=True)
+
+
+# --- review fixes (PR #25) --------------------------------------------------------------------
+
+def test_paper_ledgers_only_take_simulated_fills(db, world):
+    from stocks_service.accounts import service
+    broker.create_paper_account(db, account_id="p", name="P", starting_cash=10_000.0, risk_profile="default@1",
+                                now=EVENING)
+    with pytest.raises(service.AccountError, match="simulator"):
+        service.add_executions(db, "p", [{"symbol": "SPY", "side": "buy", "qty": 1, "price": 1.0,
+                                          "ts": EVENING}], now=EVENING)
+
+
+def test_cluster_cap_counts_holdings_and_open_orders(db, world):
+    db.risk_profiles.insert_one({"_id": "tight@1", **dataclasses.asdict(
+        dataclasses.replace(PROFILE, profile_id="tight", max_cluster_pct=0.05))})
+    db.symbols.update_many({"_id": {"$in": ["NVDA", "INTC"]}}, {"$set": {"groups": ["semis"]}})
+    broker.create_paper_account(db, account_id="p", name="P", starting_cash=100_000.0, risk_profile="tight@1",
+                                now=EVENING)
+    nvda = _row(db, "NVDA", "long")["plan"]["entry_limit"]
+    q = int(4_000 // nvda)
+    broker.place_order(db, "p", symbol="NVDA", side="long", qty=q, idempotency_key="nvda-first", decided_by={},
+                       now=EVENING)
+    intc = _row(db, "INTC", "long")["plan"]["entry_limit"]
+    with pytest.raises(broker.AccountError, match="cluster_cap\\(group:semis\\)"):
+        broker.place_order(db, "p", symbol="INTC", side="long", qty=int(2_000 // intc) + 1,
+                           idempotency_key="intc-second", decided_by={}, now=EVENING)
+
+
+def test_shorts_need_a_borrow_rate_and_collateral(db, world):
+    db.cost_profiles.insert_one({**db.cost_profiles.find_one({"_id": "market@1"}), "_id": "noshort@1",
+                                 "profile_id": "noshort", "borrow_rate_annual": None})
+    broker.create_paper_account(db, account_id="ns", name="NS", starting_cash=100_000.0, risk_profile="default@1",
+                                cost_profile="noshort@1", now=EVENING)
+    with pytest.raises(broker.AccountError, match="borrow rate"):
+        broker.place_order(db, "ns", symbol="QQQ", side="short", qty=1, idempotency_key="qqq-short",
+                           decided_by={}, now=EVENING)
+    db.risk_profiles.insert_one({"_id": "wide@1", **dataclasses.asdict(dataclasses.replace(
+        PROFILE, profile_id="wide", risk_per_trade=1.0, max_position_pct=1.0, max_short_pct=2.0, max_heat_pct=1.0,
+        max_cluster_pct=1.0, max_gross=2.0, min_adv_usd=0.0))})
+    broker.create_paper_account(db, account_id="small", name="S", starting_cash=1_000.0, risk_profile="wide@1",
+                                now=EVENING)
+    broker.place_order(db, "small", symbol="QQQ", side="short", qty=1, idempotency_key="qqq-short-one",
+                       decided_by={}, now=EVENING)     # reserves ~$470 of margin (+ entry costs)
+    qqqm = _row(db, "INTC", "short")["plan"]["entry_limit"]  # uncorrelated with QQQ: no cluster limit
+    free = 1_000.0 - db.orders.find_one({"idempotency_key": "qqq-short-one"})["reservation"]
+    too_many = int(free // qqqm) + 1
+    assert too_many * qqqm < 1_000.0                  # within the position cap, beyond buying power
+    with pytest.raises(broker.AccountError, match="buying power"):
+        broker.place_order(db, "small", symbol="INTC", side="short", qty=too_many, idempotency_key="intc-short",
+                           decided_by={}, now=EVENING)
+
+
+def test_cancel_validates_ids_and_refuses_real_accounts(db, world):
+    with _client(db) as c:
+        c.post("/api/v1/accounts", json={"account_id": "real", "name": "Real"}, headers=H)
+        assert c.delete("/api/v1/accounts/real/orders/not-an-id", headers=H).status_code == 422
+        assert c.delete("/api/v1/accounts/real/orders/" + "a" * 24, headers=H).status_code == 403
