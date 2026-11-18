@@ -102,3 +102,90 @@ def research(request: Request, db: Database = Depends(get_db)):
 @router.get("/outlook", response_class=HTMLResponse, dependencies=[Depends(require_login)])
 def outlook(request: Request, side: str | None = None, db: Database = Depends(get_db)):
     return _render(request, "outlook.html", **data.outlook_status(db, side))
+
+
+# --- accounts ---------------------------------------------------------------------------------
+
+def _account_page(request: Request, db: Database, account_id: str, message: str | None = None,
+                  error: str | None = None, draft: dict | None = None):
+    import datetime as _dt
+    from ..accounts import service
+    try:
+        acc = service.get_account(db, account_id)
+    except service.NotFound:
+        raise HTTPException(404, "Unknown account")
+    now = _dt.datetime.now(_dt.timezone.utc)
+    h = service.holdings(db, account_id, now)
+    try:
+        o = service.account_outlook(db, account_id, now)
+        rows = [r for r in o["rows"] if r.get("kind") != "new" or r["grade"] in ("A", "B")]
+    except service.NotFound:
+        o, rows = None, []
+    breaks = list(db.reconciliation_breaks.find({"account_id": account_id}).sort([("status", 1), ("as_of", -1)]).limit(50))
+    snaps = list(db.portfolio_snapshots.find({"account_id": account_id}, {"positions": 0}).sort("as_of", -1).limit(10))
+    return _render(request, "account.html", acc=acc, h=h, outlook=o, rows=rows, breaks=breaks, snaps=snaps,
+                   message=message, error=error, draft=draft or {})
+
+
+@router.get("/accounts", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+def accounts(request: Request, db: Database = Depends(get_db)):
+    accs = list(db.accounts.find().sort("_id", 1))
+    for a in accs:
+        a["open_breaks"] = db.reconciliation_breaks.count_documents({"account_id": a["_id"], "status": "open"})
+        last = db.portfolio_snapshots.find_one({"account_id": a["_id"]}, sort=[("as_of", -1)])
+        a["latest_snapshot"] = last["as_of"] if last else None
+    return _render(request, "accounts.html", accounts=accs, error=None)
+
+
+@router.post("/accounts", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+def create_account_form(request: Request, account_id: str = Form(...), name: str = Form(...),
+                        db: Database = Depends(get_db)):
+    import datetime as _dt
+    import re
+    from ..accounts import service
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,40}", account_id):
+        return _render(request, "accounts.html", accounts=list(db.accounts.find()),
+                       error="Account id: lowercase letters, digits, - or _ (2-41 characters).")
+    try:
+        service.create_account(db, account_id=account_id, name=name.strip() or account_id,
+                               now=_dt.datetime.now(_dt.timezone.utc))
+    except service.AccountError as e:
+        return _render(request, "accounts.html", accounts=list(db.accounts.find()), error=str(e))
+    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
+
+@router.get("/accounts/{account_id}", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+def account_page(request: Request, account_id: str, db: Database = Depends(get_db)):
+    return _account_page(request, db, account_id)
+
+
+@router.post("/accounts/{account_id}/upload", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+def account_upload(request: Request, account_id: str, kind: str = Form(...), payload: str = Form(...),
+                   db: Database = Depends(get_db)):
+    """Paste-in JSON upload; validated by the same models and service as the API."""
+    import datetime as _dt
+    import json
+    from pydantic import TypeAdapter, ValidationError
+    from ..accounts import service
+    from ..api.routes import ExecutionIn, SnapshotIn
+    now = _dt.datetime.now(_dt.timezone.utc)
+    try:
+        raw = json.loads(payload)
+        if kind == "snapshot":
+            body = SnapshotIn.model_validate(raw)
+            res = service.upload_snapshot(db, account_id, as_of=body.as_of, cash=body.cash, opening=body.opening,
+                                          positions=[p.model_dump() for p in body.positions], now=now)
+            n = len([b for b in res["breaks"] if b["status"] == "open"])
+            msg = ("Opening balance recorded." if res["snapshot"]["opening"]
+                   else f"Snapshot reconciled: {n} open difference(s).")
+        elif kind == "executions":
+            items = TypeAdapter(list[ExecutionIn]).validate_python(raw if isinstance(raw, list) else [raw])
+            res = service.add_executions(db, account_id, [x.model_dump() for x in items], now=now)
+            msg = f"{res['inserted']} fill(s) recorded, {res['duplicates']} duplicate(s) skipped."
+        else:
+            raise HTTPException(422, "kind must be snapshot or executions")
+    except service.NotFound:
+        raise HTTPException(404, "Unknown account")
+    except (json.JSONDecodeError, ValidationError, service.AccountError, ValueError) as e:
+        return _account_page(request, db, account_id, error=f"Not saved: {e}", draft={kind: payload})
+    return _account_page(request, db, account_id, message=msg)
