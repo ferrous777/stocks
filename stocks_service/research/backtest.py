@@ -22,6 +22,7 @@ see the future. Shorts are fully collateralized (gross exposure <= equity, no le
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import math
 from dataclasses import dataclass, field
@@ -140,7 +141,10 @@ def _max_qty(cost: CostProfile, price: float, budget: float) -> float:
 
 def run_backtest(universe: dict[str, SymbolSeries], tradable: list[str], irx: SymbolSeries, strategy_key: str,
                  start: dt.date, end: dt.date, cost: CostProfile, policy: ExecutionPolicy = ExecutionPolicy(),
-                 params: PolicyParams = PolicyParams(), initial: float = 100_000.0) -> BacktestResult:
+                 params: PolicyParams = PolicyParams(), initial: float = 100_000.0, overlay=None) -> BacktestResult:
+    """``overlay`` (optional): ``overlay.adjust(symbol, decisions_today) -> (direction, strength)``, where
+    ``decisions_today`` holds the point-in-time decision of every tradable symbol with a bar on d.
+    The result's strategy name becomes ``<strategy>+<overlay.key>``."""
     spec = get_spec(strategy_key)
     days = sessions.sessions_between(start, end)
     if not days:
@@ -148,7 +152,8 @@ def run_backtest(universe: dict[str, SymbolSeries], tradable: list[str], irx: Sy
     if not any(universe[s].has_bar(days[-1]) for s in tradable):
         last = max((universe[s].sessions[-1] for s in tradable if universe[s].sessions), default=None)
         raise DataCoverageError(f"window ends {days[-1]} but stored market data ends {last}")
-    res = BacktestResult(strategy_key, POLICY_ID, cost.key, policy.key, days[0], days[-1], initial)
+    res = BacktestResult(strategy_key + (f"+{overlay.key}" if overlay else ""), POLICY_ID, cost.key, policy.key,
+                         days[0], days[-1], initial)
     cash = initial
     orders: list[_Order] = []
     positions: list[_Position] = []
@@ -234,6 +239,12 @@ def run_backtest(universe: dict[str, SymbolSeries], tradable: list[str], irx: Sy
         if slots <= 0:
             continue
         candidates = []
+        todays: dict = {}
+        if overlay is not None:  # the overlay sees every symbol's point-in-time decision for d
+            for sym in tradable:
+                s_ = universe[sym]
+                if s_.count_through(d) >= spec.min_bars and s_.sessions[s_.count_through(d) - 1] == d:
+                    todays[sym] = decide(s_.view_at(d), spec)
         for sym in tradable:
             if sym in held:
                 continue
@@ -241,7 +252,10 @@ def run_backtest(universe: dict[str, SymbolSeries], tradable: list[str], irx: Sy
             if series.count_through(d) < spec.min_bars or series.sessions[series.count_through(d) - 1] != d:
                 continue  # no bar today (not yet listed, halted, or data gap): no decision
             view = series.view_at(d)
-            dec = decide(view, spec)
+            dec = todays[sym] if overlay is not None else decide(view, spec)
+            if overlay is not None:
+                direction, strength = overlay.adjust(sym, todays)
+                dec = dataclasses.replace(dec, direction=direction, strength=strength)
             if dec.direction not in ("long", "short") or dec.strength < params.min_strength:
                 continue
             if dec.direction == "short" and not allow_short:
