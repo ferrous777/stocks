@@ -727,3 +727,15 @@ def list_orders(account_id: str = AccountPath, status_: str | None = Query(None,
 def equity_curve(account_id: str = AccountPath, db: Database = Depends(get_db)):
     return [{k: v for k, v in e.items() if k != "_id"}
             for e in db.equity_curve.find({"account_id": account_id}).sort("session", 1)]
+
+
+@router.get("/paper/compare")
+def paper_compare(agent: str = Query(pattern=ACCOUNT_PATTERN), baseline: str = Query(pattern=ACCOUNT_PATTERN),
+                  db: Database = Depends(get_db)):
+    """Paired agent-vs-baseline comparison over shared sessions, with the influence gate."""
+    from ..paper.report import compare
+    for a in (agent, baseline):
+        acc = db.accounts.find_one({"_id": a})
+        if acc is None or acc.get("kind") != "paper":
+            raise HTTPException(404, f"paper account {a} not found")
+    return compare(db, agent, baseline)

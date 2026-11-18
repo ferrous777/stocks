@@ -44,9 +44,13 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
         import datetime as _dt
         from ..strategies import sync_strategy_versions
         sync_strategy_versions(app.state.db, _dt.datetime.now(_dt.timezone.utc))
-        yield
+        async with mcp.session_manager.run():  # MCP streamable-HTTP transport (stateless)
+            yield
         if client is not None:
             client.close()
+
+    from ..mcp_server import McpPath, _Auth, build_mcp
+    mcp = build_mcp(lambda: app.state.db)
 
     app = FastAPI(title="Stocks Service", version=__version__, lifespan=lifespan)
     app.state.settings = settings
@@ -74,4 +78,8 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
 
     app.include_router(router)
     app.include_router(web_router)
+    # MCP for the external AI agent: bearer = an API key; paper accounts only.
+    app.mount("/mcp", _Auth(mcp.streamable_http_app(), keys))
+    app.add_middleware(McpPath)
+    app.state.mcp = mcp
     return app
