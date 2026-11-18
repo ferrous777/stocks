@@ -3,7 +3,6 @@
 {% block title %}Connect an agent · Stocks{% endblock %}
 {% block content %}
 {% set agent_id = agent_accounts[0]._id if agent_accounts else "paper-agent" %}
-{% set baseline_id = baseline_accounts[0]._id if baseline_accounts else "paper-baseline" %}
 {% call ui.page_header("Connect an AI agent") %}An AI agent can read the six-month outlook and trade the
 <strong>paper</strong> accounts through this site's MCP (Model Context Protocol) server. Real accounts are refused,
 and every call is logged with the agent's identity.{% endcall %}
@@ -141,7 +140,8 @@ asyncio.run(main()){% endset %}
 {% if agent_accounts %}
 {% call ui.table(["Account", "Name", "Compare with"]) %}
   {% for a in agent_accounts %}
-  <tr><td><code>{{ a._id }}</code></td><td>{{ a.name }}</td><td><code>{{ baseline_id }}</code></td></tr>
+  <tr><td><code>{{ a._id }}</code></td><td>{{ a.name }}</td>
+    <td>{% if a.baseline %}<code>{{ a.baseline }}</code> <span class="small muted">({{ a.pairing }})</span>{% else %}<span class="small muted">no baseline: {{ a.pairing }}</span>{% endif %}</td></tr>
   {% endfor %}
 {% endcall %}
 <p class="muted small prose">Any paper account can be traded, but the rule-based accounts (the baseline and one per strategy) are

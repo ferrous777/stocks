@@ -246,6 +246,15 @@ def test_connect_page_documents_the_live_mcp_server(db):
     assert "claude mcp add --transport http stocks " + endpoint in page
     assert "mcp-client-2025-11-20" in page and "mcp_toolset" in page
     assert "<code>paper-agent</code>" in page and "fidelity" not in page   # real accounts are never offered
+    assert "no baseline: " in page                                          # unpaired: says why, invents nothing
+    # With a baseline of identical capital and profiles, the agent's row names the same pairing the gate uses.
+    from stocks_service.paper import baseline as bl
+    broker.create_paper_account(db, account_id="paper-baseline", name="Baseline", starting_cash=100_000.0,
+                                risk_profile="default@1", policy=bl.POLICY_ID, now=NOW)
+    with _client(db) as c:
+        _login(c)
+        page = c.get("/connect").text
+    assert "<code>paper-baseline</code>" in page and "no baseline: " not in page
     assert "1 key(s) configured" in page
     assert "Bearer k" not in page and "Bearer $STOCKS_API_KEY" in page    # the real key is never rendered
     # The curl sample's single quotes are escaped text inside <code>, not markup.

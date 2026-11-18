@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from pymongo.database import Database
 
 from ..api.deps import get_db
@@ -125,8 +126,9 @@ def outlook(request: Request, side: str | None = None, db: Database = Depends(ge
 async def connect(request: Request, db: Database = Depends(get_db)):
     """How to connect an AI agent to the MCP server: endpoint, auth, client setup and the live tool list."""
     tools = await request.app.state.mcp.list_tools()
-    return _render(request, "connect.html", **data.mcp_connect(db, str(request.base_url), tools,
-                                                               request.app.state.api_keys))
+    # PyMongo is synchronous: run the read model in the thread pool so it never blocks the event loop.
+    ctx = await run_in_threadpool(data.mcp_connect, db, str(request.base_url), tools, request.app.state.api_keys)
+    return _render(request, "connect.html", **ctx)
 
 
 # --- accounts ---------------------------------------------------------------------------------

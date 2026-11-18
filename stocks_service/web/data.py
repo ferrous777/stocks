@@ -218,12 +218,15 @@ def mcp_connect(db: Database, base_url: str, tools: list, api_keys: list[str]) -
                    "required": n in required, "default": p.get("default")}
                   for n, p in (schema.get("properties") or {}).items() if n not in IDENTITY_PARAMS]
         rows.append({"name": t.name, "description": (t.description or "").strip(), "params": params})
-    paper = list(db.accounts.find({"kind": "paper"}, {"name": 1, "policy": 1, "strategy": 1}).sort("_id", 1))
+    from ..paper.report import matching_baseline
+    agents = []
+    for a in db.accounts.find({"kind": "paper", "policy": "agent"}).sort("_id", 1):
+        base, why = matching_baseline(db, a)          # the same pairing the Paper page and the gate use
+        agents.append({"_id": a["_id"], "name": a.get("name", ""), "baseline": base, "pairing": why})
     return {
         "endpoint": base_url.rstrip("/") + "/mcp",
         "tools": rows,
         "identity_params": IDENTITY_PARAMS,
-        "agent_accounts": [a for a in paper if a.get("policy") == "agent"],
-        "baseline_accounts": [a for a in paper if str(a.get("policy", "")).startswith("baseline")],
+        "agent_accounts": agents,
         "key_count": len(api_keys),
     }
