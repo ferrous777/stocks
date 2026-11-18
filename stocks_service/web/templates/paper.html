@@ -8,12 +8,18 @@
 
 {% for c in comparisons %}
 <div class="panel" style="margin:14px 0">
+  {% if c.unavailable is defined %}
+  <strong>{{ c.agent_account }}</strong>: no comparison — {{ c.unavailable }}.
+  {% elif not c.comparable %}
+  <strong>{{ c.agent_account }} vs {{ c.baseline_account }}</strong>: not comparable — {{ c.gate.reason }}.
+  {% else %}
   <strong>{{ c.agent_account }} vs {{ c.baseline_account }}</strong> over {{ c.sessions }} shared session(s)
   {% if c.total_return is defined %}· return {{ '%+.2f%%'|format(c.total_return.agent*100) }} vs {{ '%+.2f%%'|format(c.total_return.baseline*100) }}
   · max drawdown {{ '%.1f%%'|format(c.max_drawdown.agent*100) }} vs {{ '%.1f%%'|format(c.max_drawdown.baseline*100) }}{% endif %}
   <p class="small muted" style="margin:6px 0 0">Influence gate: <strong>{{ c.gate.status if c.gate.status is defined else 'shadow-only' }}</strong>
   {% if c.gate.checks is defined %}({% for k, ok in c.gate.checks.items() %}{{ k|replace('_', ' ') }}: {{ 'yes' if ok else 'no' }}{% if not loop.last %}, {% endif %}{% endfor %}){% else %}({{ c.gate.reason }}){% endif %}.
-  The agent never affects real-account output while shadow-only.</p>
+  The agent never affects real-account output while shadow-only. Baseline: {{ c.pairing }}.</p>
+  {% endif %}
 </div>
 {% endfor %}
 

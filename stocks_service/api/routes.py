@@ -667,6 +667,8 @@ class PaperAccountIn(BaseModel):
     risk_profile: str = Field(pattern=r"^[a-z][a-z0-9_]{1,40}@[0-9]+$")
     cost_profile: str = Field(default="market@1", pattern=r"^[a-z][a-z0-9_]{1,40}@[0-9]+$")
     policy: Literal["agent", "baseline_v1@1"] = "agent"
+    paired_baseline: str | None = Field(default=None, pattern=ACCOUNT_PATTERN,
+                                        description="baseline account this agent is compared with")
 
 
 class PaperOrderIn(BaseModel):
@@ -689,7 +691,8 @@ def create_paper_account(body: PaperAccountIn, db: Database = Depends(get_db)):
     from ..paper import broker
     return _acct_call(broker.create_paper_account, db, account_id=body.account_id, name=body.name,
                       starting_cash=body.starting_cash, risk_profile=body.risk_profile,
-                      cost_profile=body.cost_profile, policy=body.policy, now=_now())
+                      cost_profile=body.cost_profile, policy=body.policy, now=_now(),
+                      paired_baseline=body.paired_baseline)
 
 
 @router.post("/accounts/{account_id}/orders", status_code=status.HTTP_201_CREATED)

@@ -55,10 +55,34 @@ def _closed(db: Database, account_id: str, first=None, last=None) -> list[float]
     return out
 
 
+CONDITIONS = ("starting_cash", "risk_profile", "cost_profile", "execution_policy")
+
+
+def matching_baseline(db: Database, agent: dict) -> tuple[str | None, str]:
+    """The baseline an agent account is compared with: its explicit ``paired_baseline``, else the unique
+    baseline account with identical conditions. Returns (account id or None, reason)."""
+    if agent.get("paired_baseline"):
+        return agent["paired_baseline"], "explicitly paired"
+    cands = [b["_id"] for b in db.accounts.find({"kind": "paper", "policy": "baseline_v1@1"})
+             if all(b.get(k) == agent.get(k) for k in CONDITIONS)]
+    if len(cands) == 1:
+        return cands[0], "the only baseline with identical capital, risk, cost and execution profiles"
+    if not cands:
+        return None, "no baseline account with identical capital, risk, cost and execution profiles"
+    return None, f"ambiguous: {len(cands)} matching baselines ({', '.join(sorted(cands))}); pair one explicitly"
+
+
 def compare(db: Database, agent_account: str, baseline_account: str) -> dict:
+    accs = {x["_id"]: x for x in db.accounts.find({"_id": {"$in": [agent_account, baseline_account]}})}
+    diffs = [k for k in CONDITIONS if accs.get(agent_account, {}).get(k) != accs.get(baseline_account, {}).get(k)]
+    if diffs:
+        return {"agent_account": agent_account, "baseline_account": baseline_account, "comparable": False,
+                "gate": {"promotable": False, "status": "not comparable",
+                         "reason": f"accounts differ in {', '.join(diffs)}"}}
     a, b = _curve(db, agent_account), _curve(db, baseline_account)
     common = sorted(set(a) & set(b))
-    out = {"agent_account": agent_account, "baseline_account": baseline_account, "sessions": len(common),
+    out = {"agent_account": agent_account, "baseline_account": baseline_account, "comparable": True,
+           "sessions": len(common),
            "first_session": common[0].isoformat() if common else None,
            "last_session": common[-1].isoformat() if common else None}
     first, last = (common[0], common[-1]) if common else (None, None)

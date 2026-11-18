@@ -53,18 +53,26 @@ def _date(x) -> dt.date:
 # --- accounts --------------------------------------------------------------------------------
 
 def create_paper_account(db: Database, *, account_id: str, name: str, starting_cash: float, risk_profile: str,
-                         cost_profile: str = "market@1", policy: str = "agent", now: dt.datetime) -> dict:
+                         cost_profile: str = "market@1", policy: str = "agent", now: dt.datetime,
+                         paired_baseline: str | None = None) -> dict:
     if not starting_cash > 0:
         raise AccountError("starting_cash must be positive")
     if db.risk_profiles.find_one({"_id": risk_profile}) is None:
         raise NotFound(f"risk profile {risk_profile} not found")
     if db.cost_profiles.find_one({"_id": cost_profile}) is None:
         raise NotFound(f"cost profile {cost_profile} not found")
+    if paired_baseline is not None:
+        b = db.accounts.find_one({"_id": paired_baseline})
+        if b is None or b.get("kind") != "paper" or b.get("policy") != "baseline_v1@1":
+            raise NotFound(f"baseline paper account {paired_baseline} not found")
+        if (b["starting_cash"], b["risk_profile"], b["cost_profile"]) != (starting_cash, risk_profile, cost_profile):
+            raise AccountError("the paired baseline must have the same starting cash, risk profile and cost profile")
     from ..accounts.tickets import last_completed_session
     start = last_completed_session(now)   # trading starts with the next session
     doc = {"_id": account_id, "name": name, "kind": "paper", "policy": policy, "starting_cash": starting_cash,
            "risk_profile": risk_profile, "cost_profile": cost_profile, "execution_policy": POLICY.key,
-           "last_session_executed": _dt(start), "created_at": now, "ledger_version": 0}
+           "last_session_executed": _dt(start), "created_at": now, "ledger_version": 0,
+           **({"paired_baseline": paired_baseline} if paired_baseline else {})}
 
     def txn(session):
         db.accounts.insert_one(doc, session=session)

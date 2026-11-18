@@ -122,6 +122,7 @@ def research_status(db: Database) -> dict:
     versions = list(db.strategy_versions.find().sort("_id", 1))
     for v in versions:
         v["monitor"] = lifecycle.monitor(db, f"signal:{v['_id']}")
+        v["resolved_forecasts"] = db.forecast_outcomes.count_documents({"source": f"signal:{v['_id']}"})
     latest = lambda coll, **q: _finite({k: x for k, x in (db[coll].find_one(q, sort=[("created_at", -1), ("_id", -1)])  # noqa: E731
                                                           or {}).items() if k != "_id"}) or None
     ump = db.umpire_models.find_one(sort=[("created_at", -1), ("_id", -1)],
@@ -149,9 +150,14 @@ def paper_status(db: Database) -> dict:
         a["open_orders"] = db.orders.count_documents({"account_id": a["_id"], "status": {"$in": ["open", "filled"]}})
         a["closed"] = db.orders.count_documents({"account_id": a["_id"], "status": "closed"})
         a["recent_orders"] = list(db.orders.find({"account_id": a["_id"]}).sort("placed_at", -1).limit(10))
-    agents = [a for a in accounts if a.get("policy") == "agent"]
-    base = next((a for a in accounts if a.get("policy") == "baseline_v1@1"), None)
-    comparisons = [compare(db, a["_id"], base["_id"]) for a in agents] if base else []
+    from ..paper.report import matching_baseline
+    comparisons = []
+    for a in (x for x in accounts if x.get("policy") == "agent"):
+        base, why = matching_baseline(db, a)
+        if base is None:
+            comparisons.append({"agent_account": a["_id"], "baseline_account": None, "unavailable": why})
+        else:
+            comparisons.append({**compare(db, a["_id"], base), "pairing": why})
     decisions = db.agent_decisions.count_documents({})
     return {"accounts": accounts, "comparisons": comparisons, "decisions": decisions}
 
