@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Research · Stocks{% endblock %}
 {% block content %}
+{% macro pct(x) %}{{ '%.1f%%'|format(x*100) if x is not none else 'n/a' }}{% endmacro %}
 <h1>Research</h1>
 <p class="muted">Which strategies made money after costs on data they never saw — and did they beat QQQM, SPY and cash?</p>
 
@@ -75,12 +76,61 @@ block bootstrap. Gate: CI lower bound vs cash &gt; 0, deflated Sharpe ≥ 0.95, 
 </div>
 {% endif %}
 
-<h2>Strategy versions</h2>
+<h2>Strategy versions and live tracking</h2>
 <div class="panel scroll"><table>
-  <thead><tr><th>Version</th><th>Status</th><th>Description</th></tr></thead>
-  <tbody>{% for v in versions %}
-    <tr><td>{{ v._id }}</td><td><span class="chip">{{ v.status }}</span></td><td class="muted small">{{ v.description }}</td></tr>
+  <thead><tr><th>Version</th><th>Status</th><th class="num">Resolved live forecasts</th><th>Monitor (last {{ 30 }})</th><th>Description</th></tr></thead>
+  <tbody>{% for v in versions %}{% set m = v.monitor %}
+    <tr><td>{{ v._id }}</td><td><span class="chip {{ 'neg' if v.status == 'paused' else 'pos' if v.status == 'active' else '' }}">{{ v.status }}</span>
+        {% if v.paused_reason %}<span class="small muted">{{ v.paused_reason }}</span>{% endif %}</td>
+      <td class="num">{{ v.resolved_forecasts }}</td>
+      <td class="small">{% if m.status == 'insufficient' %}<span class="muted">needs {{ m.window }} resolved</span>{% elif m.status == 'breach' %}<span class="neg">{{ m.breaches|join('; ') }}</span>{% else %}ok · realized {{ '%+.1f%%'|format(m.realized_mean*100) }} vs forecast {{ '%+.1f%%'|format(m.predicted_mean*100) }}{% endif %}</td>
+      <td class="muted small">{{ v.description }}</td></tr>
   {% endfor %}</tbody>
 </table></div>
+<p class="small muted">Promotion: research → candidate needs the development gate; candidate → active needs the single-use
+holdout and a live shadow period of 30 resolved forecasts without a monitor breach. Parity violations and breaches pause a version.</p>
+{% if events %}<p class="small muted">Recent lifecycle events: {% for e in events %}{{ e.strategy }} {{ e['from'] }}→{{ e.to }} ({{ e.by }}){% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+
+<h2>Overlays, tuning and umpires</h2>
+<p class="muted small">Each is compared with the same strategy without it, out of sample, and changes nothing unless it clears the bar.</p>
+<div class="panel scroll"><table>
+  <thead><tr><th>What</th><th>Without → with</th><th class="num">Paired excess / yr</th><th class="num">95% CI</th><th>Verdict</th></tr></thead>
+  <tbody>
+  {% for ov in overlays %}
+    <tr><td>{{ ov.overlay }} on {{ ov.strategy }}</td>
+      <td class="small">CAGR {{ pct(ov.without.metrics.cagr) }} → {{ pct(ov.with.metrics.cagr) }},
+        max DD {{ '%.0f%%'|format(ov.without.metrics.max_drawdown*100) }} → {{ '%.0f%%'|format(ov.with.metrics.max_drawdown*100) }}</td>
+      <td class="num">{{ '%+.2f%%'|format(ov.paired_excess_annual.mean*100) }}</td>
+      <td class="num small">[{{ '%+.2f'|format(ov.paired_excess_annual.ci95[0]*100) }}, {{ '%+.2f'|format(ov.paired_excess_annual.ci95[1]*100) }}]</td>
+      <td><span class="chip {{ 'pos' if ov.verdict == 'adds_value' else '' }}">{{ ov.verdict|replace('_', ' ') }}</span></td></tr>
+  {% endfor %}
+  {% if tuning %}{% set t = tuning %}
+    <tr><td>ATR stop/target tuning on {{ t.strategy }} (chosen: {{ t.folds|map(attribute='chosen')|unique|join(', ') }})</td>
+      <td class="small">OOS CAGR {{ pct(t.oos.default.cagr) }} → {{ pct(t.oos.tuned.cagr) }},
+        max DD {{ '%.0f%%'|format(t.oos.default.max_drawdown*100) }} → {{ '%.0f%%'|format(t.oos.tuned.max_drawdown*100) }}</td>
+      <td class="num">{{ '%+.2f%%'|format(t.paired_excess_annual.mean*100) }}</td>
+      <td class="num small">[{{ '%+.2f'|format(t.paired_excess_annual.ci95[0]*100) }}, {{ '%+.2f'|format(t.paired_excess_annual.ci95[1]*100) }}]</td>
+      <td><span class="chip {{ 'pos' if t.status == 'adopt' else '' }}">{{ t.status }}</span></td></tr>
+  {% endif %}
+  {% if not overlays and not tuning %}<tr><td colspan="5" class="muted">Not run yet.</td></tr>{% endif %}
+  </tbody>
+</table></div>
+<p class="small muted">Paired excess: annualized mean daily-return difference (with − without), block-bootstrap 95% CI.</p>
+
+<h3>Umpires (walk-forward)</h3>
+<div class="panel scroll"><table>
+  <thead><tr><th>Umpire</th><th>Mean outcome: vetoed vs others</th><th class="num">Difference per label</th><th class="num">95% CI</th><th>Verdict</th></tr></thead>
+  <tbody>
+  {% if umpires %}{% for side, ev in umpires.evaluation.items() %}
+    <tr><td>Veto ({{ side }}s)</td>
+      <td class="small">{% if ev.mean_vetoed is defined %}{{ '%+.1f%%'|format(ev.mean_vetoed*100) }} (n={{ ev.vetoed }}) vs {{ '%+.1f%%'|format(ev.mean_not_vetoed*100) }}{% else %}{{ ev.vetoed }} vetoed{% endif %}</td>
+      <td class="num">{{ '%+.2f%%'|format(ev.difference*100) if ev.difference is defined else '—' }}</td>
+      <td class="num small">{% if ev.ci95 is defined %}[{{ '%+.2f'|format(ev.ci95[0]*100) }}, {{ '%+.2f'|format(ev.ci95[1]*100) }}]{% else %}—{% endif %}</td>
+      <td><span class="chip {{ 'pos' if ev.verdict == 'useful' else '' }}">{{ ev.verdict|replace('_', ' ') }}</span></td></tr>
+  {% endfor %}{% else %}<tr><td colspan="5" class="muted">Not trained yet.</td></tr>{% endif %}
+  </tbody>
+</table></div>
+<p class="small muted">Umpire difference: mean six-month excess over T-bills of a not-vetoed label minus a vetoed one
+(per label, not annualized); 95% CI from a block bootstrap over decision dates.</p>
 <p class="muted small">Experiments recorded: {{ experiments }}</p>
 {% endblock %}

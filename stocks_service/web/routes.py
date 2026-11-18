@@ -99,6 +99,11 @@ def research(request: Request, db: Database = Depends(get_db)):
     return _render(request, "research.html", **data.research_status(db))
 
 
+@router.get("/paper", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+def paper(request: Request, db: Database = Depends(get_db)):
+    return _render(request, "paper.html", **data.paper_status(db))
+
+
 @router.get("/outlook", response_class=HTMLResponse, dependencies=[Depends(require_login)])
 def outlook(request: Request, side: str | None = None, db: Database = Depends(get_db)):
     return _render(request, "outlook.html", **data.outlook_status(db, side))

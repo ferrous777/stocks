@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Paper · Stocks{% endblock %}
+{% block content %}
+<h1>Paper accounts</h1>
+<p class="muted">Simulated accounts trading the outlook with the same rules as the research: the AI agent (via MCP at
+<code>/mcp</code>) and the reproducible <code>baseline_v1</code> policy, same capital, costs and risk limits.
+{{ decisions }} agent tool calls logged.</p>
+
+{% for c in comparisons %}
+<div class="panel" style="margin:14px 0">
+  {% if c.unavailable is defined %}
+  <strong>{{ c.agent_account }}</strong>: no comparison — {{ c.unavailable }}.
+  {% elif not c.comparable %}
+  <strong>{{ c.agent_account }} vs {{ c.baseline_account }}</strong>: not comparable — {{ c.gate.reason }}.
+  {% else %}
+  <strong>{{ c.agent_account }} vs {{ c.baseline_account }}</strong> over {{ c.sessions }} shared session(s)
+  {% if c.total_return is defined %}· return {{ '%+.2f%%'|format(c.total_return.agent*100) }} vs {{ '%+.2f%%'|format(c.total_return.baseline*100) }}
+  · max drawdown {{ '%.1f%%'|format(c.max_drawdown.agent*100) }} vs {{ '%.1f%%'|format(c.max_drawdown.baseline*100) }}{% endif %}
+  <p class="small muted" style="margin:6px 0 0">Influence gate: <strong>{{ c.gate.status if c.gate.status is defined else 'shadow-only' }}</strong>
+  {% if c.gate.checks is defined %}({% for k, ok in c.gate.checks.items() %}{{ k|replace('_', ' ') }}: {{ 'yes' if ok else 'no' }}{% if not loop.last %}, {% endif %}{% endfor %}){% else %}({{ c.gate.reason }}){% endif %}.
+  The agent never affects real-account output while shadow-only. Baseline: {{ c.pairing }}.</p>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% for a in accounts %}
+<h2>{{ a.name }} <span class="muted small">{{ a._id }} · {{ a.policy }}</span></h2>
+<div class="panel small" style="margin-bottom:8px">
+  Equity {{ '{:,.2f}'.format(a.equity) }} (start {{ '{:,.0f}'.format(a.starting_cash) }}) · {{ a.sessions }} session(s) ·
+  {{ a.open_orders }} open/filled · {{ a.closed }} closed · processed through {{ a.last_session_executed.strftime('%Y-%m-%d') }}
+  {% if a.stalled %}· <span class="neg">stalled: {{ a.stalled }}</span>{% endif %}
+</div>
+<div class="panel scroll"><table>
+  <thead><tr><th>Placed</th><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Limit</th><th>Status</th><th>Result</th><th>Decided by</th></tr></thead>
+  <tbody>{% for o in a.recent_orders %}
+    <tr><td class="small">{{ o.placed_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ o.symbol }}</td><td>{{ o.side }}</td>
+      <td class="num">{{ o.qty }}</td><td class="num">{{ '%.2f'|format(o.limit) }}</td><td>{{ o.status }}</td>
+      <td class="small">{{ o.result or '' }}</td>
+      <td class="small muted">{{ o.decided_by.policy or o.decided_by.agent_id or o.decided_by.via or '' }}</td></tr>
+  {% else %}<tr><td colspan="8" class="muted">No orders yet.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% else %}
+<div class="notice">No paper accounts yet (<code>POST /api/v1/paper-accounts</code>).</div>
+{% endfor %}
+{% endblock %}
