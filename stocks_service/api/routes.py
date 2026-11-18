@@ -644,3 +644,86 @@ def ack_notification(notification_id: str, db: Database = Depends(get_db)):
     if res.matched_count == 0:
         raise HTTPException(404, "notification not found")
     return {"id": notification_id, "acknowledged": True}
+
+
+# --- paper accounts (phase 5) ---------------------------------------------------------------
+
+class PaperAccountIn(BaseModel):
+    account_id: str = Field(pattern=ACCOUNT_PATTERN)
+    name: str = Field(min_length=1, max_length=100)
+    starting_cash: float = Field(gt=0, le=1e9)
+    risk_profile: str = Field(pattern=r"^[a-z][a-z0-9_]{1,40}@[0-9]+$")
+    cost_profile: str = Field(default="market@1", pattern=r"^[a-z][a-z0-9_]{1,40}@[0-9]+$")
+    policy: Literal["agent", "baseline_v1@1"] = "agent"
+
+
+class PaperOrderIn(BaseModel):
+    symbol: str = Field(pattern=SYMBOL_PATTERN)
+    side: Literal["long", "short"]
+    qty: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+    rationale: str = Field(min_length=3, max_length=2000)
+
+
+def _order_out(o: dict) -> dict:
+    o = dict(o)
+    o["id"] = str(o.pop("_id"))
+    return o
+
+
+@router.post("/paper-accounts", status_code=status.HTTP_201_CREATED)
+def create_paper_account(body: PaperAccountIn, db: Database = Depends(get_db)):
+    """A simulated account. Its first trading session is the one after the last completed close."""
+    from ..paper import broker
+    return _acct_call(broker.create_paper_account, db, account_id=body.account_id, name=body.name,
+                      starting_cash=body.starting_cash, risk_profile=body.risk_profile,
+                      cost_profile=body.cost_profile, policy=body.policy, now=_now())
+
+
+@router.post("/accounts/{account_id}/orders", status_code=status.HTTP_201_CREATED)
+def place_paper_order(body: PaperOrderIn, request: Request, account_id: str = AccountPath,
+                      db: Database = Depends(get_db)):
+    """DAY limit order for the next session from the latest outlook row (paper accounts only; real -> 403)."""
+    from ..paper import broker
+    try:
+        res = broker.place_order(db, account_id, symbol=body.symbol, side=body.side, qty=body.qty,
+                                 idempotency_key=body.idempotency_key,
+                                 decided_by={"via": "rest", "rationale": body.rationale}, now=_now())
+    except broker.PaperOnly as e:
+        raise HTTPException(403, str(e))
+    except Exception as e:  # noqa: BLE001 - mapped consistently with the other account endpoints
+        from ..accounts.service import AccountError, NotFound
+        if isinstance(e, NotFound):
+            raise HTTPException(404, str(e))
+        if isinstance(e, (AccountError, ValueError)):
+            raise HTTPException(409, str(e))
+        raise
+    return {**_order_out(res["order"]), "replayed": res["replayed"]}
+
+
+@router.delete("/accounts/{account_id}/orders/{order_id}")
+def cancel_paper_order(order_id: str = Path(pattern=r"^[0-9a-f]{24}$"), account_id: str = AccountPath,
+                       db: Database = Depends(get_db)):
+    from ..accounts.service import AccountError, NotFound
+    from ..paper import broker
+    try:
+        return _order_out(broker.cancel_order(db, account_id, order_id, now=_now()))
+    except broker.PaperOnly as e:          # subclass of AccountError: map it first
+        raise HTTPException(403, str(e))
+    except NotFound as e:
+        raise HTTPException(404, str(e))
+    except AccountError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.get("/accounts/{account_id}/orders")
+def list_orders(account_id: str = AccountPath, status_: str | None = Query(None, alias="status"),
+                db: Database = Depends(get_db)):
+    q = {"account_id": account_id, **({"status": status_} if status_ else {})}
+    return [_order_out(o) for o in db.orders.find(q).sort("placed_at", -1).limit(500)]
+
+
+@router.get("/accounts/{account_id}/equity")
+def equity_curve(account_id: str = AccountPath, db: Database = Depends(get_db)):
+    return [{k: v for k, v in e.items() if k != "_id"}
+            for e in db.equity_curve.find({"account_id": account_id}).sort("session", 1)]

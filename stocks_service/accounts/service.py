@@ -192,6 +192,8 @@ def add_executions(db: Database, account_id: str, items: list[dict], *, now: dt.
     def txn(session):
         out.update(inserted=0, duplicates=0, reconciled_snapshots=0)
         _lock_account(db, account_id, session)
+        if db.accounts.find_one({"_id": account_id}, {"kind": 1}, session=session).get("kind") == "paper":
+            raise AccountError("paper accounts only get fills from the simulator; manual executions are refused")
         opening = db.portfolio_snapshots.find_one({"account_id": account_id, "opening": True}, session=session)
         earliest = None
         for x in items:
