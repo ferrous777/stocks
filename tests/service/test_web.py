@@ -80,7 +80,7 @@ def test_dashboard_and_symbol_pages_show_real_data(db):
         assert "Entry limit" in page and "Target first" in page
         assert c.get("/symbol/ZZZZ").status_code == 404
         research = c.get("/research").text
-        assert "No validated results yet" in research and "ma_crossover@1" in research and "research" in research
+        assert "No research report yet" in research and "ma_crossover@1" in research
         assert "Not available yet" in c.get("/outlook").text
 
 
