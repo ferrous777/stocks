@@ -96,7 +96,11 @@ def _trade(h: Holding, d: float, price: float) -> None:
 
 
 def split_time(ex_date: dt.date) -> dt.datetime:
-    return sessions.session_bounds(ex_date)[0]
+    """When a split takes effect: the open of its ex-date, or of the first session after it when the
+    source dates it on a day the exchange was closed (Yahoo dates NVDA's 2001 2:1 split 2001-09-12,
+    when NYSE was shut after 9/11). Range checks elsewhere (``ex_date <= session``) agree with this."""
+    effective = ex_date if sessions.is_session(ex_date) else sessions.next_session(ex_date)
+    return sessions.session_bounds(effective)[0]
 
 
 def state_as_of(as_of: dt.datetime, events: list[LedgerEvent], executions: list[Execution],
