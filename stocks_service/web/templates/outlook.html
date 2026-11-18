@@ -30,7 +30,7 @@ profile (<code>POST /api/v1/cost-profiles</code>) and a calibration run (<code>P
   <thead><tr>
     <th>Symbol</th><th>Side</th><th>Grade</th><th class="num">Exp. 6-mo return</th><th class="num">vs T-bills</th>
     <th class="num">10th / 90th pct</th><th class="num">P(win)</th><th class="num">Target / stop / timeout / no fill</th>
-    <th class="num">Entry limit</th><th class="num">Stop</th><th class="num">Target</th><th class="num">n</th><th>Signals today</th>
+    <th class="num">Entry limit</th><th class="num">Stop</th><th class="num">Target</th><th class="num">n</th><th>Umpire</th><th>Signals today</th>
   </tr></thead>
   <tbody>
   {% for r in o.rows %}{% set e = r.estimate %}
@@ -52,6 +52,11 @@ profile (<code>POST /api/v1/cost-profiles</code>) and a calibration run (<code>P
     <td class="num">{{ '%.2f'|format(r.plan.target) }}</td>
     {% else %}<td colspan="3" class="muted">—</td>{% endif %}
     <td class="num small muted">{{ e.n if e else '—' }}</td>
+    <td class="small">{% set u = r.umpires %}{% if u and u.status == 'annotated' %}
+      <span class="chip {{ 'neg' if u.knn == 'veto' and u.side_verdict == 'useful' else '' }}"
+        title="{{ '%.0f'|format(u.loser_share*100) }}% of the 50 most similar past setups were losers, {{ '%.0f'|format(u.winner_share*100) }}% winners. Walk-forward verdict for {{ r.side }}s: {{ u.side_verdict }}.">{{ u.knn }}</span>{% if u.loss_cluster %} <span class="chip neg" title="feature region where losers dominated">loss cluster</span>{% endif %}
+      {% if u.side_verdict != 'useful' %}<span class="muted">({{ u.side_verdict|replace('_', ' ') }})</span>{% endif %}
+    {% else %}<span class="muted">{{ u.status if u else '—' }}</span>{% endif %}</td>
     <td class="small">{% for s in r.signals %}{{ s.strategy }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
   </tr>
   {% endfor %}
@@ -60,7 +65,9 @@ profile (<code>POST /api/v1/cost-profiles</code>) and a calibration run (<code>P
 <p class="muted small">Returns are per position, after the cost profile's spread, slippage, commission and short borrow,
 with dividends; capital earns T-bills outside the trade. The plan is a DAY limit order for the next session only
 (fills only if price trades through the limit), with the stop and target placed after the fill and a 126-session timeout.
-Labels are sampled every 5 sessions from development history before the sealed holdout and overlap in time, so
+Umpires annotate, never hide: the vote compares today's setup with the 50 most similar past setups (a veto
+means at least 61.8% of them were among the worst 23.6% of outcomes); each side shows its walk-forward verdict, and a
+vote from an umpire marked "not useful" should not be relied on. Labels are sampled every 5 sessions from development history before the sealed holdout and overlap in time, so
 <em>n</em> overstates the independent evidence. Today's universe is hand-picked (survivorship bias).</p>
 {% endif %}
 {% endblock %}

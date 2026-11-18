@@ -28,6 +28,7 @@ from ..research.protocol import holdout_window, load_universe
 from ..sim import CostProfile, ExecutionPolicy
 from ..strategies import all_specs, decide
 from ..strategies.runner import LIVE, persist_decision
+from .. import umpires
 from .calibration import CALIBRATION_VERSION, calibrate
 from .labels import BASE, LABEL_VERSION, STRIDE, build_labels
 
@@ -106,6 +107,7 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
                 "base_rate": None, "estimate": None}
 
     rows = []
+    feats: dict = {}
     for sym in watched:
         series = uni.get(sym)
         if series is None or not series.sessions:
@@ -115,6 +117,7 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
             rows += [empty_row(sym, side, f"no bar on {asof} (last {series.sessions[-1]})") for side in ("long", "short")]
             continue
         view = series.view_at(asof)
+        feats[sym] = umpires.features(view)
         decisions = {spec.key: decide(view, spec) for spec in all_specs() if len(view) >= spec.min_bars}
         for dec in decisions.values():  # immutable live record; the nightly parity check replays it
             persist_decision(db, dec, source=LIVE, now=now)
@@ -158,6 +161,7 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
             }
             _set_estimate(row, est, cash_6m)
             rows.append(row)
+    _annotate_umpires(db, rows, feats)
     rows.sort(key=lambda r: (GRADE_ORDER[r["grade"]] == 3, -(r.get("exp_return_6m") or -1e9), r["symbol"], r["side"]))
     doc = {"created_at": now, "version": OUTLOOK_VERSION, "asof": asof.isoformat(), "calibration_id": cal["_id"],
            "cost_profile": cost.key, "cost": dataclasses.asdict(cost), "execution_policy": cal["execution_policy"],
@@ -168,6 +172,26 @@ def build_outlook(db: Database, *, now: dt.datetime, calibration: dict | None = 
            "missing_inputs": sorted({r["symbol"] for r in rows if r.get("last_close") is None})}
     db.outlook_runs.insert_one(doc)
     return doc
+
+
+def _annotate_umpires(db: Database, rows: list[dict], feats: dict) -> None:
+    """Umpire annotations (never filtering): kNN vote and loss-cluster flag per row, or why not."""
+    model_id, models, evaluation = umpires.latest_models(db)
+    for side in ("long", "short"):
+        todo = [r for r in rows if r["side"] == side and r.get("plan") and feats.get(r["symbol"]) is not None]
+        m = models.get(side)
+        if m is None or not todo:
+            for r in todo:
+                r["umpires"] = {"status": "untrained"}
+            continue
+        import numpy as _np
+        verdict = evaluation.get(side, {}).get("verdict", "unevaluated")
+        for r, a in zip(todo, m.annotate(_np.vstack([feats[r["symbol"]] for r in todo]))):
+            # The side's walk-forward verdict travels with every vote: a veto from a "not_useful"
+            # umpire is shown but should not be relied on.
+            r["umpires"] = {"status": "annotated", "model": model_id, "side_verdict": verdict, **a}
+    for r in rows:
+        r.setdefault("umpires", {"status": "unavailable"})
 
 
 EST_FIELDS = ("exp_excess_6m", "exp_return_6m", "p10_return_6m", "p90_return_6m", "exp_return_per_session")
