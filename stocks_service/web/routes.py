@@ -123,8 +123,12 @@ def _account_page(request: Request, db: Database, account_id: str, message: str 
         o, rows = None, []
     breaks = list(db.reconciliation_breaks.find({"account_id": account_id}).sort([("status", 1), ("as_of", -1)]).limit(50))
     alerts = list(db.notifications.find({"account_id": account_id, "acknowledged": False}).sort("created_at", -1).limit(20))
-    levels = {lv["symbol"]: lv for lv in db.position_levels.find({"account_id": account_id, "active": True})}
     from ..accounts import tickets as _tickets
+    from ..ingestion import load_splits
+    levels = {}
+    for lv in db.position_levels.find({"account_id": account_id, "active": True}):
+        latest = _tickets._latest_session(db, lv["symbol"])  # show levels on today's price basis (after splits)
+        levels[lv["symbol"]] = {**lv, **(_tickets.levels_on(lv, latest, load_splits(db, lv["symbol"])) if latest else {})}
     try:
         tk = _tickets.build_tickets(db, account_id, now) if o else None
     except (service.AccountError, service.NotFound) as e:

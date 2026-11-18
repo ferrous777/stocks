@@ -53,11 +53,19 @@ class RiskProfile:
 
 def correlation_clusters(series: dict[str, SymbolSeries], symbols: list[str], asof, threshold: float,
                          window: int = 252) -> dict[str, int]:
-    """Single-linkage clusters of daily log returns over the last ``window`` sessions up to ``asof``."""
+    """Single-linkage clusters of daily log returns over the last ``window`` XNYS sessions up to ``asof``.
+
+    Returns are aligned on the exchange-calendar grid: a symbol is included only if it has a bar on
+    every one of those sessions (so vectors are compared date by date, never positionally across gaps).
+    Symbols without full aligned history get no correlation cluster (explicit groups still apply).
+    """
+    from .. import sessions
+    n0 = sessions.session_number(asof)
+    grid = tuple(sessions.session_after_n(asof, k) for k in range(-window, 1)) if n0 >= window else ()
     rets = {}
     for s in symbols:
         v = series[s].view_at(asof, lookback=window + 1)
-        if len(v) == window + 1 and v.sessions[-1] == asof:
+        if grid and tuple(v.sessions) == grid:
             rets[s] = np.diff(np.log(np.asarray(v.c, dtype=float)))
     names = sorted(rets)
     parent = {s: s for s in names}
@@ -111,9 +119,13 @@ def size_ticket(row: dict, book: Book, profile: RiskProfile, *, keys: set[str], 
                 shortable: bool) -> tuple[int, list[str], dict]:
     """Shares for one ticket and the binding constraints. Updates ``book`` when qty > 0."""
     plan = row["plan"]
-    entry, stop, atr = plan["entry_limit"], plan["stop"], plan["atr"]
+    # Size with the exact cent prices the ticket will carry.
+    entry, stop, target, atr = (round(plan["entry_limit"], 2), round(plan["stop"], 2), round(plan["target"], 2),
+                                plan["atr"])
     side = row["side"]
     reasons: list[str] = []
+    if not ((stop < entry < target) if side == "long" else (target < entry < stop)):
+        return 0, [f"levels are not valid after rounding to cents (entry {entry}, stop {stop}, target {target})"], {}
     if side == "short" and not shortable:
         return 0, ["symbol is not marked shortable"], {}
     if adv_usd is None or adv_usd < profile.min_adv_usd:

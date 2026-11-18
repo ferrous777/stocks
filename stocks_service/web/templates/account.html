@@ -64,13 +64,15 @@ are the same as on the <a href="/outlook">Outlook</a> page; nothing here is a va
 <h2>Order tickets for the next session</h2>
 {% if tk.tickets %}
 <div class="panel scroll"><table>
-  <thead><tr><th>Symbol</th><th>Action</th><th class="num">Qty</th><th>Order</th><th class="num">Max loss</th><th class="num">Exp. 6-mo vs cash</th><th>Then</th></tr></thead>
+  <thead><tr><th>Symbol</th><th>Action</th><th class="num">Qty</th><th>Order</th><th class="num">Max loss</th><th class="num">Exp. 6-mo vs cash</th><th>Exits and notes</th></tr></thead>
   <tbody>{% for t in tk.tickets %}
     <tr><td>{{ t.symbol }}</td><td>{{ t.action }}</td><td class="num">{{ t.quantity }}</td>
       <td>Limit {{ '%.2f'|format(t.limit_price) }}, Day, before {{ t.place_before[:16]|replace('T', ' ') }} UTC</td>
       <td class="num">{{ '{:,.0f}'.format(t.max_loss_at_stop_with_gap) }}</td>
       <td class="num">{{ '{:+,.0f}'.format(t.expected_profit_6m_vs_cash) }}</td>
-      <td class="small">{% for f in t.after_fill %}{{ f.action }} {{ f.order_type }} {{ '%.2f'|format(f.stop_price or f.limit_price) }}{% if not loop.last %}; {% endif %}{% endfor %}</td></tr>
+      <td class="small">After the fill, one OCO (one-cancels-the-other) order, Good 'til Canceled:
+        {% for f in t.after_fill.legs %}{{ f.action }} {{ f.order_type }} {{ '%.2f'|format(f.stop_price or f.limit_price) }}{% if not loop.last %} / {% endif %}{% endfor %}.
+        {{ t.timeout }}{% for n in t.notes %} <strong>{{ n }}</strong>{% endfor %}</td></tr>
   {% endfor %}</tbody>
 </table></div>
 {% else %}
