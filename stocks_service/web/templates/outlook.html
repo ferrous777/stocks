@@ -34,7 +34,7 @@ profile (<code>POST /api/v1/cost-profiles</code>) and a calibration run (<code>P
 
 {% call ui.table(["Symbol", "Side", "Grade", ("Exp. 6-mo return", "num"), ("vs T-bills", "num"), ("10th / 90th pct", "num"),
                   ("P(win)", "num"), ("Target / stop / timeout / no fill", "num"), ("Entry limit", "num"), ("Stop", "num"),
-                  ("Target", "num"), ("n", "num"), "Umpire", "Signals today"]) %}
+                  ("Target", "num"), ("n", "num"), "Umpire", "Signals today"], pin_first=True) %}
   {% for r in o.rows %}{% set e = r.estimate %}
   <tr>
     <td><a href="/symbol/{{ r.symbol }}">{{ r.symbol }}</a></td>

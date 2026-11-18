@@ -31,7 +31,10 @@
   function fmtPrice(v) { return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function fmtPct(v) { return (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%"; }
   function fmtDate(d) { return d.toISOString().slice(0, 10); }
-  function dayOfYear(d) { return (d - Date.UTC(d.getUTCFullYear(), 0, 1)) / 864e5; }
+  // Position on the shared Jan-Dec axis. Every year is mapped onto leap year 2000, so the same calendar
+  // date lines up across years (Mar 1 is day 60 in 2023 and 2024 alike) and Feb 29 keeps its own slot.
+  var REF_YEAR = 2000, YEAR_DAYS = 365;   // Dec 31 of the reference year is day 365
+  function dayOfYear(d) { return (Date.UTC(REF_YEAR, d.getUTCMonth(), d.getUTCDate()) - Date.UTC(REF_YEAR, 0, 1)) / 864e5; }
 
   // "Nice" axis ticks covering [lo, hi].
   function ticks(lo, hi, count) {
@@ -122,7 +125,7 @@
 
     this.plot = root.querySelector(".price-chart__plot");
     this.caption = root.querySelector(".price-chart__caption");
-    this.tip = h("div", { class: "chart-tooltip", role: "status", hidden: "" });
+    this.tip = h("div", { class: "chart-tooltip", role: "status", "aria-live": "polite", hidden: "" });
     this.plot.appendChild(this.tip);
   };
 
@@ -174,7 +177,7 @@
     var W = Math.max(280, this.plot.clientWidth), H = Math.round(Math.min(420, Math.max(220, W * 0.42)));
     var svg = el("svg", { viewBox: "0 0 " + W + " " + H, width: W, height: H, class: "chart-svg", role: "img" });
     var x0, x1;
-    if (spec.kind === "pct") { x0 = 0; x1 = 365; }
+    if (spec.kind === "pct") { x0 = 0; x1 = YEAR_DAYS; }
     else { x0 = all[0].x; x1 = all[all.length - 1].x; }
     var ys = all.map(function (v) { return v.y; });
     var lo = Math.min.apply(null, ys), hi = Math.max.apply(null, ys);
@@ -195,7 +198,7 @@
     var xl = el("g", { class: "chart-axis" }, svg);
     if (spec.kind === "pct") {
       MONTHS.forEach(function (m, i) {
-        var x = sx(dayOfYear(new Date(Date.UTC(2001, i, 1))));
+        var x = sx(dayOfYear(new Date(Date.UTC(REF_YEAR, i, 1))));
         if (W < 520 && i % 3) return;
         var t = el("text", { x: x, y: H - 8 }, xl); t.textContent = m;
       });
@@ -221,18 +224,21 @@
         t.textContent = s.label;
       });
     }
-    // hover layer
+    // hover + keyboard layer: the same crosshair and tooltip for pointer and keys
     var hair = el("line", { y1: PAD.top, y2: PAD.top + ih, class: "chart-hair", visibility: "hidden" }, svg);
     var dots = spec.series.map(function (s) { return el("circle", { r: 4, class: "chart-dot", style: "fill:" + s.color, visibility: "hidden" }, svg); });
     var hit = el("rect", { x: PAD.left, y: PAD.top, width: iw, height: ih, fill: "transparent" }, svg);
+    // Keyboard stops: every distinct x that has a value, in order.
+    var stops = all.map(function (v) { return v.x; }).sort(function (a, b) { return a - b; })
+      .filter(function (x, i, arr) { return i === 0 || x !== arr[i - 1]; });
+    var cursor = stops.length - 1;
     function nearest(values, x) {
       var lo = 0, hi = values.length - 1;
       while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (values[mid].x < x) lo = mid; else hi = mid; }
       return Math.abs(values[lo].x - x) <= Math.abs(values[hi].x - x) ? values[lo] : values[hi];
     }
-    function move(ev) {
-      var r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
-      var x = x0 + (px - PAD.left) / iw * (x1 - x0);
+    function showAt(x) {
+      var r = svg.getBoundingClientRect();
       var rows = [];
       spec.series.forEach(function (s, i) {
         var v = nearest(s.values, x);
@@ -254,8 +260,7 @@
         self.tip.appendChild(h("div", { class: "chart-tooltip__title" }, MONTHS[md.getUTCMonth()] + " " + md.getUTCDate()));
         rows.sort(function (a, b) { return b.v.y - a.v.y; }).forEach(function (r) {
           var line = h("div", { class: "chart-tooltip__row" });
-          var sw = h("span", { class: "chart-chip__swatch", style: "--chip-color:" + r.s.color });
-          line.appendChild(sw);
+          line.appendChild(h("span", { class: "chart-chip__swatch", style: "--chip-color:" + r.s.color, "aria-hidden": "true" }));
           line.appendChild(document.createTextNode(r.s.label + "  " + fmtPct(r.v.y) + "  (" + fmtPrice(r.v.c) + ")"));
           self.tip.appendChild(line);
         });
@@ -265,14 +270,30 @@
       if (left + tw > r.width) left = hx / W * r.width - tw - 12;
       self.tip.style.left = Math.max(0, left) + "px";
     }
+    function fromPointer(ev) {
+      var r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+      showAt(x0 + (px - PAD.left) / iw * (x1 - x0));
+    }
     function leave() {
       hair.setAttribute("visibility", "hidden");
       dots.forEach(function (d) { d.setAttribute("visibility", "hidden"); });
       self.tip.hidden = true;
     }
-    hit.addEventListener("pointermove", move);
-    hit.addEventListener("pointerdown", move);
-    hit.addEventListener("pointerleave", leave);
+    hit.addEventListener("pointermove", fromPointer);
+    hit.addEventListener("pointerdown", fromPointer);
+    hit.addEventListener("pointerleave", function () { if (document.activeElement !== svg) leave(); });
+    svg.setAttribute("tabindex", "0");
+    svg.addEventListener("focus", function () { showAt(stops[cursor]); });
+    svg.addEventListener("blur", leave);
+    svg.addEventListener("keydown", function (ev) {
+      var step = { ArrowLeft: -1, ArrowRight: 1, PageUp: -20, PageDown: 20 }[ev.key];
+      if (ev.key === "Home") cursor = 0;
+      else if (ev.key === "End") cursor = stops.length - 1;
+      else if (step) cursor = Math.max(0, Math.min(stops.length - 1, cursor + step));
+      else return;
+      ev.preventDefault();
+      showAt(stops[cursor]);
+    });
 
     // accessible name + caption
     var cap;
@@ -283,7 +304,7 @@
       cap = spec.series.map(function (s) { var v = s.values[s.values.length - 1]; return s.label + " " + fmtPct(v.y); }).join(" · ") +
             " — change from the previous year's last close";
     }
-    svg.setAttribute("aria-label", cap);
+    svg.setAttribute("aria-label", cap + ". Use the arrow keys, Page Up/Down, Home and End to read each session's values.");
     this.caption.textContent = cap;
     this.plot.insertBefore(svg, this.tip);
   };

@@ -25,7 +25,7 @@
 
 <h2>Holdings</h2>
 {% call ui.table(["Symbol", ("Qty", "num"), ("Avg cost", "num"), ("Last close", "num"), ("Market value", "num"),
-                  ("Unrealized", "num"), ("Realized", "num"), "Protection"]) %}
+                  ("Unrealized", "num"), ("Realized", "num"), "Protection"], pin_first=True) %}
   {% for p in h.positions %}
     <tr><td><a href="/symbol/{{ p.symbol }}">{{ p.symbol }}</a></td><td class="num">{{ '{:,.4g}'.format(p.qty) }}</td>
       <td class="num">{{ '%.2f'|format(p.avg_cost) if p.avg_cost else '—' }}</td>
@@ -42,7 +42,7 @@
 <p class="muted small prose">Six-month outlook rows for what you hold (and any validated new ideas). Grades and estimates
 are the same as on the <a href="/outlook">Outlook</a> page; nothing here is a validated recommendation until a strategy is active.</p>
 {% call ui.table(["Symbol", "Side", "Relation", "Grade", ("Exp. 6-mo return", "num"), ("10th / 90th pct", "num"),
-                  ("Your qty", "num"), ("Unrealized", "num")]) %}
+                  ("Your qty", "num"), ("Unrealized", "num")], pin_first=True) %}
   {% for r in rows %}
     <tr><td>{{ r.symbol }}</td><td class="{{ r.side }}">{{ r.side }}</td><td class="small">{{ r.kind|replace('_', ' ') }}</td>
       <td>{{ ui.badge(r.grade, title=r.reasons|join('; ')) }}</td>

@@ -31,7 +31,7 @@
 
 {% if d.years %}
 <h2>Calendar years</h2>
-{% call ui.table(["Year", ("Return", "num"), ("From", "num"), ("Close", "num"), ("High", "num"), ("Low", "num"), ("Sessions", "num")], compact=True) %}
+{% call ui.table(["Year", ("Return", "num"), ("From", "num"), ("Close", "num"), ("High", "num"), ("Low", "num"), ("Sessions", "num")], compact=True, pin_first=True) %}
   {% for y in d.years %}
   <tr><td>{{ y.year }}{% if y.to_date %} <span class="muted small">to date</span>{% elif y.partial %} <span class="muted small">from {{ y.first }}</span>{% endif %}</td>
     <td class="num {{ 'pos' if y['return'] > 0 else 'neg' if y['return'] < 0 }}">{{ '%+.1f%%'|format(y['return']*100) }}</td>

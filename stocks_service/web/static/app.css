@@ -224,8 +224,8 @@ code { font: 0.9em var(--font-mono); background: var(--color-surface-muted); pad
 
 /* ---- Responsive ---------------------------------------------------------------------------
    Desktop (> 1024px): everything inline. Tablet (641–1024px): denser tables. Phone (≤ 640px): the nav
-   becomes its own horizontally scrolling row, cards tighten, and tables keep their first column pinned
-   while the rest scrolls sideways. */
+   becomes its own horizontally scrolling row, cards tighten, and tables scroll sideways (identifier
+   columns opt in to staying pinned with pin_first=True). */
 @media (max-width: 1024px) {
   .table th, .table td { padding: 6px var(--space-2); }
   .stats { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
@@ -238,9 +238,12 @@ code { font: 0.9em var(--font-mono); background: var(--color-surface-muted); pad
   h2 { margin-top: var(--space-5); }
   .card { padding: var(--space-3); }
   .grid { grid-template-columns: 1fr; }
-  .table th:first-child, .table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--color-surface);
-                                                 box-shadow: 1px 0 0 var(--color-border); }
-  .table tbody tr:hover td:first-child { background: var(--color-surface-muted); }
+  /* Opt-in (short identifier columns only): the first column stays visible while the rest scrolls,
+     capped at 40% of the screen and wrapping so it never hides the numbers. */
+  .table--pin-first th:first-child, .table--pin-first td:first-child {
+    position: sticky; left: 0; z-index: 1; background: var(--color-surface); box-shadow: 1px 0 0 var(--color-border);
+    max-width: 40vw; white-space: normal; overflow-wrap: anywhere; }
+  .table--pin-first tbody tr:hover td:first-child { background: var(--color-surface-muted); }
   .stats { grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: var(--space-2); }
   .stat { padding: var(--space-2) var(--space-3); }
   .stat__value { font-size: var(--text-md); }

@@ -17,7 +17,7 @@
 
 {% set cols = ["Symbol", "Class", "Groups", ("Last close", "num"), ("Day", "num"), "As of"] %}
 {% for k in strategy_keys %}{% set _ = cols.append((k.split('@')[0].replace('_', ' '), "", strategy_status[k])) %}{% endfor %}
-{% call ui.table(cols, class_="my-3") %}
+{% call ui.table(cols, class_="my-3", pin_first=True) %}
   {% for r in rows %}
   <tr>
     <td><a href="/symbol/{{ r.symbol }}">{{ r.symbol }}</a>{% if r.quarantine %} {{ ui.badge(r.quarantine, "negative", "quarantined") }}{% endif %}</td>

@@ -212,3 +212,12 @@ def test_symbol_page_carries_full_history_and_calendar_years(db):
     first = years[-1]
     assert first["partial"] and first["base"] == float(full.c[0])
     assert years[0]["to_date"] and not years[1]["to_date"]
+
+
+def test_only_identifier_columns_are_pinned_on_phones(db):
+    _load_nvda(db)
+    with _client(db) as c:
+        _login(c)
+        dashboard, research = c.get("/").text, c.get("/research").text
+    assert 'class="table table--pin-first"' in dashboard          # symbol column stays visible
+    assert "table--pin-first" not in research                       # long descriptive first cells scroll normally

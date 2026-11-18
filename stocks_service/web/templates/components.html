@@ -61,10 +61,11 @@
 
 {#- A data table inside a bordered, horizontally scrollable surface. cols: each a label, or
     (label, "num") for a right-aligned numeric column, or (label, "num", tooltip). The call body
-    renders the <tr> rows. -#}
-{% macro table(cols, compact=False, class_="") -%}
+    renders the <tr> rows. pin_first keeps a short identifier column (a symbol, an account id) visible
+    while the rest scrolls sideways on phones. -#}
+{% macro table(cols, compact=False, class_="", pin_first=False) -%}
 <div class="table-wrap{{ ' ' ~ class_ if class_ }}">
-<table class="table{{ ' table--compact' if compact }}">
+<table class="table{{ ' table--compact' if compact }}{{ ' table--pin-first' if pin_first }}">
   <thead><tr>{% for c in cols %}{% if c is string %}<th>{{ c }}</th>{% else %}<th class="{{ c[1] }}"{% if c|length > 2 and c[2] %} title="{{ c[2] }}"{% endif %}>{{ c[0] }}</th>{% endif %}{% endfor %}</tr></thead>
   <tbody>{{ caller() }}</tbody>
 </table>

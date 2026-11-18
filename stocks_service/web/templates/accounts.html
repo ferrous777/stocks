@@ -6,7 +6,7 @@
 between what you upload and what the ledger expects show up as breaks to explain, never as invented trades.{% endcall %}
 {% if error %}{% call ui.alert("negative") %}{{ error }}{% endcall %}{% endif %}
 
-{% call ui.table(["Account", "Name", "Latest snapshot", ("Open breaks", "num")]) %}
+{% call ui.table(["Account", "Name", "Latest snapshot", ("Open breaks", "num")], pin_first=True) %}
   {% for a in accounts %}
     <tr><td><a href="/accounts/{{ a._id }}">{{ a._id }}</a></td><td>{{ a.name }}</td>
       <td>{{ a.latest_snapshot.strftime('%Y-%m-%d %H:%M UTC') if a.latest_snapshot else '—' }}</td>
