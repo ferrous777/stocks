@@ -73,6 +73,20 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("snapshot_id", ASCENDING), ("symbol", ASCENDING)], name="snapshot_symbol", unique=True),
         IndexModel([("account_id", ASCENDING), ("status", ASCENDING)], name="account_status"),
     ],
+    "risk_profiles": [
+        IndexModel([("profile_id", ASCENDING), ("version", ASCENDING)], name="profile_version", unique=True),
+    ],
+    "opportunity_actions": [
+        IndexModel([("account_id", ASCENDING), ("created_at", DESCENDING)], name="account_created"),
+    ],
+    "position_levels": [
+        IndexModel([("account_id", ASCENDING), ("symbol", ASCENDING), ("active", ASCENDING)], name="account_symbol_active"),
+        IndexModel([("active", ASCENDING)], name="active"),
+    ],
+    "notifications": [
+        IndexModel([("dedupe_key", ASCENDING)], name="dedupe_key", unique=True),
+        IndexModel([("account_id", ASCENDING), ("created_at", DESCENDING)], name="account_created"),
+    ],
     "job_locks": [
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],

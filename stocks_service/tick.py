@@ -8,6 +8,10 @@
    the existing calibration. Calibration itself only uses pre-holdout history, so new bars do
    not change it; it is re-run explicitly (``POST /api/v1/outlook/run``).
 
+3. Protective alerts for protected holdings (stop/target crossed, timeout due) — always on, whatever
+   the strategy's status — and a pre-open ticket notification per account when active strategies
+   produce tickets.
+
 Runs under the shared ``tick`` lease (``stocks_service.jobs``), so overlapping cron runs never
 ingest concurrently, and each run is recorded in ``jobs``. Idempotent: running it twice in a row
 fetches nothing new the second time and leaves the outlook as is.
@@ -65,6 +69,32 @@ def _refresh_outlook(db: Database, now: dt.datetime) -> dict:
     return {"status": "rebuilt", "asof": o["asof"], "rows": len(o["rows"]), **({"arrived": arrived} if arrived else {})}
 
 
+def _alerts(db: Database, now: dt.datetime) -> dict:
+    """Protective alerts for every protected holding, then pre-open tickets (active strategies only)."""
+    from pymongo.errors import DuplicateKeyError
+    from .accounts import tickets
+    created = tickets.check_protective(db, now)
+    ticket_notes = 0
+    for acc in db.accounts.find({}, {"_id": 1}):
+        try:
+            t = tickets.build_tickets(db, acc["_id"], now)
+        except Exception as e:  # one account's problem must not block the others
+            created.append({"type": "ticket_error", "account_id": acc["_id"], "error": f"{type(e).__name__}: {e}"})
+            continue
+        if not t["tickets"]:
+            continue
+        try:
+            db.notifications.insert_one({"type": "pre_open_tickets", "account_id": acc["_id"], "asof": t["asof"],
+                                         "tickets": t["tickets"], "created_at": now, "acknowledged": False,
+                                         "dedupe_key": f"pre_open_tickets:{acc['_id']}:{t['asof']}",
+                                         "message": f"{len(t['tickets'])} order ticket(s) to place before the open"})
+            ticket_notes += 1
+        except DuplicateKeyError:
+            pass
+    return {"protective": len([c for c in created if c.get("type") != "ticket_error"]), "ticket_notifications": ticket_notes,
+            "errors": [c for c in created if c.get("type") == "ticket_error"]}
+
+
 def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: float = 0.2,
              run_in_thread: bool = False) -> str:
     def work(log):
@@ -73,6 +103,8 @@ def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: 
         log(step="ingest_1d", **{k: v for k, v in ing.items() if k != "failures"}, failed=len(ing["failures"]))
         out = _refresh_outlook(db, now)
         log(step="outlook", **out)
-        return {"ingest_1d": ing, "outlook": out}
+        alerts = _alerts(db, now)
+        log(step="alerts", **alerts)
+        return {"ingest_1d": ing, "outlook": out, "alerts": alerts}
 
     return jobs.start_job(db, "tick", work, run_in_thread=run_in_thread)

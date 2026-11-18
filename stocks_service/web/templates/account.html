@@ -10,13 +10,21 @@
   {% if h.equity is not none %}equity {{ '{:,.2f}'.format(h.equity) }}{% else %}equity unavailable (no price for {{ h.unmarked|join(', ') }}){% endif %} ·
   realized {{ '{:+,.2f}'.format(h.realized) }} ·
   latest snapshot {{ h.latest_snapshot.strftime('%Y-%m-%d') if h.latest_snapshot else 'none' }} ·
+  risk profile {{ acc.risk_profile or 'none' }} ·
   <span class="{{ 'neg' if h.open_breaks else '' }}">{{ h.open_breaks }} open break(s)</span>
 </div>
+
+{% if alerts %}
+<div class="notice"><strong>Alerts</strong>
+  <ul style="margin:6px 0 0">{% for a in alerts %}<li>{{ a.message }}</li>{% endfor %}</ul>
+  <p class="small muted" style="margin:6px 0 0">Acknowledge with <code>POST /api/v1/notifications/{id}/ack</code>.</p>
+</div>
+{% endif %}
 
 <h2>Holdings</h2>
 <div class="panel scroll"><table>
   <thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Last close</th>
-    <th class="num">Market value</th><th class="num">Unrealized</th><th class="num">Realized</th></tr></thead>
+    <th class="num">Market value</th><th class="num">Unrealized</th><th class="num">Realized</th><th>Protection</th></tr></thead>
   <tbody>
   {% for p in h.positions %}
     <tr><td><a href="/symbol/{{ p.symbol }}">{{ p.symbol }}</a></td><td class="num">{{ '{:,.4g}'.format(p.qty) }}</td>
@@ -24,8 +32,9 @@
       <td class="num">{{ '%.2f'|format(p.mark) if p.mark else '—' }} <span class="small muted">{{ p.mark_session or '' }}</span></td>
       <td class="num">{{ '{:,.2f}'.format(p.market_value) if p.market_value is not none else '—' }}</td>
       <td class="num {{ 'pos' if p.unrealized and p.unrealized > 0 else 'neg' }}">{{ '{:+,.2f}'.format(p.unrealized) if p.unrealized is not none else '—' }}</td>
-      <td class="num">{{ '{:+,.2f}'.format(p.realized) }}</td></tr>
-  {% else %}<tr><td colspan="7" class="muted">No positions. Upload a snapshot below.</td></tr>{% endfor %}
+      <td class="num">{{ '{:+,.2f}'.format(p.realized) }}</td>
+      <td class="small">{% set lv = levels.get(p.symbol) %}{% if lv %}stop {{ '%.2f'|format(lv.stop) }}{% if lv.target %} · target {{ '%.2f'|format(lv.target) }}{% endif %}{% else %}<span class="muted">none</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="8" class="muted">No positions. Upload a snapshot below.</td></tr>{% endfor %}
   </tbody>
 </table></div>
 
@@ -49,6 +58,26 @@ are the same as on the <a href="/outlook">Outlook</a> page; nothing here is a va
 </table></div>
 {% if outlook.unrecognized_holdings %}<p class="small muted">Not in the watched universe (add them on the API to get rows):
   {{ outlook.unrecognized_holdings|join(', ') }}</p>{% endif %}
+{% endif %}
+
+{% if tk %}
+<h2>Order tickets for the next session</h2>
+{% if tk.tickets %}
+<div class="panel scroll"><table>
+  <thead><tr><th>Symbol</th><th>Action</th><th class="num">Qty</th><th>Order</th><th class="num">Max loss</th><th class="num">Exp. 6-mo vs cash</th><th>Exits and notes</th></tr></thead>
+  <tbody>{% for t in tk.tickets %}
+    <tr><td>{{ t.symbol }}</td><td>{{ t.action }}</td><td class="num">{{ t.quantity }}</td>
+      <td>Limit {{ '%.2f'|format(t.limit_price) }}, Day, before {{ t.place_before[:16]|replace('T', ' ') }} UTC</td>
+      <td class="num">{{ '{:,.0f}'.format(t.max_loss_at_stop_with_gap) }}</td>
+      <td class="num">{{ '{:+,.0f}'.format(t.expected_profit_6m_vs_cash) }}</td>
+      <td class="small">After the fill, one OCO (one-cancels-the-other) order, Good 'til Canceled:
+        {% for f in t.after_fill.legs %}{{ f.action }} {{ f.order_type }} {{ '%.2f'|format(f.stop_price or f.limit_price) }}{% if not loop.last %} / {% endif %}{% endfor %}.
+        {{ t.timeout }}{% for n in t.notes %} <strong>{{ n }}</strong>{% endfor %}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% else %}
+<p class="muted">{{ tk.note or 'No tickets.' }}{% for w in tk.withheld %}<br>{{ w.symbol }} {{ w.side }}: {{ w.reason }}{% endfor %}</p>
+{% endif %}
 {% endif %}
 
 <h2>Breaks</h2>
