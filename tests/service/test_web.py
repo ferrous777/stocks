@@ -238,6 +238,8 @@ def test_connect_page_documents_the_live_mcp_server(db):
         import anyio
         live = anyio.run(mcp.list_tools)
     assert _current_nav(page) == ["Connect"]
+    nav = page.split('aria-label="Main"', 1)[1].split("</nav>", 1)[0]
+    assert re.findall(r'class="nav__link" href="([^"]+)"', nav)[-2:] == ["/docs", "/connect"]   # Connect follows API
     endpoint = "https://testserver/mcp"
     assert page.count(endpoint) >= 5                          # every snippet points at this server
     for t in live:                                              # the tool table is the server's own registry
