@@ -7,6 +7,8 @@ from stocks_service.api.app import create_app
 from stocks_service.paper import broker, report
 from stocks_service.settings import Settings
 
+import pytest
+
 from .test_paper import EVENING, LATER, world  # noqa: F401  (fixture)
 
 H = {"Authorization": "Bearer k", "Accept": "application/json, text/event-stream",
@@ -102,3 +104,45 @@ def test_paired_comparison_and_shadow_gate(db, world):  # noqa: F811
     assert cmp_["paired_excess_annual"]["ci95"] is not None          # 43 shared sessions >= 40
     assert cmp_["gate"]["promotable"] is False and cmp_["gate"]["checks"]["min_sessions"] is False
     assert cmp_["closed_orders"]["agent"] == 1
+
+
+def test_rejections_are_audited_and_observations_are_reconstructible(db, world, monkeypatch):  # noqa: F811
+    broker.create_paper_account(db, account_id="agent", name="Agent", starting_cash=100_000.0,
+                                risk_profile="default@1", now=EVENING)
+    db.accounts.insert_one({"_id": "real", "name": "Real", "kind": "real"})
+    monkeypatch.setattr("stocks_service.mcp_server._now", lambda: EVENING)
+    with _client(db) as c:
+        _, err = _call(c, "get_account", **IDENT, account_id="real")
+        assert err
+        _, err = _call(c, "place_paper_order", **IDENT, account_id="agent", symbol="SPY", side="long", qty=1,
+                       idempotency_key="short", rationale="x")
+        assert err
+        seen, _ = _call(c, "get_outlook", **IDENT, limit=3)
+    logs = {d["tool"]: d for d in db.agent_decisions.find({}, {"_id": 0})}
+    assert "real account" in logs["get_account"]["result"]["error"]
+    assert "idempotency_key" in logs["place_paper_order"]["result"]["error"]
+    obs = logs["get_outlook"]["result"]["observation"]
+    assert obs["run_id"] == seen["run_id"] and obs["rows"] == seen["rows"] and len(obs["rows"]) == 3
+    assert db.outlook_runs.find_one({"_id": __import__("bson").ObjectId(obs["run_id"])})
+
+
+def test_comparison_counts_the_first_session_and_only_in_window_trades(db, world):  # noqa: F811
+    broker.create_paper_account(db, account_id="a", name="A", starting_cash=100_000.0, risk_profile="default@1",
+                                now=EVENING)
+    broker.create_paper_account(db, account_id="b", name="B", starting_cash=100_000.0, risk_profile="default@1",
+                                now=EVENING)
+    broker.place_order(db, "a", symbol="QQQ", side="short", qty=10, idempotency_key="a-qqq-short",
+                       decided_by={}, now=EVENING)
+    db.bars.insert_many(world)
+    broker.process_account(db, "a", LATER)
+    broker.process_account(db, "b", LATER)
+    full = report.compare(db, "a", "b")
+    first_eq = db.equity_curve.find_one({"account_id": "a"}, sort=[("session", 1)])["equity"]
+    eq_a = [e["equity"] for e in db.equity_curve.find({"account_id": "a"}).sort("session", 1)]
+    assert full["total_return"]["agent"] == pytest.approx(eq_a[-1] / 100_000.0 - 1)
+    assert first_eq != 100_000.0  # the first session moved equity (entry costs at least) and it is counted
+    # Restrict the shared period to sessions after the order closed: it no longer counts.
+    closed = db.orders.find_one({"account_id": "a"})
+    db.equity_curve.delete_many({"account_id": "b", "session": {"$lte": closed["exit_session"]}})
+    late = report.compare(db, "a", "b")
+    assert late["closed_orders"]["agent"] == 0 and full["closed_orders"]["agent"] == 1
