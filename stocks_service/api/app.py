@@ -23,8 +23,10 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
     keys = settings.api_key_list()
     if not keys:
         raise RuntimeError("STOCKS_API_KEYS is empty: refusing to start an unauthenticated API")
-    if settings.admin_password and len(settings.session_secret) < 32:
-        raise RuntimeError("STOCKS_SESSION_SECRET must be set (>= 32 chars) when STOCKS_ADMIN_PASSWORD is set")
+    if settings.login_token and len(settings.login_token) < 32:
+        raise RuntimeError("STOCKS_LOGIN_TOKEN must be at least 32 characters (it is the whole secret of the sign-in link)")
+    if (settings.admin_password or settings.login_token) and len(settings.session_secret) < 32:
+        raise RuntimeError("STOCKS_SESSION_SECRET must be set (>= 32 chars) when a website login is configured")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -61,7 +63,7 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
     # Session cookie for the website; a random per-process secret when the website is disabled.
     import secrets as _secrets
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret or _secrets.token_urlsafe(32),
-                       https_only=settings.session_https_only, same_site="lax", max_age=12 * 3600)
+                       https_only=settings.session_https_only, same_site="lax", max_age=90 * 24 * 3600)
 
     @app.exception_handler(LoginRequired)
     def _login_required(request: Request, exc: LoginRequired):

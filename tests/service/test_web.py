@@ -107,3 +107,32 @@ def test_daily_change_is_not_distorted_by_a_split(db):
         _login(c)
         html = c.get("/").text
         assert "+0.75%" in html and "-89.9" not in html
+
+
+TOKEN = "t" * 40
+
+
+def _link_client(db, password=""):
+    s = Settings(mongo_url="mongodb://unused", api_keys="k", admin_password=password, login_token=TOKEN,
+                 session_secret=SECRET)
+    return TestClient(create_app(s, db=db), base_url="https://testserver")
+
+
+def test_sign_in_link(db):
+    with _link_client(db) as c:
+        assert c.get("/", follow_redirects=False).headers["location"] == "/login"
+        page = c.get("/login").text
+        assert "sign-in link" in page and 'type="password"' not in page  # no password form without a password
+        bad = c.get("/login/" + "x" * 40, follow_redirects=False)
+        assert bad.status_code == 200 and "not valid" in bad.text and "user" not in bad.headers.get("set-cookie", "")
+        assert c.get("/", follow_redirects=False).status_code == 303
+        r = c.get("/login/" + TOKEN, follow_redirects=False)
+        assert (r.status_code, r.headers["location"]) == (303, "/")
+        assert "max-age=7776000" in r.headers["set-cookie"].lower()  # 90 days
+        assert c.get("/", follow_redirects=False).status_code == 200
+        assert c.post("/login", data={"password": "anything"}).status_code == 404  # password sign-in disabled
+
+
+def test_sign_in_link_must_be_long(db):
+    with pytest.raises(RuntimeError, match="LOGIN_TOKEN"):
+        create_app(Settings(mongo_url="x", api_keys="k", login_token="short", session_secret=SECRET), db=db)
