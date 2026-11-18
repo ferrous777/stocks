@@ -513,3 +513,134 @@ def admin_tick(request: Request, db: Database = Depends(get_db)):
     except jobs.JobConflict as e:
         raise HTTPException(409, str(e))
     return {"job_id": job_id, "status_url": f"/api/v1/admin/jobs/{job_id}"}
+
+
+# --- risk profiles, tickets, actions, protective levels, notifications (phase 4c) -----------
+
+class RiskProfileIn(BaseModel):
+    profile_id: str = Field(pattern=r"^[a-z][a-z0-9_]{1,40}$")
+    version: int = Field(ge=1)
+    risk_per_trade: float = Field(gt=0, le=0.05)
+    max_position_pct: float = Field(gt=0, le=1)
+    max_cluster_pct: float = Field(gt=0, le=1)
+    max_heat_pct: float = Field(gt=0, le=0.5)
+    gap_stress_atr: float = Field(ge=0, le=10)
+    max_gross: float = Field(gt=0, le=2)
+    max_short_pct: float = Field(ge=0, le=1)
+    corr_threshold: float = Field(gt=0, le=1)
+    min_adv_usd: float = Field(ge=0)
+    max_adv_pct: float = Field(gt=0, le=1)
+    note: str = Field(min_length=3, max_length=500)
+
+
+@router.post("/risk-profiles", status_code=status.HTTP_201_CREATED)
+def create_risk_profile(body: RiskProfileIn, db: Database = Depends(get_db)):
+    doc = {"_id": f"{body.profile_id}@{body.version}", **body.model_dump(), "created_at": _now()}
+    try:
+        db.risk_profiles.insert_one(doc)
+    except DuplicateKeyError:
+        raise HTTPException(409, f"{doc['_id']} already exists; profiles are immutable, create a new version")
+    return doc
+
+
+@router.get("/risk-profiles")
+def list_risk_profiles(db: Database = Depends(get_db)):
+    return list(db.risk_profiles.find().sort([("profile_id", 1), ("version", 1)]))
+
+
+class AccountRiskIn(BaseModel):
+    risk_profile: str = Field(pattern=r"^[a-z][a-z0-9_]{1,40}@[0-9]+$")
+
+
+@router.put("/accounts/{account_id}/risk-profile")
+def set_account_risk_profile(body: AccountRiskIn, account_id: str = AccountPath, db: Database = Depends(get_db)):
+    if db.risk_profiles.find_one({"_id": body.risk_profile}) is None:
+        raise HTTPException(404, f"risk profile {body.risk_profile} not found")
+    res = db.accounts.update_one({"_id": account_id}, {"$set": {"risk_profile": body.risk_profile}})
+    if res.matched_count == 0:
+        raise HTTPException(404, f"account {account_id} not found")
+    return {"account_id": account_id, "risk_profile": body.risk_profile}
+
+
+@router.get("/accounts/{account_id}/tickets")
+def account_tickets(account_id: str = AccountPath, db: Database = Depends(get_db)):
+    """Order tickets for the next session. Produced only for rows backed by an active strategy version."""
+    from ..accounts import tickets
+    return _acct_call(tickets.build_tickets, db, account_id, _now())
+
+
+class ActionIn(BaseModel):
+    outlook_asof: dt.date
+    symbol: str = Field(pattern=SYMBOL_PATTERN)
+    side: Literal["long", "short"]
+    action: Literal["taken", "skipped"]
+    reason: str | None = Field(default=None, max_length=500)
+    exec_ids: list[str] = Field(default_factory=list)
+    stop: float | None = Field(default=None, gt=0)
+    target: float | None = Field(default=None, gt=0)
+
+
+@router.post("/accounts/{account_id}/actions", status_code=status.HTTP_201_CREATED)
+def record_action(body: ActionIn, account_id: str = AccountPath, db: Database = Depends(get_db)):
+    """Record what you did with an outlook row: taken (with its fills; sets protective levels) or skipped."""
+    from ..accounts import tickets
+    doc = _acct_call(tickets.record_action, db, account_id, outlook_asof=body.outlook_asof.isoformat(),
+                     symbol=body.symbol, side=body.side, action=body.action, reason=body.reason,
+                     exec_ids=body.exec_ids, stop=body.stop, target=body.target, now=_now())
+    doc["id"] = str(doc.pop("_id"))
+    doc["outlook_run"] = str(doc["outlook_run"])
+    return doc
+
+
+@router.get("/accounts/{account_id}/actions")
+def list_actions(account_id: str = AccountPath, db: Database = Depends(get_db)):
+    out = []
+    for d in db.opportunity_actions.find({"account_id": account_id}).sort("created_at", -1):
+        d["id"], d["outlook_run"] = str(d.pop("_id")), str(d["outlook_run"])
+        out.append(d)
+    return out
+
+
+class LevelsIn(BaseModel):
+    side: Literal["long", "short"]
+    stop: float = Field(gt=0)
+    target: float | None = Field(default=None, gt=0)
+    timeout_session: dt.date | None = None
+    note: str = Field(min_length=3, max_length=200)
+
+
+@router.put("/accounts/{account_id}/levels/{symbol}")
+def put_levels(body: LevelsIn, account_id: str = AccountPath, symbol: str = SymbolPath, db: Database = Depends(get_db)):
+    """Set protective levels on any holding (e.g. an opening-balance position) so the tick watches it."""
+    from ..accounts import tickets
+    from ..accounts.service import get_account
+    _acct_call(get_account, db, account_id)
+    doc = _acct_call(tickets.set_levels, db, account_id, symbol=symbol, side=body.side, stop=body.stop,
+                     target=body.target, timeout_session=body.timeout_session, source=f"manual:{body.note}", now=_now())
+    doc["id"] = str(doc.pop("_id"))
+    return doc
+
+
+@router.get("/notifications")
+def list_notifications(account_id: str | None = None, include_acknowledged: bool = False,
+                       db: Database = Depends(get_db)):
+    q = {**({"account_id": account_id} if account_id else {}), **({} if include_acknowledged else {"acknowledged": False})}
+    out = []
+    for d in db.notifications.find(q).sort("created_at", -1).limit(200):
+        d["id"] = str(d.pop("_id"))
+        d.pop("levels_id", None)
+        out.append(d)
+    return out
+
+
+@router.post("/notifications/{notification_id}/ack")
+def ack_notification(notification_id: str, db: Database = Depends(get_db)):
+    from bson import ObjectId
+    try:
+        oid = ObjectId(notification_id)
+    except Exception:
+        raise HTTPException(404, "notification not found")
+    res = db.notifications.update_one({"_id": oid}, {"$set": {"acknowledged": True, "acknowledged_at": _now()}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "notification not found")
+    return {"id": notification_id, "acknowledged": True}
