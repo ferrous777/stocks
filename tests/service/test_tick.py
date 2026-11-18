@@ -54,3 +54,35 @@ def test_tick_rebuilds_the_outlook_only_for_a_new_session(db):
     assert first["status"] == "rebuilt" and first["asof"] == "2025-06-02"
     assert tick._refresh_outlook(db, NOW) == {"status": "current", "asof": "2025-06-02"}
     assert db.outlook_runs.count_documents({}) == 1 and cal
+
+
+def test_same_session_rebuild_when_a_missing_close_arrives(db):
+    _load_db(db)
+    protocol.seal_holdout(db, start=dt.date(2024, 11, 18), end=dt.date(2025, 5, 30), now=NOW)
+    db.cost_profiles.insert_one({"_id": "market@1", **dataclasses.asdict(protocol.BASE_COST), "profile_id": "market"})
+    build.run_calibration(db, now=NOW)
+    last = dt.datetime(2025, 6, 2, tzinfo=UTC)
+    held = db.bars.find_one({"symbol": "INTC", "session": last})
+    db.bars.delete_one({"_id": held["_id"]})                    # INTC's close not published yet
+    first = tick._refresh_outlook(db, NOW)
+    assert first["status"] == "rebuilt"
+    assert db.outlook_runs.find_one(sort=[("created_at", -1), ("_id", -1)])["missing_inputs"] == ["INTC"]
+    assert tick._refresh_outlook(db, NOW)["status"] == "current"  # still missing: nothing to do
+    db.bars.insert_one(held)                                      # it arrives on a later tick
+    again = tick._refresh_outlook(db, NOW)
+    assert again["status"] == "rebuilt" and again["arrived"] == ["INTC"]
+    assert db.outlook_runs.find_one(sort=[("created_at", -1), ("_id", -1)])["missing_inputs"] == []
+
+
+def test_synchronous_jobs_renew_their_lease(db, monkeypatch):
+    import time as _time
+    monkeypatch.setattr(jobs, "HEARTBEAT_SECONDS", 0.05)
+    seen = []
+
+    def work(log):
+        first = db.job_locks.find_one({"_id": "job:slow"})["expires_at"]
+        _time.sleep(0.3)
+        seen.append((first, db.job_locks.find_one({"_id": "job:slow"})["expires_at"]))
+
+    jobs.start_job(db, "slow", work, run_in_thread=False)
+    assert seen[0][1] > seen[0][0]  # extended while the synchronous work ran

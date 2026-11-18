@@ -130,5 +130,5 @@ def outlook_status(db: Database, side: str | None = None) -> dict:
     doc = latest_outlook(db)
     if doc and side in ("long", "short"):
         doc["rows"] = [r for r in doc["rows"] if r["side"] == side]
-    cal = db.calibrations.find_one(sort=[("created_at", -1)], projection={"buckets": 0})
+    cal = db.calibrations.find_one(sort=[("created_at", -1), ("_id", -1)], projection={"buckets": 0})
     return {"outlook": doc, "calibration": cal, "side": side}

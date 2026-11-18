@@ -3,8 +3,9 @@
 1. Incrementally ingest completed daily bars for every enabled symbol that has history (a few
    overlapping sessions are re-fetched for the overlap check). A failing symbol (e.g. quarantined)
    is recorded and the others continue.
-2. When a new session's SPY close is stored and the latest outlook is older, rebuild the outlook
-   from the existing calibration. Calibration itself only uses pre-holdout history, so new bars do
+2. When a new session's SPY close is stored and the latest outlook is older — or the latest outlook
+   lacked some symbol's close for that session and it has now arrived — rebuild the outlook from
+   the existing calibration. Calibration itself only uses pre-holdout history, so new bars do
    not change it; it is re-run explicitly (``POST /api/v1/outlook/run``).
 
 Runs under the shared ``tick`` lease (``stocks_service.jobs``), so overlapping cron runs never
@@ -49,14 +50,19 @@ def _refresh_outlook(db: Database, now: dt.datetime) -> dict:
     if spy is None:
         return {"status": "skipped", "reason": "no SPY data"}
     last_session = spy["session"].date().isoformat()
-    latest = db.outlook_runs.find_one(sort=[("created_at", -1)], projection={"asof": 1})
+    latest = db.outlook_runs.find_one(sort=[("created_at", -1), ("_id", -1)], projection={"asof": 1, "missing_inputs": 1})
     if latest and latest["asof"] >= last_session:
-        return {"status": "current", "asof": latest["asof"]}
+        arrived = [s for s in latest.get("missing_inputs", [])
+                   if db.bars.find_one({"symbol": s, "interval": "1d", "session": spy["session"]}, {"_id": 1})]
+        if not arrived:
+            return {"status": "current", "asof": latest["asof"]}
+    else:
+        arrived = []
     try:
         o = build_outlook(db, now=now)
     except OutlookUnavailable as e:
         return {"status": "unavailable", "reason": str(e)}
-    return {"status": "rebuilt", "asof": o["asof"], "rows": len(o["rows"])}
+    return {"status": "rebuilt", "asof": o["asof"], "rows": len(o["rows"]), **({"arrived": arrived} if arrived else {})}
 
 
 def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: float = 0.2,

@@ -350,7 +350,7 @@ def outlook(db: Database = Depends(get_db), side: Literal["long", "short"] | Non
 
 @router.get("/outlook/calibration")
 def outlook_calibration(db: Database = Depends(get_db)):
-    cal = db.calibrations.find_one(sort=[("created_at", -1)])
+    cal = db.calibrations.find_one(sort=[("created_at", -1), ("_id", -1)])
     if cal is None:
         raise HTTPException(404, "no calibration yet; run POST /api/v1/outlook/run")
     cal["id"] = str(cal.pop("_id"))

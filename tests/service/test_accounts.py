@@ -287,3 +287,16 @@ def test_upload_forms_are_not_prefilled(db):
         assert page.count("placeholder='Example:") == 2
         import re
         assert all(not body.strip() for body in re.findall(r"<textarea[^>]*>(.*?)</textarea>", page, re.S))
+
+
+def test_fills_recorded_under_the_pre_fee_hash_are_still_recognized(db):
+    from stocks_service.accounts import service
+    service.create_account(db, account_id="acct", name="A", now=NOW)
+    x = {"symbol": "SPY", "side": "buy", "qty": 1, "price": 500.0, "fees": 0.0, "ts": T(2024, 6, 4, 15)}
+    legacy = service._legacy_exec_id(x)
+    db.executions.insert_one({"account_id": "acct", "exec_id": legacy, "symbol": "SPY", "side": "buy", "qty": 1,
+                              "price": 500.0, "fees": 0.0, "ts": T(2024, 6, 4, 15), "source": "manual"})
+    assert legacy != service._exec_id(x)
+    assert service.add_executions(db, "acct", [x], now=NOW)["duplicates"] == 1           # same fill re-uploaded
+    assert service.add_executions(db, "acct", [{**x, "fees": 1.0}], now=NOW)["inserted"] == 1  # differs in fees
+    assert db.executions.count_documents({"account_id": "acct"}) == 2
