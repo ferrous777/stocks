@@ -486,7 +486,7 @@ def resolve_break(break_id: str, body: ResolveIn, db: Database = Depends(get_db)
     from ..accounts import service
     res = _acct_call(service.resolve_break, db, break_id, kind=body.kind, note=body.note, now=_now(),
                      cost_basis=body.cost_basis)
-    ev = {k: v for k, v in res["event"].items() if k != "_id"}
+    ev = {k: (str(v) if k == "break_id" else v) for k, v in res["event"].items() if k != "_id"}
     return {"event": ev, "breaks": [_break_out(b) for b in res["breaks"]]}
 
 

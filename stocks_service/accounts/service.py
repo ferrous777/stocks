@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import math
 
 from bson import ObjectId
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
 from ..ingestion import load_splits
-from .ledger import CASH, QTY_TOL, Execution, LedgerEvent, LedgerState, reconcile, state_as_of
+from .ledger import CASH, QTY_TOL, Execution, LedgerEvent, LedgerState, reconcile, split_time, state_as_of
 
 UTC = dt.timezone.utc
 
@@ -38,6 +39,29 @@ def _utc(t: dt.datetime) -> dt.datetime:
     if t.tzinfo is None:
         raise AccountError("timestamps must include a timezone (e.g. 2026-11-17T21:00:00Z)")
     return t.astimezone(UTC)
+
+
+def _finite(name: str, v) -> None:
+    if v is not None and not math.isfinite(v):
+        raise AccountError(f"{name} must be a finite number")
+
+
+def _lock_account(db: Database, account_id: str, session) -> None:
+    """Write the account document first in every mutating transaction, so concurrent mutations of the
+    same account conflict and the loser retries against committed state (no double opening balances)."""
+    res = db.accounts.update_one({"_id": account_id}, {"$inc": {"ledger_version": 1}}, session=session)
+    if res.matched_count == 0:
+        raise NotFound(f"account {account_id} not found")
+
+
+def _reconcile_after(db: Database, account_id: str, ts: dt.datetime, now: dt.datetime, session, resolved_by: str) -> int:
+    """Re-reconcile every non-opening snapshot at or after ``ts`` (history before them changed)."""
+    n = 0
+    for snap in db.portfolio_snapshots.find({"account_id": account_id, "opening": False, "as_of": {"$gte": ts}},
+                                            session=session):
+        _reconcile_snapshot(db, snap, now, session, resolved_by=resolved_by)
+        n += 1
+    return n
 
 
 def _from_db(t: dt.datetime) -> dt.datetime:
@@ -106,13 +130,17 @@ def _reconcile_snapshot(db: Database, snap: dict, now: dt.datetime, session, res
 def upload_snapshot(db: Database, account_id: str, *, as_of: dt.datetime, cash: float, positions: list[dict],
                     opening: bool, now: dt.datetime) -> dict:
     as_of = _utc(as_of)
+    _finite("cash", cash)
+    for p in positions:
+        _finite(f"{p['symbol']} qty", p["qty"])
+        _finite(f"{p['symbol']} avg_cost", p.get("avg_cost"))
     syms = [p["symbol"] for p in positions]
     if len(set(syms)) != len(syms):
         raise AccountError("each symbol may appear once per snapshot (net the lots)")
     out: dict = {}
 
     def txn(session):
-        get_account(db, account_id, session)
+        _lock_account(db, account_id, session)
         history = _has_history(db, account_id, session)
         is_opening = opening or not history
         if is_opening and history:
@@ -145,7 +173,8 @@ def upload_snapshot(db: Database, account_id: str, *, as_of: dt.datetime, cash: 
 def _exec_id(x: dict) -> str:
     if x.get("exec_id"):
         return str(x["exec_id"])
-    key = f"{x['symbol']}|{x['side']}|{x['qty']!r}|{x['price']!r}|{_utc(x['ts']).isoformat()}"
+    key = (f"{x['symbol']}|{x['side']}|{x['qty']!r}|{x['price']!r}|{x.get('fees', 0.0)!r}|"
+           f"{_utc(x['ts']).isoformat()}")
     return "h:" + hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
@@ -154,7 +183,7 @@ def add_executions(db: Database, account_id: str, items: list[dict], *, now: dt.
 
     def txn(session):
         out.update(inserted=0, duplicates=0, reconciled_snapshots=0)
-        get_account(db, account_id, session)
+        _lock_account(db, account_id, session)
         opening = db.portfolio_snapshots.find_one({"account_id": account_id, "opening": True}, session=session)
         earliest = None
         for x in items:
@@ -173,10 +202,7 @@ def add_executions(db: Database, account_id: str, items: list[dict], *, now: dt.
             out["inserted"] += 1
             earliest = ts if earliest is None or ts < earliest else earliest
         if earliest is not None:
-            for snap in db.portfolio_snapshots.find({"account_id": account_id, "opening": False,
-                                                      "as_of": {"$gte": earliest}}, session=session):
-                _reconcile_snapshot(db, snap, now, session, resolved_by="executions")
-                out["reconciled_snapshots"] += 1
+            out["reconciled_snapshots"] = _reconcile_after(db, account_id, earliest, now, session, "executions")
 
     with db.client.start_session() as s:
         s.with_transaction(txn)
@@ -200,6 +226,8 @@ def resolve_break(db: Database, break_id: str, *, kind: str, note: str, now: dt.
             br = None
         if br is None:
             raise NotFound("break not found")
+        _lock_account(db, br["account_id"], session)
+        br = db.reconciliation_breaks.find_one({"_id": br["_id"]}, session=session)  # re-read under the lock
         if br["status"] != "open":
             raise AccountError("break is already resolved")
         snap = db.portfolio_snapshots.find_one({"_id": br["snapshot_id"]}, session=session)
@@ -207,7 +235,7 @@ def resolve_break(db: Database, break_id: str, *, kind: str, note: str, now: dt.
         if kind == "transfer_in" and diff < 0 or kind == "transfer_out" and diff > 0:
             raise AccountError(f"{kind} does not match a difference of {diff:+g}")
         ev = {"account_id": br["account_id"], "ts": _from_db(snap["as_of"]), "kind": kind,
-              "ref": f"break:{break_id}", "reason": note, "created_at": now}
+              "ref": f"break:{break_id}:{ObjectId()}", "break_id": br["_id"], "reason": note, "created_at": now}
         if br["symbol"] == CASH:
             ev.update(symbol=None, amount=diff)
         else:
@@ -216,6 +244,9 @@ def resolve_break(db: Database, break_id: str, *, kind: str, note: str, now: dt.
                 raise AccountError("this difference flips the position through zero; record it as two adjustments")
             adding = (exp >= 0 and diff > 0) or (exp <= 0 and diff < 0)
             basis = cost_basis
+            if adding and basis is not None and (not math.isfinite(basis) or basis == 0 or (basis > 0) != (diff > 0)):
+                raise AccountError("cost_basis must be a finite, non-zero total with the same sign as the shares "
+                                   f"coming in ({diff:+g})")
             if adding and basis is None:
                 reported = {p["symbol"]: p for p in snap["positions"]}.get(br["symbol"], {})
                 if reported.get("avg_cost") is None:
@@ -223,7 +254,8 @@ def resolve_break(db: Database, break_id: str, *, kind: str, note: str, now: dt.
                 basis = diff * reported["avg_cost"]
             ev.update(symbol=br["symbol"], qty=diff, cost_basis=basis if adding else 0.0)
         db.ledger_events.insert_one(ev, session=session)
-        breaks = _reconcile_snapshot(db, snap, now, session, resolved_by=kind)
+        _reconcile_after(db, br["account_id"], ev["ts"], now, session, resolved_by=kind)
+        breaks = list(db.reconciliation_breaks.find({"snapshot_id": snap["_id"]}, session=session).sort("symbol", 1))
         out.update(event=ev, breaks=breaks)
 
     with db.client.start_session() as s:
@@ -233,9 +265,18 @@ def resolve_break(db: Database, break_id: str, *, kind: str, note: str, now: dt.
 
 # --- read models -------------------------------------------------------------------------
 
-def _last_close(db: Database, symbol: str) -> tuple[float, dt.date] | None:
+def _last_close(db: Database, symbol: str, now: dt.datetime) -> tuple[float, dt.date] | None:
+    """Latest raw close, restated for splits effective by ``now`` (the ledger applies a split at the
+    ex-date open, possibly before the first post-split close is stored)."""
     b = db.bars.find_one({"symbol": symbol, "interval": "1d"}, {"c": 1, "session": 1}, sort=[("session", -1)])
-    return (b["c"], b["session"].date()) if b else None
+    if not b:
+        return None
+    session = b["session"].date()
+    price = b["c"]
+    for sp in load_splits(db, symbol):
+        if sp.ex_date > session and split_time(sp.ex_date) <= now:
+            price /= sp.ratio
+    return price, session
 
 
 def holdings(db: Database, account_id: str, now: dt.datetime) -> dict:
@@ -243,7 +284,7 @@ def holdings(db: Database, account_id: str, now: dt.datetime) -> dict:
     st = ledger_state(db, account_id, now)
     rows, long_mv, short_mv = [], 0.0, 0.0
     for sym, h in sorted(st.open_positions().items()):
-        mark = _last_close(db, sym)
+        mark = _last_close(db, sym, now)
         mv = h.qty * mark[0] if mark else None
         if mv is not None:
             long_mv += max(mv, 0.0)
