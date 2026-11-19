@@ -59,7 +59,8 @@ when seeing the chart or table would help.
 5. READING THE OUTLOOK
 Grades: A = signal from a validated strategy; B = calibrated signal, strategy not validated;
 C = this ticker's own history only (a base rate, not a forecast); insufficient = no estimate.
-No strategy is validated yet, so present results as research, not as recommendations."""
+Only grade A rows (validated: true) come from a validated strategy; present every other row as
+research, not as a recommendation."""
 
 
 AgentId = Annotated[str, Field(description='Stable name of the calling client or agent, e.g. "chatgpt".')]
