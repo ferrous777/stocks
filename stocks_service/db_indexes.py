@@ -116,6 +116,16 @@ INDEXES: dict[str, list[IndexModel]] = {
     "param_sets": [
         IndexModel([("strategy", ASCENDING), ("created_at", DESCENDING)], name="strategy_created"),
     ],
+    "step_runs": [   # per-step timing of every scheduled tick (kept 90 days)
+        IndexModel([("step", ASCENDING), ("at", DESCENDING)], name="step_at"),
+        IndexModel([("job_id", ASCENDING)], name="job_id"),
+        IndexModel([("at", ASCENDING)], name="ttl_at", expireAfterSeconds=90 * 24 * 3600),
+    ],
+    "request_timings": [   # website/API request timing per route and hour (kept 30 days)
+        IndexModel([("route", ASCENDING), ("method", ASCENDING), ("hour", ASCENDING)], name="route_method_hour",
+                   unique=True),
+        IndexModel([("hour", ASCENDING)], name="ttl_hour", expireAfterSeconds=30 * 24 * 3600),
+    ],
     "mcp_confirmations": [   # single-use confirmation tokens for MCP changes
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],

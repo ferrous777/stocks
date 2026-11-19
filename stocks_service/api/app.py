@@ -84,5 +84,7 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
     # MCP for the external AI agent: bearer = an API key; paper accounts only.
     app.mount("/mcp", _Auth(mcp.streamable_http_app(), keys))
     app.add_middleware(McpPath)
+    from ..ops import RequestTimer   # request timing per route and hour (the Ops page)
+    app.add_middleware(RequestTimer, get_db=lambda: app.state.db)
     app.state.mcp = mcp
     return app

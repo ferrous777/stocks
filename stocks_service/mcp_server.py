@@ -110,20 +110,24 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
                   streamable_http_path="/",
                   transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 
-    def log(tool: str, ident: dict, args: dict, result: dict, *, account_id: str | None = None) -> None:
+    def log(tool: str, ident: dict, args: dict, result: dict, *, account_id: str | None = None,
+            duration_ms: float | None = None) -> None:
         db: Database = get_db()
         db.agent_decisions.insert_one({"ts": _now(), "tool": tool, "account_id": account_id, **ident,
-                                       "args": args, "result": result})
+                                       "args": args, "result": result, "duration_ms": duration_ms})
 
     def audited(tool: str, idn: dict, args: dict, fn):
         """Run ``fn()``; every outcome, including validation errors and refusals, is logged with the
         caller's identity before the result or error is returned (identity itself is checked first)."""
+        import time
+        t0 = time.perf_counter()
         try:
             res, summary = fn()
         except Exception as e:
-            log(tool, idn, args, {"error": f"{type(e).__name__}: {e}"}, account_id=args.get("account_id"))
+            log(tool, idn, args, {"error": f"{type(e).__name__}: {e}"}, account_id=args.get("account_id"),
+                duration_ms=(time.perf_counter() - t0) * 1000)
             raise
-        log(tool, idn, args, summary, account_id=args.get("account_id"))
+        log(tool, idn, args, summary, account_id=args.get("account_id"), duration_ms=(time.perf_counter() - t0) * 1000)
         return res
 
     def ident(agent_id, model_id, prompt_version) -> dict:

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block title %}Ops · Stocks{% endblock %}
+{% macro secs(x) %}{% if x is none %}—{% elif x < 1 %}{{ '%.0f ms'|format(x*1000) }}{% elif x < 120 %}{{ '%.1f s'|format(x) }}{% else %}{{ '%.1f min'|format(x/60) }}{% endif %}{% endmacro %}
+{% macro ms(x) %}{% if x is none %}—{% elif x < 1000 %}{{ '%.0f ms'|format(x) }}{% else %}{{ '%.2f s'|format(x/1000) }}{% endif %}{% endmacro %}
+{% block content %}
+{% call ui.page_header("Operations") %}How often each scheduled step runs and how long every process takes, measured on each run.
+The cron tick fires {{ cron.meaning }} (<code>{{ cron.schedule }}</code>); on each tick every step checks its own schedule below.{% endcall %}
+{% if message %}{% call ui.alert("positive") %}{{ message }}{% endcall %}{% endif %}
+{% if error %}{% call ui.alert("negative") %}{{ error }}{% endcall %}{% endif %}
+
+<h2>Schedule</h2>
+{% call ui.table(["Step", "Frequency", "What “auto” does", "Last run", ("Last duration", "num"), "Change"], pin_first=True) %}
+  {% for s in schedule %}
+  <tr><td><code>{{ s.step }}</code></td>
+    <td>{{ ui.badge(s.mode|replace('_', ' ') ~ ((' ' ~ s.interval_minutes ~ ' min') if s.mode == 'interval' else ''),
+                    'negative' if s.mode == 'off' else 'positive' if s.mode == 'auto' else None) }}</td>
+    <td class="small muted" style="white-space:normal;min-width:240px">{{ s.auto_rule }}</td>
+    <td class="small">{% if s.last_run_at %}{{ s.last_run_at.strftime('%Y-%m-%d %H:%M') }} {{ ui.badge(s.last_status, 'negative' if s.last_status == 'failed' else None) }}{% else %}<span class="muted">never</span>{% endif %}</td>
+    <td class="num">{{ secs(s.last_duration_s) }}</td>
+    <td><form method="post" action="/ops/schedule" class="form-inline">
+      <input type="hidden" name="step" value="{{ s.step }}">
+      <select class="input" name="mode" aria-label="Frequency of {{ s.step }}">
+        {% for m in ["auto", "every_tick", "interval", "off"] %}<option value="{{ m }}"{% if m == s.mode %} selected{% endif %}>{{ m|replace('_', ' ') }}</option>{% endfor %}
+      </select>
+      <input class="input" type="number" name="interval_minutes" min="15" max="10080" step="15" style="width:6.5em"
+             placeholder="minutes" aria-label="Interval in minutes for {{ s.step }}" value="{{ s.interval_minutes or '' }}">
+      {{ ui.button("Save", size="sm") }}</form></td></tr>
+  {% endfor %}
+{% endcall %}
+<p class="muted small prose"><strong>auto</strong> runs a step only when there is something new for it; <strong>every tick</strong>
+runs it every 15 minutes; <strong>interval</strong> runs it when its last successful run is at least that many minutes old (15
+minutes is the finest, since that is how often the tick fires); <strong>off</strong> pauses it. Skips are recorded with their reason.</p>
+
+<div class="cluster my-3"><span class="small muted">Timings over</span>
+  {{ ui.segmented([("/ops?days=1", "1 day", days == 1), ("/ops?days=7", "7 days", days == 7), ("/ops?days=30", "30 days", days == 30)], label="Period") }}</div>
+
+<h2>Tick steps</h2>
+{% call ui.table(["Step", ("Runs", "num"), ("Skipped", "num"), ("Failed", "num"), ("Average", "num"), ("Median", "num"), ("95th pct", "num"),
+                  ("Max", "num"), ("Total time", "num")], pin_first=True) %}
+  {% for r in steps %}
+  <tr><td><code>{{ r.step }}</code></td><td class="num">{{ r.runs }}</td><td class="num muted">{{ r.skipped }}</td>
+    <td class="num {{ 'neg' if r.failed }}">{{ r.failed }}</td><td class="num">{{ secs(r.avg) }}</td><td class="num">{{ secs(r.p50) }}</td>
+    <td class="num">{{ secs(r.p95) }}</td><td class="num">{{ secs(r['max']) }}</td><td class="num">{{ secs(r.total) }}</td></tr>
+  {% endfor %}
+{% endcall %}
+
+<h3>Recent ticks</h3>
+{% call ui.table(["Started (UTC)", "Status", ("Total", "num")] + steps_order, compact=True, pin_first=True) %}
+  {% for t in ticks %}
+  <tr><td class="small">{{ t.started_at.strftime('%m-%d %H:%M') }}</td>
+    <td>{{ ui.badge(t.status, 'negative' if t.status == 'failed' else None) }}</td><td class="num">{{ secs(t.get('duration_s')) if t.status != 'running' else 'running' }}</td>
+    {% for st in steps_order %}{% set r = t.steps.get(st) %}
+    <td class="small {{ 'neg' if r and r.status == 'failed' }}"{% if r %} title="{{ r.reason }}"{% endif %}>{% if not r %}<span class="muted">—</span>{% elif r.status == 'skipped' %}<span class="muted">skip</span>{% else %}{{ secs(r.duration_s) }}{% endif %}</td>
+    {% endfor %}</tr>
+  {% else %}{{ ui.empty_row(3 + steps_order|length, "No ticks recorded yet.") }}{% endfor %}
+{% endcall %}
+<p class="muted small">Hover a cell for why the step ran or was skipped. Ticks before this page existed have no per-step rows.</p>
+
+<h2>Jobs</h2>
+{% call ui.table(["Job", ("Runs", "num"), ("Failed", "num"), ("Average", "num"), ("95th pct", "num"), ("Max", "num"), "Last run"], pin_first=True) %}
+  {% for j in jobs %}
+  <tr><td><code>{{ j.kind }}</code></td><td class="num">{{ j.runs }}</td><td class="num {{ 'neg' if j.failed }}">{{ j.failed }}</td>
+    <td class="num">{{ secs(j.avg) }}</td><td class="num">{{ secs(j.p95) }}</td><td class="num">{{ secs(j['max']) }}</td>
+    <td class="small">{{ j.last_started.strftime('%Y-%m-%d %H:%M') }} {{ ui.badge(j.last_status) }}</td></tr>
+  {% else %}{{ ui.empty_row(7, "No jobs in this period.") }}{% endfor %}
+{% endcall %}
+
+<h2>Pages and API requests</h2>
+{% call ui.table(["Route", "Method", ("Requests", "num"), ("Average", "num"), ("Slowest", "num"), ("Total time", "num"), ("5xx", "num")], pin_first=True) %}
+  {% for r in requests %}
+  <tr><td><code>{{ r.route }}</code></td><td class="small">{{ r.method }}</td><td class="num">{{ r.count }}</td>
+    <td class="num">{{ ms(r.avg_ms) }}</td><td class="num">{{ ms(r.max_ms) }}</td><td class="num">{{ ms(r.total_ms) }}</td>
+    <td class="num {{ 'neg' if r.errors }}">{{ r.errors }}</td></tr>
+  {% else %}{{ ui.empty_row(7, "No requests recorded in this period.") }}{% endfor %}
+{% endcall %}
+<p class="muted small">Sorted by total time, the best measure of where the server spends its effort.</p>
+
+<h2>MCP tools</h2>
+{% call ui.table(["Tool", ("Calls", "num"), ("Average", "num"), ("95th pct", "num"), ("Max", "num")], pin_first=True) %}
+  {% for t in mcp_tools %}
+  <tr><td><code>{{ t.tool }}</code></td><td class="num">{{ t.runs }}</td><td class="num">{{ ms(t.avg) }}</td>
+    <td class="num">{{ ms(t.p95) }}</td><td class="num">{{ ms(t['max']) }}</td></tr>
+  {% else %}{{ ui.empty_row(5, "No timed MCP calls in this period.") }}{% endfor %}
+{% endcall %}
+{% endblock %}
