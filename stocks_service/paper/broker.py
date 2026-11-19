@@ -169,6 +169,11 @@ def place_order(db: Database, account_id: str, *, symbol: str, side: str, qty: i
         if dup:
             out.update(order=dup, replayed=True)
             return
+        # Only watched symbols (their prices keep coming). Writing the symbol document makes this
+        # transaction conflict with a concurrent watch-list removal, so the two serialize.
+        if db.symbols.update_one({"_id": symbol, "enabled": {"$ne": False}}, {"$set": {"last_order_at": now}},
+                                 session=session).matched_count == 0:
+            raise AccountError(f"{symbol} is not on the watch list; paper orders need its future prices")
         o = latest_outlook(db)
         if o is None:
             raise NotFound("no outlook yet")
