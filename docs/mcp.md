@@ -28,12 +28,12 @@ Example: `{"agent_id": "chatgpt", "model_id": "unknown", "prompt_version": "v1"}
 | `get_performance` | Paper: return, max drawdown, closed-order stats, equity points, and the paired comparison with its baseline (with the influence gate). |
 | `list_orders` | Paper orders and their status. |
 | `list_transactions` | Fills and ledger entries of any account, newest first, paged with `cursor`. |
-| `upload_holdings` | **Confirmed.** Uploads a real account's holdings: `as_of`, `cash`, `positions[{symbol, qty, avg_cost}]`, and `account_name` to create the account. The first upload is the opening balance. Later uploads are reconciled, and any differences become breaks, never trades. |
+| `upload_holdings` | Applied immediately, with no confirmation. Uploads a real account's holdings: `as_of`, `cash`, `positions[{symbol, qty, avg_cost}]`, and `account_name` to create the account. The first upload is the opening balance. Later uploads are reconciled, and any differences become breaks, never trades. |
 | `place_paper_order` | DAY limit order for the next session from an outlook row. Needs `idempotency_key` and `rationale`. Rejected after `placeable_until`, above the risk limits, or when the symbol already has an open order or position. |
 | `cancel_order` | Cancel an open order before its session opens. |
 | `get_links` | The page catalog, plus links for a symbol (with an optional chart view: `chart_range`, `from_year` or `compare_years`), an account, or an outlook side. |
 
-**Confirmed** tools change data in two steps:
+**Confirmed** tools (the watch-list changes) change data in two steps:
 1. Called without `confirm_token`, they only preview the change and return a single-use token. The token is bound to those exact arguments and is valid for 15 minutes.
 2. The agent shows the preview to the user. After the user agrees, it repeats the call with the token.
 

@@ -1,6 +1,6 @@
 """Operations behind the MCP tools that go beyond paper trading: the watch list, uploading a real
 account's holdings, detailed per-symbol predictions, account read models, and the two-step
-confirmation used by every tool that changes something the user owns.
+confirmation used by the watch-list changes (holdings uploads apply directly, after validation).
 
 Two-step confirmation: a changing tool called without ``confirm_token`` only *previews* — it
 validates everything, describes exactly what would happen, and issues a single-use token bound to
