@@ -157,6 +157,9 @@ code { font: 0.9em var(--font-mono); background: var(--color-surface-muted); pad
 .textarea { width: 100%; min-height: 140px; font: var(--text-xs)/1.45 var(--font-mono); margin: var(--space-2) 0; }
 .form-row { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 .form-row .input { flex: 1; min-width: 160px; }
+/* A compact inline form inside a table cell (e.g. the Ops schedule editor). */
+.form-inline { display: flex; gap: var(--space-1); align-items: center; flex-wrap: nowrap; }
+.form-inline .input { padding: 3px var(--space-2); font-size: var(--text-sm); min-width: 0; }
 
 /* ---- Segmented control (filters) ---------------------------------------------------------- */
 .segmented { display: inline-flex; padding: 2px; gap: 2px; background: var(--color-surface-muted); border-radius: var(--radius-sm); }

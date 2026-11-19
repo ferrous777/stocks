@@ -58,6 +58,7 @@ def start_job(db: Database, kind: str, work: Callable[[Callable[..., None]], dic
 
     def log(**entry):
         db.jobs.update_one({"_id": job_id}, {"$push": {"progress": {"at": _now(), **entry}}})
+    log.job_id = str(job_id)   # lets the work tag its own records (e.g. per-step timings)
 
     def heartbeat():
         while not stop.wait(HEARTBEAT_SECONDS):
@@ -66,10 +67,14 @@ def start_job(db: Database, kind: str, work: Callable[[Callable[..., None]], dic
     def run():
         try:
             result = work(log)
-            db.jobs.update_one({"_id": job_id}, {"$set": {"status": "completed", "finished_at": _now(),
+            end = _now()
+            db.jobs.update_one({"_id": job_id}, {"$set": {"status": "completed", "finished_at": end,
+                                                         "duration_s": (end - now).total_seconds(),
                                                          "result": result or {}}})
         except Exception as e:
-            db.jobs.update_one({"_id": job_id}, {"$set": {"status": "failed", "finished_at": _now(),
+            end = _now()
+            db.jobs.update_one({"_id": job_id}, {"$set": {"status": "failed", "finished_at": end,
+                                                         "duration_s": (end - now).total_seconds(),
                                                          "error": f"{type(e).__name__}: {e}",
                                                          "traceback": traceback.format_exc()[-4000:]}})
         finally:

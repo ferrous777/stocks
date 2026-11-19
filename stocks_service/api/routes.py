@@ -541,6 +541,36 @@ def admin_tick(request: Request, db: Database = Depends(get_db)):
     return {"job_id": job_id, "status_url": f"/api/v1/admin/jobs/{job_id}"}
 
 
+class ScheduleIn(BaseModel):
+    mode: Literal["auto", "every_tick", "interval", "off"]
+    interval_minutes: int | None = Field(default=None, ge=15, le=10080)
+
+
+@router.get("/ops")
+def ops_overview(days: int = Query(7, ge=1, le=90), db: Database = Depends(get_db)):
+    """Schedule of each tick step and measured timings (steps, jobs, requests, MCP tools) over ``days``."""
+    return _ops_payload(db, days)
+
+
+def _ops_payload(db: Database, days: int) -> dict:
+    from .. import ops
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
+    return {"cron": {"schedule": ops.CRON, "meaning": ops.CRON_NOTE}, "days": days,
+            "schedule": list(ops.get_schedule(db).values()), "steps": ops.step_timings(db, since=since),
+            "jobs": ops.job_timings(db, since=since), "requests": ops.request_timings(db, since=since),
+            "mcp_tools": ops.tool_timings(db, since=since)}
+
+
+@router.put("/ops/schedule/{step}")
+def ops_set_schedule(body: ScheduleIn, step: str = Path(pattern=r"^[a-z_0-9]{1,30}$"), db: Database = Depends(get_db)):
+    from .. import ops
+    try:
+        return ops.set_schedule(db, step, mode=body.mode, interval_minutes=body.interval_minutes,
+                                now=dt.datetime.now(dt.timezone.utc))
+    except ops.ScheduleError as e:
+        raise HTTPException(422, str(e))
+
+
 # --- risk profiles, tickets, actions, protective levels, notifications (phase 4c) -----------
 
 class RiskProfileIn(BaseModel):

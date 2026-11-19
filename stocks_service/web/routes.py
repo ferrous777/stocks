@@ -128,6 +128,32 @@ def paper_account(request: Request, account_id: str, history: str | None = None,
     return _render(request, "paper_account.html", page="paper", **d)
 
 
+@router.get("/ops", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+def ops_page(request: Request, days: int = 7, saved: str | None = None, db: Database = Depends(get_db)):
+    return _ops_render(request, db, days, message=f"Schedule for {saved} saved." if saved else None)
+
+
+def _ops_render(request: Request, db: Database, days: int, *, message: str | None = None, error: str | None = None):
+    from .. import ops
+    from ..api.routes import _ops_payload
+    days = days if days in (1, 7, 30) else 7
+    return _render(request, "ops.html", ticks=ops.recent_ticks(db), steps_order=list(ops.STEPS),
+                   message=message, error=error, **_ops_payload(db, days))
+
+
+@router.post("/ops/schedule", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+def ops_schedule_form(request: Request, step: str = Form(...), mode: str = Form(...),
+                      interval_minutes: str = Form(""), db: Database = Depends(get_db)):
+    import datetime as _dt
+    from .. import ops
+    try:
+        minutes = int(interval_minutes) if interval_minutes.strip() else None
+        ops.set_schedule(db, step, mode=mode, interval_minutes=minutes, now=_dt.datetime.now(_dt.timezone.utc))
+    except (ValueError, ops.ScheduleError) as e:
+        return _ops_render(request, db, 7, error=f"Not saved: {e}")
+    return RedirectResponse("/ops?saved=" + step, status_code=303)
+
+
 @router.get("/outlook", response_class=HTMLResponse, dependencies=[Depends(require_login)])
 def outlook(request: Request, side: str | None = None, db: Database = Depends(get_db)):
     return _render(request, "outlook.html", **data.outlook_status(db, side))

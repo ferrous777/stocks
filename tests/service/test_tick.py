@@ -32,7 +32,7 @@ def test_tick_ingests_new_bars_records_failures_and_is_idempotent(db, fetcher):
     assert ing["symbols"] == 2 and ing["new_bars"] == 9 and ing["not_backfilled"] == ["AMD"]
     assert [f["symbol"] for f in ing["failures"]] == ["INTC"]   # no recorded data: recorded, others continue
     assert job["result"]["outlook"] == {"status": "skipped", "reason": "no SPY data"}
-    assert job["result"]["paper_accounts"]["created"] == []   # no baseline account to copy from yet
+    assert job["result"]["paper"]["paper_accounts"]["created"] == []   # no baseline account to copy from yet
     assert db.bars.count_documents({"symbol": "NVDA"}) == 51
     again = jobs.get_job(db, tick.run_tick(db, fetcher, S, pause=0))["result"]["ingest_1d"]
     assert again["new_bars"] == 0
