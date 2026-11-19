@@ -77,7 +77,7 @@ response = client.beta.messages.create(
     tools=[{"type": "mcp_toolset", "mcp_server_name": "stocks"}],
     system=(
         "You manage the paper account {{ agent_id }}. On every tool call pass "
-        "agent_id='my-agent', model_id='claude-opus-5-5', prompt_version='v1'."
+        "agent_id='my-agent', model_id='claude-opus-5-5', prompt_version='v1'."   # this code picks the model, so it is known
     ),
     messages=[{"role": "user", "content": (
         "Read today's outlook, check the account, and place the paper orders you "
@@ -89,6 +89,18 @@ for block in response.content:
         print(block.text){% endset %}
   {{ ui.code_block(api, "Claude API example") }}
 {% endcall %}
+{% call ui.card("ChatGPT and other chat apps") %}
+  <p class="small muted mt-0">Add the server as a custom connector (URL <code>{{ endpoint }}</code>, bearer token = your API key),
+  then paste this into the app's instructions for the connector or the conversation:</p>
+  {% set chat %}When you use the stocks tools, pass on every call:
+  agent_id = "chatgpt"
+  model_id = your exact model identifier if your runtime provides it, otherwise "unknown"
+             (never guess it and never infer it from the app's name)
+  prompt_version = "v1"
+Before upload_holdings, add_to_watchlist or remove_from_watchlist takes effect, show me the
+preview and wait for my explicit yes; then repeat the call with the confirm_token.{% endset %}
+  {{ ui.code_block(chat, "Chat app instructions") }}
+{% endcall %}
 {% call ui.card("Python MCP SDK") %}
   <p class="small muted mt-0">Call the tools directly, e.g. from your own agent loop (<code>pip install mcp</code>).</p>
   {% set sdk %}import asyncio, os
@@ -97,7 +109,8 @@ from mcp.client.streamable_http import streamablehttp_client
 
 URL = "{{ endpoint }}"
 HEADERS = {"Authorization": "Bearer " + os.environ["STOCKS_API_KEY"]}
-WHO = {"agent_id": "my-agent", "model_id": "my-model", "prompt_version": "v1"}
+# model_id: the exact model your code calls, or "unknown" if you do not know it (never a guess).
+WHO = {"agent_id": "my-agent", "model_id": "unknown", "prompt_version": "v1"}
 
 async def main():
     async with streamablehttp_client(URL, headers=HEADERS) as (read, write, _):
@@ -123,8 +136,10 @@ asyncio.run(main()){% endset %}
 <h2>How an agent should use it</h2>
 {% call ui.card() %}
 <ol class="steps">
-  <li><strong>Identify itself on every call.</strong> Every tool requires <code>agent_id</code>, <code>model_id</code> and
-    <code>prompt_version</code>; calls without them are rejected. Each call is logged with what the agent saw and did.</li>
+  <li><strong>Identify itself on every call.</strong> Every tool requires three arguments, logged exactly as sent:
+    <code>agent_id</code> (a fixed name for the app, e.g. <code>chatgpt</code>), <code>model_id</code> (the exact model
+    identifier <em>only</em> if the app's runtime provides it, otherwise <code>unknown</code>; never guessed or derived from
+    the app's name) and <code>prompt_version</code> (<code>v1</code>). Calls without them are rejected.</li>
   <li><strong>Read the outlook</strong> with <code>get_outlook</code>: one row per symbol and side, with the plan (entry
     limit, stop, target), expected six-month return, percentiles and evidence grade, and <code>placeable_until</code>.</li>
   <li><strong>Check the account</strong> with <code>get_account</code> (cash, free buying power, positions).</li>

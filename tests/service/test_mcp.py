@@ -362,3 +362,24 @@ def test_holdings_with_bad_numbers_are_refused_before_anything_is_created(db, wo
             mcp_ops.preview_holdings(db, "fidelity", as_of="2025-05-30", cash=1.0, positions=[pos],
                                      account_name="F", now=LATER)
     assert db.accounts.find_one({"_id": "fidelity"}) is None and db.mcp_confirmations.count_documents({}) == 0
+
+
+def test_unknown_model_identity_is_accepted_and_logged_honestly(db, world, monkeypatch):  # noqa: F811
+    """Clients that cannot see their model send model_id="unknown"; it is accepted and logged as is."""
+    monkeypatch.setattr("stocks_service.mcp_server._now", lambda: EVENING)
+    who = {"agent_id": "chatgpt", "model_id": "unknown", "prompt_version": "v1"}
+    with _client(db) as c:
+        init = _rpc(c, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                      "clientInfo": {"name": "test", "version": "0"}}).json()["result"]
+        assert '"model_id": "unknown"' in init["instructions"] and "Do not guess" in init["instructions"]
+        tools = {t["name"]: t for t in _rpc(c, "tools/list").json()["result"]["tools"]}
+        for t in tools.values():   # every tool documents the fallback on the parameter itself
+            assert '"unknown"' in t["inputSchema"]["properties"]["model_id"]["description"]
+        accts, err = _call(c, "list_accounts", **who)
+        assert not err and "paper" in accts
+        out, err = _call(c, "get_outlook", **who, limit=2)
+        assert not err and len(out["rows"]) == 2
+        msg, err = _call(c, "list_accounts", **{**who, "model_id": "  "})
+        assert err and '"unknown"' in msg      # blank is refused, with the fallback named
+    logged = list(db.agent_decisions.find({"tool": {"$in": ["list_accounts", "get_outlook"]}, "result.error": None}))
+    assert len(logged) == 2 and all(d["model_id"] == "unknown" and d["agent_id"] == "chatgpt" for d in logged)
