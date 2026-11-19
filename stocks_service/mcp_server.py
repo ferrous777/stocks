@@ -46,7 +46,8 @@ class Holding(BaseModel):
     """One position in an uploaded brokerage snapshot."""
     symbol: str = Field(description="ticker, e.g. NVDA")
     qty: float = Field(description="shares held (negative for a short)")
-    avg_cost: float | None = Field(default=None, description="average cost per share; required on the first upload")
+    avg_cost: float | None = Field(default=None, gt=0,
+                                   description="average cost per share (> 0); required on the first upload")
 
 
 class _Auth:

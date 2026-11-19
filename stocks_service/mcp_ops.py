@@ -147,9 +147,19 @@ def apply_add(db: Database, fetcher, settings, symbol: str, now: dt.datetime) ->
             r = ingestion.update(db, fetcher, symbol=sym, interval="1d", **kw)
         history = {"status": "loaded", "bars_added": r.upserted, "bars_total": db.bars.count_documents(
             {"symbol": sym, "interval": "1d"})}
-    except Exception as e:   # the symbol stays watched; the tick retries the update, the error is reported
-        history = {"status": "failed", "error": f"{type(e).__name__}: {e}",
-                   "note": "the symbol is on the watch list; load its history with POST /api/v1/symbols/{symbol}/backfill"}
+    except Exception as e:
+        if _last_bar(db, sym) is None:
+            # No history at all: the tick only updates symbols that have bars, so undo the addition and fail;
+            # the confirmation token is released and the same call can simply be retried.
+            if p["action"] == "re-enable":
+                db.symbols.update_one({"_id": sym}, {"$set": {"enabled": False}, "$unset": {"re_enabled_at": ""}})
+            else:
+                db.symbols.delete_one({"_id": sym, "added_via": "mcp", "created_at": now})
+            raise OpError(f"could not load {sym}'s price history ({type(e).__name__}: {e}); nothing was changed, "
+                          "retry with the same confirm_token")
+        # Stored history exists, so the scheduled tick keeps updating it; report the failed refresh.
+        history = {"status": "update_failed", "error": f"{type(e).__name__}: {e}",
+                   "note": "earlier history is kept and the scheduled update retries"}
     return {"symbol": sym, "action": p["action"], "name": p["name"], "asset_class": p["asset_class"], "history": history}
 
 
@@ -225,11 +235,18 @@ def parse_as_of(as_of: str) -> dt.datetime:
 
 
 def _clean_positions(positions: list[dict]) -> list[dict]:
+    """Validated before any preview token is issued or any account is created."""
+    import math
     out = []
     for p in positions:
         sym = normalize_symbol(p["symbol"])
-        out.append({"symbol": sym, "qty": float(p["qty"]),
-                    "avg_cost": float(p["avg_cost"]) if p.get("avg_cost") is not None else None})
+        qty = float(p["qty"])
+        cost = float(p["avg_cost"]) if p.get("avg_cost") is not None else None
+        if not math.isfinite(qty):
+            raise OpError(f"{sym}: qty must be a finite number")
+        if cost is not None and not (math.isfinite(cost) and cost > 0):
+            raise OpError(f"{sym}: avg_cost must be a positive number")
+        out.append({"symbol": sym, "qty": qty, "avg_cost": cost})
     return out
 
 

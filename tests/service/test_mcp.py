@@ -322,3 +322,43 @@ def test_prediction_lists_every_strategy_and_the_intraday_range(db, world, monke
     bars = list(db.bars.find({"symbol": "QQQM", "interval": "1d"}).sort("session", -1).limit(252))
     assert p["price"]["high_52w"] >= max(b["c"] for b in bars) and p["price"]["low_52w"] <= min(b["c"] for b in bars)
     assert p["price"]["high_52w"] > max(b["c"] for b in bars)   # a real intraday high above every close
+
+
+def test_a_failed_first_history_load_changes_nothing_and_can_be_retried(db, world, monkeypatch):  # noqa: F811
+    from .conftest import RecordedFetcher, load_yahoo
+    db.price_sources.insert_one({"_id": "yahoo_chart:1d", "price_basis": "split_adjusted",
+                                 "volume_basis": "split_adjusted"})
+    monkeypatch.setattr("stocks_service.mcp_server._now", lambda: dt.datetime(2025, 6, 20, 23, tzinfo=dt.timezone.utc))
+    good = RecordedFetcher({("ORLY", "1d"): load_yahoo("ORLY_1d_2025-06-03_2025-06-17")})
+
+    class Flaky:   # answers the lookup, then fails the history load once
+        calls = 0
+
+        def fetch_chart(self, *a):
+            Flaky.calls += 1
+            if Flaky.calls == 3:   # 1 preview lookup, 2 confirm lookup, 3 history load
+                raise RuntimeError("Yahoo timeout")
+            return good.fetch_chart(*a)
+    with _client(db) as c:
+        c.app.state.fetcher = Flaky()
+        pv, _ = _call(c, "add_to_watchlist", **IDENT, symbol="ORLY")
+        msg, err = _call(c, "add_to_watchlist", **IDENT, symbol="ORLY", confirm_token=pv["confirm_token"])
+        assert err and "nothing was changed" in msg and db.symbols.find_one({"_id": "ORLY"}) is None
+        done, err = _call(c, "add_to_watchlist", **IDENT, symbol="ORLY", confirm_token=pv["confirm_token"])
+        assert not err and done["history"]["status"] == "loaded"
+
+
+def test_holdings_with_bad_numbers_are_refused_before_anything_is_created(db, world, monkeypatch):  # noqa: F811
+    monkeypatch.setattr("stocks_service.mcp_server._now", lambda: LATER)
+    base = {"account_id": "fidelity", "as_of": "2025-05-30", "cash": 1.0, "account_name": "F"}
+    with _client(db) as c:
+        for pos in ({"symbol": "NVDA", "qty": 10, "avg_cost": -100.0}, {"symbol": "NVDA", "qty": 10, "avg_cost": 0}):
+            msg, err = _call(c, "upload_holdings", **IDENT, **base, positions=[pos])
+            assert err, msg
+    from stocks_service import mcp_ops
+    for pos in ({"symbol": "NVDA", "qty": float("nan"), "avg_cost": 1.0},
+                {"symbol": "NVDA", "qty": 1, "avg_cost": float("inf")}):
+        with pytest.raises(mcp_ops.OpError):
+            mcp_ops.preview_holdings(db, "fidelity", as_of="2025-05-30", cash=1.0, positions=[pos],
+                                     account_name="F", now=LATER)
+    assert db.accounts.find_one({"_id": "fidelity"}) is None and db.mcp_confirmations.count_documents({}) == 0
