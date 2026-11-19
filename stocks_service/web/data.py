@@ -177,8 +177,9 @@ def paper_status(db: Database) -> dict:
     return {"leaderboard": rows, "comparisons": comparisons, "decisions": decisions}
 
 
-def paper_account(db: Database, account_id: str, *, now: dt.datetime, limit: int = 200) -> dict | None:
-    """One paper account: summary, equity curve, positions, orders, transactions, baseline comparison."""
+def paper_account(db: Database, account_id: str, *, now: dt.datetime, limit: int | None = 200) -> dict | None:
+    """One paper account: summary, equity curve, positions, orders, transactions, baseline comparison.
+    ``limit`` caps the orders and transactions shown (newest first); None shows the complete history."""
     from ..accounts import service
     from ..paper import read
     acc = db.accounts.find_one({"_id": account_id, "kind": "paper"})
@@ -192,10 +193,23 @@ def paper_account(db: Database, account_id: str, *, now: dt.datetime, limit: int
     return {
         "acc": acc, "s": read.summary(db, acc), "perf": perf, "holdings": h,
         "history": {"dates": [p["session"] for p in perf["curve"]], "closes": [p["equity"] for p in perf["curve"]]},
-        "orders": list(db.orders.find({"account_id": account_id}).sort("placed_at", -1).limit(limit)),
-        "tx": read.transactions(db, account_id, limit=limit),
+        "orders": list(db.orders.find({"account_id": account_id}).sort("placed_at", -1).limit(limit or 0)),
+        "order_count": db.orders.count_documents({"account_id": account_id}),
+        "tx": _all_transactions(db, account_id, now) if limit is None else read.transactions(db, account_id, limit=limit, now=now),
+        "limit": limit,
         "comparison": read.comparison(db, acc),
     }
+
+
+def _all_transactions(db: Database, account_id: str, now: dt.datetime) -> dict:
+    from ..paper import read
+    rows, cursor = [], None
+    while True:
+        page = read.transactions(db, account_id, limit=500, cursor=cursor, now=now)
+        rows += page["transactions"]
+        cursor = page["next_cursor"]
+        if cursor is None:
+            return {"account_id": account_id, "transactions": rows, "next_cursor": None}
 
 
 def outlook_status(db: Database, side: str | None = None) -> dict:

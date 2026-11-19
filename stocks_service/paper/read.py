@@ -95,7 +95,8 @@ def _iso(t) -> str | None:
 
 
 def _page_query(account_id: str, coll: str, cursor: tuple | None) -> dict:
-    """Rows strictly after ``cursor`` in the order (ts desc, collection desc, _id desc)."""
+    """Rows strictly after ``cursor`` in the order (ts desc, source desc, _id desc); sources are
+    x = executions, s = splits, e = ledger events."""
     q: dict = {"account_id": account_id}
     if cursor is None:
         return q
@@ -117,13 +118,38 @@ def _parse_cursor(cursor: str | None) -> tuple | None:
         raise ValueError("invalid cursor; pass the next_cursor value from the previous page")
 
 
-def transactions(db: Database, account_id: str, *, limit: int = 100, cursor: str | None = None) -> dict:
-    """Fills and ledger entries (opening balances, dividends, borrow fees, transfers, splits, ...),
+def _split_rows(db: Database, account_id: str, now: dt.datetime) -> list[dict]:
+    """Splits that changed this account's holdings. The ledger applies them from ``corporate_actions``
+    at the ex-date's session open (before anything else at that instant), so they are not stored as
+    ledger events; derive them the same way: shares held just before x (ratio - 1)."""
+    from ..accounts.ledger import QTY_TOL, split_time, state_as_of
+    from ..accounts.service import _history
+    events, execs, splits = _history(db, account_id)
+    rows = []
+    for sym, ss in splits.items():
+        for ex_date, ratio in ss:
+            t = split_time(ex_date)
+            if t > now:
+                continue
+            before = state_as_of(t - dt.timedelta(microseconds=1), events, execs, splits).qty(sym)
+            if abs(before) <= QTY_TOL:
+                continue
+            ca = db.corporate_actions.find_one({"symbol": sym, "type": "split",
+                                                "ex_date": dt.datetime.combine(ex_date, dt.time(), UTC)}, {"_id": 1})
+            rows.append({"_key": (t, "s", ca["_id"]), "ts": t, "type": "split", "symbol": sym,
+                         "qty": before * (ratio - 1), "price": None, "fees": None, "cash": None,
+                         "ratio": ratio, "ex_date": ex_date.isoformat()})
+    return rows
+
+
+def transactions(db: Database, account_id: str, *, limit: int = 100, cursor: str | None = None,
+                 now: dt.datetime | None = None) -> dict:
+    """Fills, splits and ledger entries (opening balances, dividends, borrow fees, transfers, ...),
     newest first. ``cash`` is the entry's effect on cash (None for entries that move shares only).
     Page with ``cursor`` = the previous page's ``next_cursor``."""
     limit = max(1, min(limit, 500))
     cur = _parse_cursor(cursor)
-    rows = []
+    rows = [r for r in _split_rows(db, account_id, now or dt.datetime.now(UTC)) if cur is None or r["_key"] < cur]
     for x in db.executions.find(_page_query(account_id, "x", cur)).sort([("ts", -1), ("_id", -1)]).limit(limit + 1):
         sign = -1 if x["side"] in BUY_SIDES else 1
         rows.append({"_key": (x["ts"], "x", x["_id"]), "ts": x["ts"], "type": x["side"], "symbol": x["symbol"],

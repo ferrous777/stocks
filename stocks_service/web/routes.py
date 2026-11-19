@@ -118,9 +118,11 @@ def paper(request: Request, db: Database = Depends(get_db)):
 
 
 @router.get("/paper/{account_id}", response_class=HTMLResponse, dependencies=[Depends(require_login)])
-def paper_account(request: Request, account_id: str, db: Database = Depends(get_db)):
+def paper_account(request: Request, account_id: str, history: str | None = None, db: Database = Depends(get_db)):
+    """``?history=all`` lists every order and transaction instead of the newest 200."""
     import datetime as _dt
-    d = data.paper_account(db, account_id, now=_dt.datetime.now(_dt.timezone.utc))
+    d = data.paper_account(db, account_id, now=_dt.datetime.now(_dt.timezone.utc),
+                           limit=None if history == "all" else 200)
     if d is None:
         raise HTTPException(404, "Unknown paper account")
     return _render(request, "paper_account.html", page="paper", **d)

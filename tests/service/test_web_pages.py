@@ -145,3 +145,42 @@ def test_link_builders_match_the_pages_and_chart_views():
     assert links.account("fidelity", "real") == "/accounts/fidelity" and links.account("paper-x", "paper") == "/paper/paper-x"
     assert links.absolute("https://h.example/", "/paper") == "https://h.example/paper"
     assert {c["page"] for c in links.CATALOG} >= {"symbol", "paper_account", "account", "outlook"}
+
+
+def test_transactions_include_splits_that_changed_holdings(db, world):  # noqa: F811
+    """The ledger applies splits from corporate actions (not ledger events); the history must show them."""
+    from stocks_service.accounts import service
+    from stocks_service.paper import read
+    assert db.corporate_actions.find_one({"symbol": "NVDA", "type": "split"})
+    service.create_account(db, account_id="fidelity", name="F", now=NOW)
+    service.upload_snapshot(db, "fidelity", as_of=dt.datetime(2024, 6, 3, 21, tzinfo=dt.timezone.utc), cash=100.0,
+                            positions=[{"symbol": "NVDA", "qty": 10, "avg_cost": 1000.0}], opening=True, now=NOW)
+    tx = read.transactions(db, "fidelity", now=NOW)["transactions"]
+    splits = [t for t in tx if t["type"] == "split"]
+    assert [(s["symbol"], s["qty"], s["ratio"], s["ex_date"]) for s in splits] == [("NVDA", 90.0, 10.0, "2024-06-10")]
+    assert [t["type"] for t in tx] == ["split", "opening_balance", "opening_balance"]   # newest first
+    # Paging still visits every row exactly once.
+    seen, cursor = [], None
+    while True:
+        page = read.transactions(db, "fidelity", limit=1, cursor=cursor, now=NOW)
+        seen += page["transactions"]
+        if not (cursor := page["next_cursor"]):
+            break
+    assert seen == tx
+    # Splits before the account held the symbol are not its transactions.
+    assert not [t for t in tx if t["type"] == "split" and t["ex_date"] < "2024-06-03"]
+
+
+def test_account_page_can_show_the_full_order_history(db, world):  # noqa: F811
+    from stocks_service.web import data
+    broker.create_paper_account(db, account_id="base", name="Baseline", starting_cash=100_000.0,
+                                risk_profile="default@1", policy=baseline.POLICY_ID, now=EVENING)
+    baseline.run_baseline(db, "base", EVENING)
+    capped = data.paper_account(db, "base", now=LATER, limit=2)
+    assert len(capped["orders"]) == 2 and capped["order_count"] == 4
+    full = data.paper_account(db, "base", now=LATER, limit=None)
+    assert len(full["orders"]) == 4 and full["tx"]["next_cursor"] is None
+    with _client(db) as c:
+        c.post("/login", data={"password": "pw"})
+        page = c.get("/paper/base", params={"history": "all"}).text
+    assert page.count('<td class="small">2025-03-31 23:00</td>') == 4

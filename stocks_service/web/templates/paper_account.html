@@ -72,17 +72,21 @@
   {% else %}{{ ui.empty_row(12, "No orders yet.") }}{% endfor %}
 {% endcall %}
 
+{% if limit and order_count > orders|length %}<p class="small muted">Showing the newest {{ orders|length }} of {{ order_count }} orders.
+<a href="?history=all">Show the full history</a>.</p>{% endif %}
+
 <h2>Transactions</h2>
 {% call ui.table(["Time (UTC)", "Type", "Symbol", ("Qty", "num"), ("Price", "num"), ("Fees", "num"), ("Cash", "num")], compact=True) %}
   {% for t in tx.transactions %}
     <tr><td class="small">{{ t.ts[:16]|replace('T', ' ') }}</td><td>{{ t.type|replace('_', ' ') }}</td>
       <td>{% if t.symbol %}<a href="/symbol/{{ t.symbol }}">{{ t.symbol }}</a>{% endif %}</td>
-      <td class="num">{{ '{:,.4g}'.format(t.qty) if t.qty is not none else '' }}</td><td class="num">{{ money(t.price) if t.price is not none else '' }}</td>
+      <td class="num">{% if t.qty is not none %}{{ '{:+,.4g}'.format(t.qty) if t.type == 'split' else '{:,.4g}'.format(t.qty) }}{% endif %}{% if t.ratio is defined %} <span class="muted small">({{ '%g'|format(t.ratio) }}:1)</span>{% endif %}</td><td class="num">{{ money(t.price) if t.price is not none else '' }}</td>
       <td class="num">{{ money(t.fees) if t.fees is not none else '' }}</td>
       <td class="num {{ 'pos' if t.cash and t.cash > 0 else 'neg' if t.cash and t.cash < 0 }}">{{ signed(t.cash) if t.cash is not none else '' }}</td></tr>
   {% else %}{{ ui.empty_row(7, "No transactions yet.") }}{% endfor %}
 {% endcall %}
-{% if tx.next_cursor %}<p class="small muted">Showing the latest {{ tx.transactions|length }}; page through the full history with <code>GET /api/v1/accounts/{{ acc._id }}/transactions</code>.</p>{% endif %}
+{% if tx.next_cursor %}<p class="small muted">Showing the newest {{ tx.transactions|length }} transactions.
+<a href="?history=all">Show the full history</a>.</p>{% endif %}
 <p class="small muted prose">Fills are simulated with the research rules (entries only at the limit, exits by the shared simulator);
 fees include spread, slippage and commission. Cash is each entry's effect on the account's cash.</p>
 {% endblock %}
