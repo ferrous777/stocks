@@ -51,8 +51,16 @@ def test_paper_page_shows_accounts_orders_and_the_gate(db, world):  # noqa: F811
     with _client(db) as c:
         c.post("/login", data={"password": "pw"})
         page = c.get("/paper").text
+        detail = c.get("/paper/agent").text
+        base = c.get("/paper/base").text
+        assert c.get("/paper/nope").status_code == 404
     assert "agent vs base" in page and "Influence gate" in page and "shadow-only" in page
-    assert "claude-test" in page and "baseline_v1@1" in page and "QQQ" in page
+    assert 'href="/paper/agent"' in page and 'href="/paper/base"' in page   # leaderboard links to each account
+    # The account page: summary, equity chart data, orders (with who decided), transactions, the baseline comparison.
+    assert "claude-test" in detail and "QQQ" in detail and 'id="equity-history"' in detail
+    assert 'data-chart-modes="range"' in detail and "Against <a href=\"/paper/base\">base</a>" in detail
+    assert "opening balance" in detail and ">short<" in detail
+    assert "baseline_v1@1" in base and "Compared with the baseline" not in base   # a baseline has no baseline
 
 
 def test_baseline_pairing_requires_identical_conditions(db, world):  # noqa: F811
@@ -92,3 +100,48 @@ def test_research_page_survives_undefined_cagr(db, world):  # noqa: F811
         c.post("/login", data={"password": "pw"})
         r = c.get("/research")
     assert r.status_code == 200 and "CAGR n/a" in r.text
+
+
+def test_transactions_page_through_every_entry_exactly_once(db, world):  # noqa: F811
+    """Many fills share a timestamp (entries at the same open); the cursor must not skip or repeat any."""
+    from stocks_service.paper import read
+    broker.create_paper_account(db, account_id="base", name="Baseline", starting_cash=100_000.0,
+                                risk_profile="default@1", policy=baseline.POLICY_ID, now=EVENING)
+    baseline.run_baseline(db, "base", EVENING)
+    db.bars.insert_many(world)
+    broker.process_account(db, "base", LATER)
+    everything = read.transactions(db, "base", limit=500)
+    assert everything["next_cursor"] is None
+    n = len(everything["transactions"])
+    assert n == db.executions.count_documents({"account_id": "base"}) + db.ledger_events.count_documents({"account_id": "base"})
+    ts = [t["ts"] for t in everything["transactions"]]
+    assert ts == sorted(ts, reverse=True) and len(set(ts)) < n   # newest first, with ties to page across
+    seen, cursor = [], None
+    while True:
+        page = read.transactions(db, "base", limit=2, cursor=cursor)
+        seen += page["transactions"]
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert seen == everything["transactions"]
+    with _client(db) as c:
+        api = c.get("/api/v1/accounts/base/transactions", params={"limit": 3}, headers={"X-API-Key": "k"}).json()
+        assert api["transactions"] == everything["transactions"][:3] and api["next_cursor"]
+        assert c.get("/api/v1/accounts/base/transactions", params={"cursor": "junk"},
+                     headers={"X-API-Key": "k"}).status_code == 422
+        assert c.get("/api/v1/accounts/nope/transactions", headers={"X-API-Key": "k"}).status_code == 404
+
+
+def test_link_builders_match_the_pages_and_chart_views():
+    from stocks_service.web import links
+    assert links.symbol("NVDA") == "/symbol/NVDA"
+    assert links.symbol("BRK.B", range="5Y") == "/symbol/BRK.B?range=5Y"
+    assert links.symbol("^IRX", from_year=2020) == "/symbol/%5EIRX?from=2020"
+    assert links.symbol("NVDA", compare=[2022, 2020, 2021, 2021]) == "/symbol/NVDA?compare=2020,2021,2022"
+    for bad in ({"range": "2Y"}, {"range": "1Y", "from_year": 2020}, {"compare": list(range(2010, 2020))}):
+        with pytest.raises(ValueError):
+            links.symbol("NVDA", **bad)
+    assert links.outlook("short") == "/outlook?side=short" and links.outlook() == "/outlook"
+    assert links.account("fidelity", "real") == "/accounts/fidelity" and links.account("paper-x", "paper") == "/paper/paper-x"
+    assert links.absolute("https://h.example/", "/paper") == "https://h.example/paper"
+    assert {c["page"] for c in links.CATALOG} >= {"symbol", "paper_account", "account", "outlook"}

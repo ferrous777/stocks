@@ -169,30 +169,33 @@ def research_status(db: Database) -> dict:
 
 
 def paper_status(db: Database) -> dict:
-    from ..paper.report import compare
-    accounts = list(db.accounts.find({"kind": "paper"}).sort("_id", 1))
-    for a in accounts:
-        last = db.equity_curve.find_one({"account_id": a["_id"]}, sort=[("session", -1)])
-        a["equity"] = last["equity"] if last else a["starting_cash"]
-        a["sessions"] = db.equity_curve.count_documents({"account_id": a["_id"]})
-        a["open_orders"] = db.orders.count_documents({"account_id": a["_id"], "status": {"$in": ["open", "filled"]}})
-        a["closed"] = db.orders.count_documents({"account_id": a["_id"], "status": "closed"})
-        a["recent_orders"] = list(db.orders.find({"account_id": a["_id"]}).sort("placed_at", -1).limit(10))
-        a["return"] = a["equity"] / a["starting_cash"] - 1
-        a["kind_label"] = ("AI agent" if a.get("policy") == "agent" else "baseline" if a.get("policy", "").startswith("baseline")
-                           else f"strategy {a['strategy']}" if a.get("strategy") else a.get("policy", ""))
-    # Leaderboard: best return first; ties (e.g. no sessions yet) by id.
-    leaderboard = sorted(accounts, key=lambda a: (-a["return"], a["_id"]))
-    from ..paper.report import matching_baseline
-    comparisons = []
-    for a in (x for x in accounts if x.get("policy") == "agent"):
-        base, why = matching_baseline(db, a)
-        if base is None:
-            comparisons.append({"agent_account": a["_id"], "baseline_account": None, "unavailable": why})
-        else:
-            comparisons.append({**compare(db, a["_id"], base), "pairing": why})
+    from ..paper import read
+    rows = read.summaries(db)          # leaderboard: best return first
+    comparisons = [c for c in (read.comparison(db, a) for a in db.accounts.find({"kind": "paper", "policy": "agent"})
+                               .sort("_id", 1)) if c is not None]
     decisions = db.agent_decisions.count_documents({})
-    return {"accounts": accounts, "leaderboard": leaderboard, "comparisons": comparisons, "decisions": decisions}
+    return {"leaderboard": rows, "comparisons": comparisons, "decisions": decisions}
+
+
+def paper_account(db: Database, account_id: str, *, now: dt.datetime, limit: int = 200) -> dict | None:
+    """One paper account: summary, equity curve, positions, orders, transactions, baseline comparison."""
+    from ..accounts import service
+    from ..paper import read
+    acc = db.accounts.find_one({"_id": account_id, "kind": "paper"})
+    if acc is None:
+        return None
+    perf = read.performance(db, account_id)
+    try:
+        h = service.holdings(db, account_id, now)
+    except service.AccountError as e:   # e.g. a held symbol has no price: say so instead of guessing
+        h = {"positions": [], "error": str(e)}
+    return {
+        "acc": acc, "s": read.summary(db, acc), "perf": perf, "holdings": h,
+        "history": {"dates": [p["session"] for p in perf["curve"]], "closes": [p["equity"] for p in perf["curve"]]},
+        "orders": list(db.orders.find({"account_id": account_id}).sort("placed_at", -1).limit(limit)),
+        "tx": read.transactions(db, account_id, limit=limit),
+        "comparison": read.comparison(db, acc),
+    }
 
 
 def outlook_status(db: Database, side: str | None = None) -> dict:

@@ -117,6 +117,15 @@ def paper(request: Request, db: Database = Depends(get_db)):
     return _render(request, "paper.html", **data.paper_status(db))
 
 
+@router.get("/paper/{account_id}", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+def paper_account(request: Request, account_id: str, db: Database = Depends(get_db)):
+    import datetime as _dt
+    d = data.paper_account(db, account_id, now=_dt.datetime.now(_dt.timezone.utc))
+    if d is None:
+        raise HTTPException(404, "Unknown paper account")
+    return _render(request, "paper_account.html", page="paper", **d)
+
+
 @router.get("/outlook", response_class=HTMLResponse, dependencies=[Depends(require_login)])
 def outlook(request: Request, side: str | None = None, db: Database = Depends(get_db)):
     return _render(request, "outlook.html", **data.outlook_status(db, side))
