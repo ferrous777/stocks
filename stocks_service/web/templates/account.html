@@ -7,13 +7,20 @@
 {% if error %}{% call ui.alert("negative") %}<strong>{{ error }}</strong>{% endcall %}{% endif %}
 
 <div class="stats">
-  {{ ui.stat("Cash", '{:,.2f}'.format(h.cash)) }}
+  {% if h.cash is not none %}{{ ui.stat("Cash", '{:,.2f}'.format(h.cash)) }}
+  {% elif h.last_reported_cash %}{{ ui.stat("Cash", "unknown now",
+      hint="last reported " ~ '{:,.2f}'.format(h.last_reported_cash.amount) ~ " on " ~ h.last_reported_cash.as_of.strftime('%Y-%m-%d') ~ " (historical)") }}
+  {% else %}{{ ui.stat("Cash", "unknown", hint="no snapshot has reported core cash") }}{% endif %}
+  {% if h.available_to_withdraw %}{{ ui.stat("Available to withdraw", '{:,.2f}'.format(h.available_to_withdraw.amount),
+      hint="as reported" ~ ((" by " ~ h.available_to_withdraw.source) if h.available_to_withdraw.source else "") ~ "; not core cash") }}{% endif %}
+  {% if h.positions_value is not none %}{{ ui.stat("Holdings value", '{:,.2f}'.format(h.positions_value)) }}{% endif %}
   {% if h.equity is not none %}{{ ui.stat("Equity", '{:,.2f}'.format(h.equity)) }}
-  {% else %}{{ ui.stat("Equity", "unavailable", hint="no price for " ~ h.unmarked|join(', ')) }}{% endif %}
+  {% else %}{{ ui.stat("Equity", "incomplete", hint="missing " ~ h.valuation.missing|join('; ')) }}{% endif %}
   {{ ui.stat("Realized", '{:+,.2f}'.format(h.realized), tone='pos' if h.realized > 0 else 'neg' if h.realized < 0 else None) }}
   {{ ui.stat("Latest snapshot", h.latest_snapshot.strftime('%Y-%m-%d') if h.latest_snapshot else 'none') }}
   {{ ui.stat("Risk profile", acc.risk_profile or 'none') }}
-  {{ ui.stat("Open breaks", h.open_breaks, tone='neg' if h.open_breaks else None) }}
+  {{ ui.stat("Open breaks", h.open_breaks, tone='neg' if h.open_breaks else None,
+             hint=(h.pending_breaks ~ " pending (feed delay)") if h.pending_breaks else None) }}
 </div>
 
 {% if alerts %}
@@ -80,17 +87,20 @@ are the same as on the <a href="/outlook">Outlook</a> page; nothing here is a va
   {% for b in breaks %}
     <tr><td>{{ b.as_of.strftime('%Y-%m-%d') }}</td><td>{{ b.symbol }}</td><td class="num">{{ '{:,.4g}'.format(b.expected) }}</td>
       <td class="num">{{ '{:,.4g}'.format(b.reported) }}</td><td class="num">{{ '{:+,.4g}'.format(b.diff) }}</td>
-      <td>{{ ui.badge(b.status ~ (' · ' ~ b.resolution.type if b.resolution else ''), 'negative' if b.status == 'open' else None) }}
-        {% if b.status == 'open' %}<span class="small muted">id {{ b._id }}</span>{% endif %}</td></tr>
+      <td>{{ ui.badge(b.status ~ (' · ' ~ b.resolution.type if b.resolution else ''), 'negative' if b.status == 'open' else 'warning' if b.status == 'pending' else None, b.reason) }}
+        {% if b.status in ('open', 'pending') %}<span class="small muted">id {{ b._id }}</span>{% endif %}</td></tr>
   {% else %}{{ ui.empty_row(6, "No differences.") }}{% endfor %}
 {% endcall %}
-<p class="small muted prose">An open break means a snapshot disagrees with the recorded history. Upload the missing fills, or resolve it as a
+<p class="small muted prose">A pending break is a difference fully explained by fills recorded in the days before the snapshot that the
+source has not reflected yet (settlement or feed delay); it resolves itself when a later snapshot includes them.
+An open break means a snapshot disagrees with the recorded history. Upload the missing fills, or resolve it as a
 transfer or adjustment with <code>POST /api/v1/breaks/{id}/resolve</code>.</p>
 
 <h2>Upload</h2>
 <div class="grid">
 {% call ui.card("Positions snapshot") %}<form method="post" action="/accounts/{{ acc._id }}/upload">
-  <p class="small muted">The first snapshot is the opening balance and needs avg_cost. Short positions use a negative qty.</p>
+  <p class="small muted">The first snapshot is the opening balance and needs avg_cost. Short positions use a negative qty.
+  Omit <code>cash</code> (or send <code>null</code>) when the core cash balance is not known; it is never treated as zero.</p>
   <textarea class="textarea" name="payload" required aria-label="Snapshot JSON" placeholder='Example:
 {"as_of": "2026-11-17T21:00:00Z",
  "cash": 12500.00,

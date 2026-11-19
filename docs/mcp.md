@@ -28,7 +28,7 @@ Example: `{"agent_id": "chatgpt", "model_id": "unknown", "prompt_version": "v1"}
 | `get_performance` | Paper: return, max drawdown, closed-order stats, equity points, and the paired comparison with its baseline (with the influence gate). |
 | `list_orders` | Paper orders and their status. |
 | `list_transactions` | Fills and ledger entries of any account, newest first, paged with `cursor`. |
-| `upload_holdings` | Applied immediately, with no confirmation. Uploads a real account's holdings: `as_of`, `cash`, `positions[{symbol, qty, avg_cost}]`, and `account_name` to create the account. The first upload is the opening balance. Later uploads are reconciled, and any differences become breaks, never trades. |
+| `upload_holdings` | Applied immediately, with no confirmation. Uploads a real account's `positions[{symbol, qty, avg_cost?, institution_price?, institution_price_as_of?, institution_value?}]`, plus whatever the source actually provides: `cash` (core cash only; omit if unknown, which is never treated as zero), `available_to_withdraw`, `as_of` (the institution's timestamp; omit if unknown), `retrieved_at`, `source`, and `account_name` to create the account. See *Uploading from Plaid* below. |
 | `place_paper_order` | DAY limit order for the next session from an outlook row. Needs `idempotency_key` and `rationale`. Rejected after `placeable_until`, above the risk limits, or when the symbol already has an open order or position. |
 | `cancel_order` | Cancel an open order before its session opens. |
 | `get_links` | The page catalog, plus links for a symbol (with an optional chart view: `chart_range`, `from_year` or `compare_years`), an account, or an outlook side. |
@@ -46,3 +46,20 @@ Example: `{"agent_id": "chatgpt", "model_id": "unknown", "prompt_version": "v1"}
 3. Compare the two with `GET /api/v1/paper/compare?agent=<id>&baseline=<id>`.
 
 The agent stays **shadow-only**: it never affects real-account output. That holds until, over at least 126 shared sessions and 30 closed orders, the paired daily-return difference has a 95% CI lower bound above 0 and the agent's drawdown is no worse than the baseline's.
+
+## Uploading from Plaid (e.g. Fidelity)
+
+| Plaid field | Send as | Notes |
+|---|---|---|
+| `holdings[].quantity`, `security.ticker_symbol` | `positions[].qty`, `.symbol` | |
+| `holdings[].cost_basis / quantity` | `positions[].avg_cost` | Required on the first upload only. |
+| `holdings[].institution_price`, `institution_price_as_of`, `institution_value` | the same names on each position | Stored for reference. Omit the timestamp if Plaid has none. |
+| `balances.available` | `available_to_withdraw` | Cash available to withdraw. It is **not** core cash. |
+| `balances.current` | (do not send as cash) | This is total account value. |
+| core cash (only if separately identified) | `cash` | Otherwise omit `cash`: it stays unknown, never zero. |
+| the time of your Plaid request | `retrieved_at` | |
+| an institution timestamp, if Plaid gives one | `as_of` | Omit it if unknown. Reconciliation then uses `retrieved_at`. |
+
+How the service handles these uploads:
+- **Unknown cash.** While cash is unknown, holdings are still reconciled and valued, but equity is reported as incomplete (`valuation.missing`). An earlier cash figure is shown as `last_reported_cash` (historical), never as current cash. The first upload that does report core cash establishes it.
+- **Delayed trades.** A recorded fill from the last few days that Plaid has not reflected yet makes the difference `pending`, not `open`. It resolves itself once a later upload includes the trade.

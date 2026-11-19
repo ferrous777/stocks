@@ -164,13 +164,14 @@ class Difference:
 CASH = "$CASH"
 
 
-def reconcile(state: LedgerState, reported_cash: float, reported_positions: dict[str, float]) -> list[Difference]:
-    """Differences between the ledger and a broker snapshot (never turned into trades)."""
+def reconcile(state: LedgerState, reported_cash: float | None, reported_positions: dict[str, float]) -> list[Difference]:
+    """Differences between the ledger and a broker snapshot (never turned into trades). ``reported_cash``
+    None means cash is unknown (or not comparable yet): it is not compared, never treated as zero."""
     out = []
     for sym in sorted(set(state.open_positions()) | set(reported_positions)):
         exp, rep = state.qty(sym), reported_positions.get(sym, 0.0)
         if abs(rep - exp) > QTY_TOL:
             out.append(Difference(sym, exp, rep))
-    if abs(reported_cash - state.cash) > CASH_TOL:
+    if reported_cash is not None and abs(reported_cash - state.cash) > CASH_TOL:
         out.append(Difference(CASH, state.cash, reported_cash))
     return out
