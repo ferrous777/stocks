@@ -35,7 +35,7 @@ def test_every_tick_step_is_timed_and_auto_skips_work_with_nothing_new(db, fetch
     runs = {r["step"]: r for r in db.step_runs.find({"job_id": job["id"]})}
     assert set(runs) == set(ops.STEPS)
     assert all(r["status"] == "ok" and r["duration_s"] >= 0 for r in runs.values() if r["step"] != "paper")
-    assert runs["relationships"]["reason"].startswith("new data session")
+    assert runs["relationships"]["reason"].startswith("inputs changed") and runs["lifecycle"]["reason"].startswith("new data session")
     # Next tick: nothing behind, the same data session -> the daily steps skip, with their reason.
     monkeypatch.setattr(tick, "_behind", lambda db_, now: [])
     fetcher.calls.clear()
@@ -107,3 +107,40 @@ def test_mcp_calls_record_their_duration(db):
     d = db.agent_decisions.find_one({"tool": "get_watchlist"})
     assert d["duration_ms"] > 0
     assert ops.tool_timings(db, since=dt.datetime(2000, 1, 1, tzinfo=UTC))[0]["tool"] == "get_watchlist"
+
+
+def test_review_fixes_failures_late_data_alerts_and_running_ticks(db, fetcher, monkeypatch):
+    from stocks_service import cross_asset
+    _spy(db, fetcher)
+    # A non-blocking step that fails is recorded as failed and retried, never as a success.
+    monkeypatch.setattr(cross_asset, "run_relationships", lambda db_, now: (_ for _ in ()).throw(RuntimeError("boom")))
+    job = jobs.get_job(db, tick.run_tick(db, fetcher, S, pause=0))
+    rel = db.step_runs.find_one({"job_id": job["id"], "step": "relationships"})
+    assert job["status"] == "completed" and rel["status"] == "failed" and "boom" in rel["reason"]
+    assert ops.get_schedule(db)["relationships"]["last_success_at"] is None
+    monkeypatch.undo()
+    monkeypatch.setattr(tick, "_behind", lambda db_, now: [])
+    job2 = jobs.get_job(db, tick.run_tick(db, fetcher, S, pause=0))
+    runs2 = {r["step"]: r for r in db.step_runs.find({"job_id": job2["id"]})}
+    assert runs2["relationships"]["status"] == "ok"                       # retried
+    # Protective alerts run every tick; tickets wait for new data.
+    assert runs2["alerts"]["status"] == "ok" and job2["result"]["alerts"]["tickets_checked"] is False
+    # A late symbol's close changes the relationships inputs on the same session.
+    current, _ = cross_asset.relationships_current(db)
+    assert current
+    last = db.bars.find_one({"symbol": "NVDA"}, sort=[("session", -1)])
+    db.bars.delete_one({"_id": last["_id"]})
+    assert cross_asset.relationships_current(db)[0] is False
+    db.bars.insert_one(last)
+    # An outlook rebuilt by a late close re-runs lifecycle (parity of the new decisions) before alerts/paper.
+    monkeypatch.setattr(tick, "_refresh_outlook", lambda db_, now: {"status": "rebuilt", "asof": "x", "rows": 0})
+    job3 = jobs.get_job(db, tick.run_tick(db, fetcher, S, pause=0))
+    runs3 = {r["step"]: r for r in db.step_runs.find({"job_id": job3["id"]})}
+    assert runs3["lifecycle"]["status"] == "ok" and runs3["lifecycle"]["reason"] == "outlook rebuilt"
+    assert job3["result"]["alerts"]["tickets_checked"] is True
+    # The page works while a tick is running (no duration yet).
+    db.jobs.insert_one({"kind": "tick", "status": "running", "started_at": dt.datetime.now(UTC), "progress": []})
+    with _client(db) as c:
+        c.post("/login", data={"password": "pw"})
+        r = c.get("/ops")
+    assert r.status_code == 200 and ">running<" in r.text

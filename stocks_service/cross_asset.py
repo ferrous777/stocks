@@ -106,6 +106,24 @@ def _watched_series(db: Database) -> dict[str, SymbolSeries]:
             for s in db.symbols.find({"enabled": {"$ne": False}}, {"_id": 1}) if s["_id"] in have}
 
 
+def relationships_current(db: Database) -> tuple[bool, str]:
+    """The same freshness test as ``run_relationships`` (latest session and the symbols with a bar on it),
+    from indexed per-symbol lookups instead of loading every series."""
+    last = {}
+    for s in db.symbols.find({"enabled": {"$ne": False}}, {"_id": 1}):
+        b = db.bars.find_one({"symbol": s["_id"], "interval": "1d"}, {"session": 1}, sort=[("session", -1)])
+        if b:
+            last[s["_id"]] = b["session"]
+    if not last:
+        return True, "no price history"
+    asof = max(last.values())
+    syms = sorted(s for s, d in last.items() if d == asof)
+    marker = db.relationship_runs.find_one({"_id": "latest"}) or {}
+    if marker.get("asof") == asof.date().isoformat() and marker.get("symbols") == syms and marker.get("complete"):
+        return True, f"current for {marker['asof']} ({len(syms)} symbols)"
+    return False, f"inputs changed: {asof.date().isoformat()} with {len(syms)} symbols"
+
+
 def run_relationships(db: Database, now: dt.datetime) -> dict:
     """Recompute when the latest session or the set of symbols with a bar on it changed (late arrivals,
     interrupted runs); the completion marker is written only after every pair is stored."""

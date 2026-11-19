@@ -31,10 +31,12 @@ CRON_NOTE = "every 15 minutes, 12:00-23:59 UTC, Monday-Friday"
 STEPS: dict[str, str] = {
     "ingest_1d": "fetch only symbols whose last daily bar is older than the last completed session "
                  "(daily bars complete once a day, after the close); every_tick/interval re-fetch all",
-    "relationships": "once per new data session (cross-asset correlations)",
+    "relationships": "when the latest session or the symbols with a bar on it changed (new close, late "
+                     "symbol, watch-list change); checked with indexed lookups",
     "outlook": "every tick: it rebuilds only when a new close or a late symbol arrives (a quick check)",
-    "lifecycle": "once per new data session (parity replay, forecast scoring, monitors)",
-    "alerts": "once per new data session, and whenever the outlook was rebuilt (new tickets)",
+    "lifecycle": "once per new data session, and whenever the outlook was rebuilt (new live decisions)",
+    "alerts": "protective alerts every tick (timeouts, missing prices); order tickets once per new data "
+              "session or rebuilt outlook",
     "paper": "when a paper account is behind the latest data session, or the outlook was rebuilt",
 }
 
@@ -224,6 +226,7 @@ def recent_ticks(db: Database, limit: int = 20) -> list[dict]:
         steps.setdefault(r["job_id"], {})[r["step"]] = r
     for t in ticks:
         t["steps"] = steps.get(str(t["_id"]), {})
-        if t.get("duration_s") is None and t.get("finished_at"):
+        t.setdefault("duration_s", None)   # a running tick has no duration yet
+        if t["duration_s"] is None and t.get("finished_at"):
             t["duration_s"] = (t["finished_at"] - t["started_at"]).total_seconds()
     return ticks

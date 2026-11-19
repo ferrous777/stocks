@@ -42,10 +42,12 @@ def _behind(db: Database, now: dt.datetime) -> list[str]:
     """Enabled symbols with history whose last daily bar is older than the last completed session."""
     from .accounts.tickets import last_completed_session
     done = dt.datetime.combine(last_completed_session(now), dt.time(), dt.timezone.utc)
-    last = {d["_id"]: d["last"] for d in db.bars.aggregate([
-        {"$match": {"interval": "1d"}}, {"$group": {"_id": "$symbol", "last": {"$max": "$session"}}}])}
-    return [d["_id"] for d in db.symbols.find({"enabled": True}, {"_id": 1}).sort("_id", 1)
-            if d["_id"] in last and last[d["_id"]] < done]
+    out = []
+    for d in db.symbols.find({"enabled": True}, {"_id": 1}).sort("_id", 1):   # one indexed lookup per symbol
+        b = db.bars.find_one({"symbol": d["_id"], "interval": "1d"}, {"session": 1}, sort=[("session", -1)])
+        if b and b["session"] < done:
+            out.append(d["_id"])
+    return out
 
 
 def _ingest_all(db: Database, fetcher: ChartFetcher, settings: Settings, now: dt.datetime, pause: float,
@@ -90,13 +92,14 @@ def _refresh_outlook(db: Database, now: dt.datetime) -> dict:
     return {"status": "rebuilt", "asof": o["asof"], "rows": len(o["rows"]), **({"arrived": arrived} if arrived else {})}
 
 
-def _alerts(db: Database, now: dt.datetime) -> dict:
-    """Protective alerts for every protected holding, then pre-open tickets (active strategies only)."""
+def _alerts(db: Database, now: dt.datetime, *, with_tickets: bool = True) -> dict:
+    """Protective alerts for every protected holding (calendar-driven: timeouts and missing price data
+    are detected even when no new prices arrive), then pre-open tickets (active strategies only)."""
     from pymongo.errors import DuplicateKeyError
     from .accounts import tickets
     created = tickets.check_protective(db, now)
     ticket_notes = 0
-    for acc in db.accounts.find({}, {"_id": 1}):
+    for acc in (db.accounts.find({}, {"_id": 1}) if with_tickets else []):
         try:
             t = tickets.build_tickets(db, acc["_id"], now)
         except Exception as e:  # one account's problem must not block the others
@@ -112,7 +115,8 @@ def _alerts(db: Database, now: dt.datetime) -> dict:
             ticket_notes += 1
         except DuplicateKeyError:
             pass
-    return {"protective": len([c for c in created if c.get("type") != "ticket_error"]), "ticket_notifications": ticket_notes,
+    return {"protective": len([c for c in created if c.get("type") != "ticket_error"]), "tickets_checked": with_tickets,
+            "ticket_notifications": ticket_notes,
             "errors": [c for c in created if c.get("type") == "ticket_error"]}
 
 
@@ -175,9 +179,10 @@ def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: 
                                 reason=f"{type(e).__name__}: {e}", mode=cfg["mode"])
                 raise
             dur = time.perf_counter() - t0
+            failed = isinstance(out, dict) and out.get("status") == "failed"   # a non-blocking step's own failure
             ops.record_step(db, job="tick", job_id=log.job_id, step=name, started_at=started, duration_s=dur,
-                            status="ok", reason=why, mode=cfg["mode"],
-                            marker=marker() if callable(marker) else marker)
+                            status="failed" if failed else "ok", reason=out.get("error", why) if failed else why,
+                            mode=cfg["mode"], marker=None if failed else (marker() if callable(marker) else marker))
             log(step=name, duration_s=round(dur, 3), **(summarize(out) if summarize else {}))
             results[name] = out
             return out
@@ -203,8 +208,9 @@ def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: 
                 return run_relationships(db, now)
             except Exception as e:
                 return {"status": "failed", "error": f"{type(e).__name__}: {e}"}
-        step("relationships", new_session("relationships"), rel, marker=lambda: _data_session(db),
-             summarize=lambda r: r)
+        from .cross_asset import relationships_current
+        current, why = relationships_current(db)   # late closes and watch-list changes also count
+        step("relationships", (not current, why), rel, summarize=lambda r: r)
 
         # 3. outlook (cheap self-check every tick)
         out = step("outlook", (True, "checks for a new close or late symbols"), lambda _m: _refresh_outlook(db, now),
@@ -212,15 +218,22 @@ def run_tick(db: Database, fetcher: ChartFetcher, settings: Settings, *, pause: 
         state["outlook_rebuilt"] = bool(out and out.get("status") == "rebuilt")
 
         # 4. lifecycle
-        step("lifecycle", new_session("lifecycle"), lambda _m: _lifecycle(db, now), marker=lambda: _data_session(db),
+        due, why = new_session("lifecycle")
+        if state["outlook_rebuilt"]:   # new live decisions to replay (e.g. a late close), before alerts and paper
+            due, why = True, "outlook rebuilt"
+        step("lifecycle", (due, why), lambda _m: _lifecycle(db, now), marker=lambda: _data_session(db),
              summarize=lambda life: {"parity": life["parity"], "forecasts": life["forecasts"],
                                      "breaches": [m["source"] for m in life["monitors"] if m["status"] == "breach"]})
 
         # 5. alerts and tickets
-        due, why = new_session("alerts")
+        # Protective checks run every tick (they are calendar-driven and must keep working during a data
+        # outage); in auto mode ticket generation waits for a new data session or a rebuilt outlook.
+        tdue, twhy = new_session("alerts")
         if state["outlook_rebuilt"]:
-            due, why = True, "outlook rebuilt"
-        step("alerts", (due, why), lambda _m: _alerts(db, now), marker=lambda: _data_session(db), summarize=lambda a: a)
+            tdue, twhy = True, "outlook rebuilt"
+        step("alerts", (True, "protective checks every tick; tickets: " + twhy),
+             lambda mode: _alerts(db, now, with_tickets=tdue or mode != "auto"),
+             marker=lambda: _data_session(db), summarize=lambda a: a)
 
         # 6. paper accounts
         def paper(_mode):

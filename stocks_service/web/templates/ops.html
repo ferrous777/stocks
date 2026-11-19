@@ -49,7 +49,7 @@ minutes is the finest, since that is how often the tick fires); <strong>off</str
 {% call ui.table(["Started (UTC)", "Status", ("Total", "num")] + steps_order, compact=True, pin_first=True) %}
   {% for t in ticks %}
   <tr><td class="small">{{ t.started_at.strftime('%m-%d %H:%M') }}</td>
-    <td>{{ ui.badge(t.status, 'negative' if t.status == 'failed' else None) }}</td><td class="num">{{ secs(t.duration_s) }}</td>
+    <td>{{ ui.badge(t.status, 'negative' if t.status == 'failed' else None) }}</td><td class="num">{{ secs(t.get('duration_s')) if t.status != 'running' else 'running' }}</td>
     {% for st in steps_order %}{% set r = t.steps.get(st) %}
     <td class="small {{ 'neg' if r and r.status == 'failed' }}"{% if r %} title="{{ r.reason }}"{% endif %}>{% if not r %}<span class="muted">—</span>{% elif r.status == 'skipped' %}<span class="muted">skip</span>{% else %}{{ secs(r.duration_s) }}{% endif %}</td>
     {% endfor %}</tr>
