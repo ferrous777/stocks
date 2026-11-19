@@ -10,36 +10,62 @@ from __future__ import annotations
 
 import datetime as dt
 import hmac
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 from pymongo.database import Database
 
-INSTRUCTIONS = """Tools for a six-month stock outlook, the paper-trading accounts, the user's real
-(e.g. Fidelity) account tracking and the watch list.
+INSTRUCTIONS = """Stocks service: a six-month stock outlook, simulated (paper) trading accounts, tracking of the
+user's real brokerage accounts (e.g. Fidelity), and the watch list of tickers.
 
-Always pass your agent_id, model_id and prompt_version; every call is logged.
+1. IDENTIFY YOURSELF ON EVERY CALL
+Every tool requires these three arguments. They are logged exactly as sent.
+  agent_id        A fixed name for your app, e.g. "chatgpt" or "claude-code".
+  model_id        Your exact model identifier, but only if your runtime tells you what it is.
+                  If it does not, send "unknown". Do not guess, and do not derive it from agent_id.
+  prompt_version  "v1" unless the user gives you another version.
+Example: {"agent_id": "chatgpt", "model_id": "unknown", "prompt_version": "v1"}
 
-Reading: get_watchlist, get_prediction (detailed outlook for one ticker), get_outlook (all rows),
-list_accounts, get_account, get_performance, list_orders, list_transactions. Most results carry
-`links` to the website page or chart view showing the same data; use get_links to build others
-(e.g. a price chart comparing calendar years). Share these links when the user would benefit
-from seeing the data.
+2. READING (safe, changes nothing)
+  get_prediction    everything about one ticker: outlook, strategy signals, levels, recent returns
+  get_outlook       the six-month outlook for every watched ticker, best expected return first
+  get_watchlist     the tickers being tracked
+  list_accounts     real accounts and all paper accounts (best return first)
+  get_account       one account's cash and positions
+  get_performance   a paper account's return, drawdown and comparison with the baseline
+  list_orders       a paper account's orders
+  list_transactions any account's fills and cash entries (page with next_cursor)
+  get_links         website links, e.g. a chart with several calendar years overlaid
+Most results include "links" to the website page showing the same data. Give the user these links
+when seeing the chart or table would help.
 
-Paper trading: each session's outlook is built after the close; orders for the next session must
-be placed before its open (placeable_until). Orders are DAY limit orders at the outlook row's entry
-limit with the row's stop and target; place_paper_order needs an idempotency_key and a rationale.
-Orders are only ever placed on paper accounts.
+3. CHANGES THAT NEED THE USER'S YES: upload_holdings, add_to_watchlist, remove_from_watchlist
+  a. Call the tool WITHOUT confirm_token. Nothing changes; you get a preview and a confirm_token.
+  b. Show the preview to the user and ask whether to go ahead.
+  c. Only if the user clearly says yes, call the same tool again with the SAME arguments plus
+     confirm_token. Never confirm on the user's behalf. Tokens are single-use and expire after
+     15 minutes; if one is refused, start again at step a.
 
-Changes that need the user's confirmation: add_to_watchlist, remove_from_watchlist and
-upload_holdings. Call them first WITHOUT confirm_token: nothing changes, you get a preview and a
-token. Show the preview to the user, and only after they explicitly agree call again with the same
-arguments plus confirm_token. Never confirm on the user's behalf.
+4. PAPER ORDERS (simulated money only; real accounts are never traded)
+  place_paper_order  needs a unique idempotency_key (8+ characters; reusing it returns the same
+                     order) and a short rationale. It buys or shorts at the outlook row's entry
+                     limit, with that row's stop and target, for the next trading session only.
+                     It is refused after the row's placeable_until time, above the account's risk
+                     limits, or if the ticker already has an open order or position there.
+  cancel_order       cancels an order before its session opens.
 
-Grades: A = validated strategy, B = calibrated but not validated, C = the symbol's own history
-(base rate), insufficient = no estimate. Nothing is a recommendation until a strategy is validated."""
+5. READING THE OUTLOOK
+Grades: A = signal from a validated strategy; B = calibrated signal, strategy not validated;
+C = this ticker's own history only (a base rate, not a forecast); insufficient = no estimate.
+No strategy is validated yet, so present results as research, not as recommendations."""
+
+
+AgentId = Annotated[str, Field(description='Stable name of the calling client or agent, e.g. "chatgpt".')]
+ModelId = Annotated[str, Field(description='Exact model identifier if your runtime metadata provides it; '
+                                           'otherwise "unknown". Never guess or infer it from the agent name.')]
+PromptVersion = Annotated[str, Field(description='Version of the instructions the agent runs under, e.g. "v1".')]
 
 
 class Holding(BaseModel):
@@ -132,8 +158,9 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
 
     def ident(agent_id, model_id, prompt_version) -> dict:
         d = {"agent_id": agent_id, "model_id": model_id, "prompt_version": prompt_version}
-        if not all(d.values()):
-            raise ValueError("agent_id, model_id and prompt_version are required")
+        if not all(isinstance(v, str) and v.strip() for v in d.values()):
+            raise ValueError('agent_id, model_id and prompt_version are required (model_id: your exact model '
+                             'identifier if your runtime provides it, otherwise "unknown")')
         return d
 
     def account(db: Database, account_id: str) -> dict:
@@ -178,7 +205,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
     # --- outlook and predictions -----------------------------------------------------------------
 
     @mcp.tool()
-    def get_outlook(agent_id: str, model_id: str, prompt_version: str, ctx: Context, side: str | None = None,
+    def get_outlook(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, ctx: Context, side: str | None = None,
                     min_grade: str = "C", limit: int = 50) -> dict:
         """Latest six-month outlook rows (best expected return first), with each row's plan and grade."""
         from .outlook.build import GRADE_ORDER, latest_outlook
@@ -201,7 +228,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
         return audited("get_outlook", idn, {"side": side, "min_grade": min_grade, "limit": limit}, run)
 
     @mcp.tool()
-    def get_prediction(agent_id: str, model_id: str, prompt_version: str, symbol: str, ctx: Context) -> dict:
+    def get_prediction(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, symbol: str, ctx: Context) -> dict:
         """Detailed prediction for one watched ticker: its outlook rows for both sides (grade, entry/stop/target
         plan, expected six-month return with 10th/90th percentiles, P(win), outcome odds, base rate, umpire
         votes), today's decision of every strategy with reasons, ATR levels with time-to-target odds, recent
@@ -224,7 +251,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
     # --- watch list ------------------------------------------------------------------------------
 
     @mcp.tool()
-    def get_watchlist(agent_id: str, model_id: str, prompt_version: str, ctx: Context) -> dict:
+    def get_watchlist(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, ctx: Context) -> dict:
         """Every watched symbol (asset class, groups, last close) and the symbols removed from the list."""
         idn = ident(agent_id, model_id, prompt_version)
 
@@ -238,7 +265,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
         return audited("get_watchlist", idn, {}, run)
 
     @mcp.tool()
-    async def add_to_watchlist(agent_id: str, model_id: str, prompt_version: str, symbol: str, ctx: Context,
+    async def add_to_watchlist(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, symbol: str, ctx: Context,
                                confirm_token: str | None = None) -> dict:
         """Add a ticker to the watch list (needs the user's confirmation). Without confirm_token: checks the
         ticker at the price source and previews the change. With the token from that preview: adds it and
@@ -256,7 +283,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
             lambda now: mcp_ops.preview_add(get_db(), get_fetcher(), sym, now), apply))
 
     @mcp.tool()
-    def remove_from_watchlist(agent_id: str, model_id: str, prompt_version: str, symbol: str,
+    def remove_from_watchlist(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, symbol: str,
                               confirm_token: str | None = None) -> dict:
         """Remove a ticker from the watch list (needs the user's confirmation). Without confirm_token: previews
         the change and its effects (refused while paper accounts have open orders or positions in it). With the
@@ -270,7 +297,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
     # --- accounts --------------------------------------------------------------------------------
 
     @mcp.tool()
-    def list_accounts(agent_id: str, model_id: str, prompt_version: str, ctx: Context,
+    def list_accounts(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, ctx: Context,
                       kind: str | None = None) -> dict:
         """All accounts: the user's real accounts (holdings tracking) and every paper account (AI agent,
         baseline, one per strategy) with equity, return and activity, best paper return first. kind: real|paper."""
@@ -298,7 +325,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
         return audited("list_accounts", idn, {"kind": kind}, run)
 
     @mcp.tool()
-    def get_account(agent_id: str, model_id: str, prompt_version: str, account_id: str, ctx: Context) -> dict:
+    def get_account(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str, ctx: Context) -> dict:
         """One account. Paper: equity, cash, free buying power, reserved cash and positions. Real: holdings
         valued at the latest close, cash, latest snapshot and open reconciliation breaks."""
         from .accounts import service
@@ -325,7 +352,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
         return audited("get_account", idn, {"account_id": account_id}, run)
 
     @mcp.tool()
-    def get_performance(agent_id: str, model_id: str, prompt_version: str, account_id: str, ctx: Context,
+    def get_performance(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str, ctx: Context,
                         baseline_account: str | None = None, points: int = 60) -> dict:
         """Paper account performance: total return, max drawdown, closed-order win rate and average, the most
         recent `points` equity points, and the paired comparison with its baseline (the matching baseline
@@ -349,7 +376,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
                                                  "points": points}, run)
 
     @mcp.tool()
-    def list_orders(agent_id: str, model_id: str, prompt_version: str, account_id: str, ctx: Context,
+    def list_orders(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str, ctx: Context,
                     status: str | None = None) -> dict:
         """Orders of a paper account (open, filled, closed, not_filled, cancelled), newest first."""
         idn = ident(agent_id, model_id, prompt_version)
@@ -364,7 +391,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
         return audited("list_orders", idn, {"account_id": account_id, "status": status}, run)
 
     @mcp.tool()
-    def list_transactions(agent_id: str, model_id: str, prompt_version: str, account_id: str, ctx: Context,
+    def list_transactions(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str, ctx: Context,
                           limit: int = 100, cursor: str | None = None) -> dict:
         """Transactions of any account, newest first: fills (buy/sell/short/cover with qty, price, fees) and
         ledger entries (opening balances, dividends, borrow fees, transfers, splits); `cash` is each entry's
@@ -382,7 +409,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
         return audited("list_transactions", idn, {"account_id": account_id, "limit": limit, "cursor": cursor}, run)
 
     @mcp.tool()
-    def upload_holdings(agent_id: str, model_id: str, prompt_version: str, account_id: str, as_of: str,
+    def upload_holdings(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str, as_of: str,
                         cash: float, positions: list[Holding], ctx: Context, account_name: str | None = None,
                         confirm_token: str | None = None) -> dict:
         """Upload the user's current holdings of a real brokerage account (e.g. Fidelity) for tracking (needs
@@ -405,7 +432,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
     # --- paper orders ----------------------------------------------------------------------------
 
     @mcp.tool()
-    def place_paper_order(agent_id: str, model_id: str, prompt_version: str, account_id: str, symbol: str,
+    def place_paper_order(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str, symbol: str,
                           side: str, qty: int, idempotency_key: str, rationale: str) -> dict:
         """Place a DAY limit order for the next session from the latest outlook row (paper only).
 
@@ -435,7 +462,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
         return audited("place_paper_order", idn, args, run)
 
     @mcp.tool()
-    def cancel_order(agent_id: str, model_id: str, prompt_version: str, account_id: str, order_id: str) -> dict:
+    def cancel_order(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str, order_id: str) -> dict:
         """Cancel an open paper order before its session opens."""
         from .accounts.service import AccountError, NotFound
         from .paper.broker import cancel_order as _cancel
@@ -455,7 +482,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
     # --- links -----------------------------------------------------------------------------------
 
     @mcp.tool()
-    def get_links(agent_id: str, model_id: str, prompt_version: str, ctx: Context, symbol: str | None = None,
+    def get_links(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, ctx: Context, symbol: str | None = None,
                   chart_range: str | None = None, from_year: int | None = None,
                   compare_years: list[int] | None = None, account_id: str | None = None,
                   outlook_side: str | None = None) -> dict:

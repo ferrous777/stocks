@@ -9,7 +9,12 @@ The service exposes an MCP server for an external AI decision-maker:
 
 ## Tools
 
-Every tool takes `agent_id`, `model_id` and `prompt_version`, and every call is logged to `agent_decisions`. Most results include `links`: absolute URLs of the website page or chart view that shows the same data.
+Every tool takes three identity arguments, and every call is logged to `agent_decisions` exactly as sent:
+- `agent_id`: a fixed name for the app, e.g. `chatgpt`.
+- `model_id`: the exact model identifier, but only if the app's runtime provides it. Otherwise send `unknown`. Never guess it, and never infer it from `agent_id`.
+- `prompt_version`: e.g. `v1`.
+
+Example: `{"agent_id": "chatgpt", "model_id": "unknown", "prompt_version": "v1"}`. Most results include `links`: absolute URLs of the website page or chart view that shows the same data.
 
 | Tool | What it does |
 |---|---|
