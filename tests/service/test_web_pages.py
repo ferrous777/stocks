@@ -184,3 +184,27 @@ def test_account_page_can_show_the_full_order_history(db, world):  # noqa: F811
         c.post("/login", data={"password": "pw"})
         page = c.get("/paper/base", params={"history": "all"}).text
     assert page.count('<td class="small">2025-03-31 23:00</td>') == 4
+
+
+def test_transactions_replay_history_only_when_a_split_applies(db, world, monkeypatch):  # noqa: F811
+    from stocks_service.accounts import service
+    from stocks_service.paper import read
+    from stocks_service.web import data
+    service.create_account(db, account_id="nosplit", name="N", now=NOW)
+    service.upload_snapshot(db, "nosplit", as_of=dt.datetime(2024, 6, 3, 21, tzinfo=dt.timezone.utc), cash=100.0,
+                            positions=[{"symbol": "SPY", "qty": 1, "avg_cost": 500.0}], opening=True, now=NOW)
+
+    def boom(*a, **k):
+        raise AssertionError("history replayed without an applicable split")
+    monkeypatch.setattr(service, "_history", boom)
+    assert len(read.transactions(db, "nosplit", now=NOW)["transactions"]) == 2
+    # Reading the full history derives split rows once, not once per page.
+    monkeypatch.undo()
+    calls = []
+    real = read.split_rows
+    monkeypatch.setattr(read, "split_rows", lambda *a, **k: calls.append(1) or real(*a, **k))
+    service.create_account(db, account_id="held", name="H", now=NOW)
+    service.upload_snapshot(db, "held", as_of=dt.datetime(2024, 6, 3, 21, tzinfo=dt.timezone.utc), cash=100.0,
+                            positions=[{"symbol": "NVDA", "qty": 10, "avg_cost": 1000.0}], opening=True, now=NOW)
+    full = data._all_transactions(db, "held", NOW)
+    assert calls == [1] and [t["type"] for t in full["transactions"]][0] == "split"

@@ -118,12 +118,19 @@ def _parse_cursor(cursor: str | None) -> tuple | None:
         raise ValueError("invalid cursor; pass the next_cursor value from the previous page")
 
 
-def _split_rows(db: Database, account_id: str, now: dt.datetime) -> list[dict]:
+def split_rows(db: Database, account_id: str, now: dt.datetime) -> list[dict]:
     """Splits that changed this account's holdings. The ledger applies them from ``corporate_actions``
     at the ex-date's session open (before anything else at that instant), so they are not stored as
-    ledger events; derive them the same way: shares held just before x (ratio - 1)."""
+    ledger events; derive them the same way: shares held just before x (ratio - 1).
+
+    Cheap when no split applies (two indexed distinct queries); the account's history is replayed
+    only when one of its symbols has a split on file."""
     from ..accounts.ledger import QTY_TOL, split_time, state_as_of
     from ..accounts.service import _history
+    syms = set(db.executions.distinct("symbol", {"account_id": account_id})) | {
+        s for s in db.ledger_events.distinct("symbol", {"account_id": account_id}) if s}
+    if not syms or not db.corporate_actions.find_one({"symbol": {"$in": sorted(syms)}, "type": "split"}, {"_id": 1}):
+        return []
     events, execs, splits = _history(db, account_id)
     rows = []
     for sym, ss in splits.items():
@@ -143,13 +150,16 @@ def _split_rows(db: Database, account_id: str, now: dt.datetime) -> list[dict]:
 
 
 def transactions(db: Database, account_id: str, *, limit: int = 100, cursor: str | None = None,
-                 now: dt.datetime | None = None) -> dict:
+                 now: dt.datetime | None = None, splits: list[dict] | None = None) -> dict:
     """Fills, splits and ledger entries (opening balances, dividends, borrow fees, transfers, ...),
     newest first. ``cash`` is the entry's effect on cash (None for entries that move shares only).
-    Page with ``cursor`` = the previous page's ``next_cursor``."""
+    Page with ``cursor`` = the previous page's ``next_cursor``. A caller reading many pages passes
+    ``splits`` (from ``split_rows``) once instead of deriving them for every page."""
     limit = max(1, min(limit, 500))
     cur = _parse_cursor(cursor)
-    rows = [r for r in _split_rows(db, account_id, now or dt.datetime.now(UTC)) if cur is None or r["_key"] < cur]
+    if splits is None:
+        splits = split_rows(db, account_id, now or dt.datetime.now(UTC))
+    rows = [dict(r) for r in splits if cur is None or r["_key"] < cur]
     for x in db.executions.find(_page_query(account_id, "x", cur)).sort([("ts", -1), ("_id", -1)]).limit(limit + 1):
         sign = -1 if x["side"] in BUY_SIDES else 1
         rows.append({"_key": (x["ts"], "x", x["_id"]), "ts": x["ts"], "type": x["side"], "symbol": x["symbol"],

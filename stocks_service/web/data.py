@@ -204,8 +204,9 @@ def paper_account(db: Database, account_id: str, *, now: dt.datetime, limit: int
 def _all_transactions(db: Database, account_id: str, now: dt.datetime) -> dict:
     from ..paper import read
     rows, cursor = [], None
+    splits = read.split_rows(db, account_id, now)   # derived once for every page
     while True:
-        page = read.transactions(db, account_id, limit=500, cursor=cursor, now=now)
+        page = read.transactions(db, account_id, limit=500, cursor=cursor, now=now, splits=splits)
         rows += page["transactions"]
         cursor = page["next_cursor"]
         if cursor is None:
