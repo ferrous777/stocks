@@ -51,7 +51,7 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
             client.close()
 
     from ..mcp_server import McpPath, _Auth, build_mcp
-    mcp = build_mcp(lambda: app.state.db)
+    mcp = build_mcp(lambda: app.state.db, lambda: app.state.fetcher, lambda: app.state.settings)
 
     app = FastAPI(title="Stocks Service", version=__version__, lifespan=lifespan)
     app.state.settings = settings

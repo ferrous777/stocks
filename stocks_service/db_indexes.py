@@ -116,6 +116,9 @@ INDEXES: dict[str, list[IndexModel]] = {
     "param_sets": [
         IndexModel([("strategy", ASCENDING), ("created_at", DESCENDING)], name="strategy_created"),
     ],
+    "mcp_confirmations": [   # single-use confirmation tokens for MCP changes
+        IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
+    ],
     "job_locks": [
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],

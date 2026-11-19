@@ -12,17 +12,41 @@ import datetime as dt
 import hmac
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import BaseModel, Field
 from pymongo.database import Database
 
-INSTRUCTIONS = """Paper-trading tools for a six-month stock outlook.
-Each session's outlook is built after the close; orders for the next session must be placed before
-its open (see placeable_until). Orders are DAY limit orders at the outlook row's entry limit with the
-row's stop and target; exits are simulated with the same rules as the research. Only paper accounts.
-Always pass your agent_id, model_id and prompt_version; place_paper_order needs an idempotency_key and
-a rationale. Grades: A = validated strategy, B = calibrated but not validated, C = the symbol's own
-history (base rate), insufficient = no estimate."""
+INSTRUCTIONS = """Tools for a six-month stock outlook, the paper-trading accounts, the user's real
+(e.g. Fidelity) account tracking and the watch list.
+
+Always pass your agent_id, model_id and prompt_version; every call is logged.
+
+Reading: get_watchlist, get_prediction (detailed outlook for one ticker), get_outlook (all rows),
+list_accounts, get_account, get_performance, list_orders, list_transactions. Most results carry
+`links` to the website page or chart view showing the same data; use get_links to build others
+(e.g. a price chart comparing calendar years). Share these links when the user would benefit
+from seeing the data.
+
+Paper trading: each session's outlook is built after the close; orders for the next session must
+be placed before its open (placeable_until). Orders are DAY limit orders at the outlook row's entry
+limit with the row's stop and target; place_paper_order needs an idempotency_key and a rationale.
+Orders are only ever placed on paper accounts.
+
+Changes that need the user's confirmation: add_to_watchlist, remove_from_watchlist and
+upload_holdings. Call them first WITHOUT confirm_token: nothing changes, you get a preview and a
+token. Show the preview to the user, and only after they explicitly agree call again with the same
+arguments plus confirm_token. Never confirm on the user's behalf.
+
+Grades: A = validated strategy, B = calibrated but not validated, C = the symbol's own history
+(base rate), insufficient = no estimate. Nothing is a recommendation until a strategy is validated."""
+
+
+class Holding(BaseModel):
+    """One position in an uploaded brokerage snapshot."""
+    symbol: str = Field(description="ticker, e.g. NVDA")
+    qty: float = Field(description="shares held (negative for a short)")
+    avg_cost: float | None = Field(default=None, description="average cost per share; required on the first upload")
 
 
 class _Auth:
@@ -62,20 +86,25 @@ def _now() -> dt.datetime:
 
 
 def _clean(x: Any) -> Any:
-    """JSON-safe copy (ObjectIds and datetimes to strings)."""
-    from bson import ObjectId
-    if isinstance(x, dict):
-        return {k: _clean(v) for k, v in x.items() if k != "_id"} | ({"id": str(x["_id"])} if "_id" in x else {})
-    if isinstance(x, list):
-        return [_clean(v) for v in x]
-    if isinstance(x, ObjectId):
-        return str(x)
-    if isinstance(x, (dt.datetime, dt.date)):
-        return x.isoformat()
-    return x
+    """JSON-safe copy (ObjectIds and datetimes to strings, ``_id`` to ``id``)."""
+    from .mcp_ops import jsonable
+    return jsonable(x)
 
 
-def build_mcp(get_db) -> FastMCP:
+def _site(ctx) -> str:
+    """Public base URL of this deployment, from the MCP request (honouring the proxy's forwarded headers)."""
+    req = getattr(getattr(ctx, "request_context", None), "request", None) if ctx is not None else None
+    if req is None:
+        raise ValueError("links need the HTTP request; not available on this transport")
+    proto = (req.headers.get("x-forwarded-proto") or req.url.scheme).split(",")[0].strip()
+    host = (req.headers.get("x-forwarded-host") or req.headers.get("host") or req.url.netloc).split(",")[0].strip()
+    return f"{proto}://{host}"
+
+
+def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
+    from . import mcp_ops
+    from .web import links as L
+
     mcp = FastMCP("stocks-paper", instructions=INSTRUCTIONS, stateless_http=True, json_response=True,
                   streamable_http_path="/",
                   transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
@@ -102,16 +131,49 @@ def build_mcp(get_db) -> FastMCP:
             raise ValueError("agent_id, model_id and prompt_version are required")
         return d
 
-    def paper(db: Database, account_id: str) -> dict:
+    def account(db: Database, account_id: str) -> dict:
         acc = db.accounts.find_one({"_id": account_id})
         if acc is None:
-            raise ValueError(f"account {account_id} not found")
-        if acc.get("kind") != "paper":
-            raise ValueError(f"{account_id} is a real account; MCP tools only act on paper accounts")
+            raise ValueError(f"account {account_id} not found; list_accounts shows them")
         return acc
 
+    def paper(db: Database, account_id: str) -> dict:
+        acc = account(db, account_id)
+        if acc.get("kind") != "paper":
+            raise ValueError(f"{account_id} is a real account; this tool only acts on paper accounts")
+        return acc
+
+    def url(ctx, path: str) -> str:
+        return L.absolute(_site(ctx), path)
+
+    def confirmed(tool: str, idn: dict, args: dict, confirm_token: str | None, preview, apply):
+        """Two-step change: without a token, preview + token; with it, apply exactly the previewed change."""
+        db = get_db()
+
+        def run():
+            now = _now()
+            if not confirm_token:
+                p = preview(now)
+                tok = mcp_ops.issue_token(db, tool, args, idn, now)
+                res = {"status": "preview — nothing has changed yet", "preview": p, **tok}
+                return res, {"preview": p, "token": tok["confirm_token"]}
+            doc = mcp_ops.redeem_token(db, confirm_token, tool, args, now)
+            try:
+                out = apply(now)
+            except Exception:
+                mcp_ops.release_token(db, doc["_id"])
+                raise
+            return {"status": "done", **out}, {"applied": True, "token": doc["_id"]}
+
+        return audited(tool, idn, {**args, "confirm_token": confirm_token}, run)
+
+    def account_links(ctx, acc: dict) -> dict:
+        return {"account": url(ctx, L.account(acc["_id"], acc.get("kind", "real")))}
+
+    # --- outlook and predictions -----------------------------------------------------------------
+
     @mcp.tool()
-    def get_outlook(agent_id: str, model_id: str, prompt_version: str, side: str | None = None,
+    def get_outlook(agent_id: str, model_id: str, prompt_version: str, ctx: Context, side: str | None = None,
                     min_grade: str = "C", limit: int = 50) -> dict:
         """Latest six-month outlook rows (best expected return first), with each row's plan and grade."""
         from .outlook.build import GRADE_ORDER, latest_outlook
@@ -127,42 +189,215 @@ def build_mcp(get_db) -> FastMCP:
                     "p90_return_6m", "signals", "reasons")
             res = _clean({"asof": o["asof"], "run_id": o["run_id"], "placeable_until": o.get("placeable_until"),
                           "cash_return_6m": o["cash_return_6m"], "cost_profile": o["cost_profile"],
-                          "rows": [{k: r.get(k) for k in keep} for r in rows]})
+                          "rows": [{**{k: r.get(k) for k in keep}, "link": url(ctx, L.symbol(r["symbol"]))} for r in rows],
+                          "links": {"outlook": url(ctx, L.outlook(side if side in ("long", "short") else None))}})
             return res, {"observation": res}   # exactly what the agent received, incl. the outlook run id
 
         return audited("get_outlook", idn, {"side": side, "min_grade": min_grade, "limit": limit}, run)
 
     @mcp.tool()
-    def get_account(agent_id: str, model_id: str, prompt_version: str, account_id: str) -> dict:
-        """Paper account summary: equity, cash, free buying power, reserved cash, positions by market value."""
+    def get_prediction(agent_id: str, model_id: str, prompt_version: str, symbol: str, ctx: Context) -> dict:
+        """Detailed prediction for one watched ticker: its outlook rows for both sides (grade, entry/stop/target
+        plan, expected six-month return with 10th/90th percentiles, P(win), outcome odds, base rate, umpire
+        votes), today's decision of every strategy with reasons, ATR levels with time-to-target odds, recent
+        returns, 52-week range and calendar-year returns, plus links to its chart. Tickers not on the watch
+        list must be added first (add_to_watchlist)."""
+        idn = ident(agent_id, model_id, prompt_version)
+
+        def run():
+            res = mcp_ops.prediction(get_db(), symbol)
+            sym = res["symbol"]
+            years = [y["year"] for y in res.get("calendar_years", [])][:3]
+            res["links"] = {"chart": url(ctx, L.symbol(sym)), "chart_5y": url(ctx, L.symbol(sym, range="5Y")),
+                            **({"compare_recent_years": url(ctx, L.symbol(sym, compare=years))} if years else {}),
+                            "outlook": url(ctx, L.outlook())}
+            res = _clean(res)
+            return res, {"symbol": sym, "outlook_asof": (res.get("outlook") or {}).get("asof")}
+
+        return audited("get_prediction", idn, {"symbol": symbol}, run)
+
+    # --- watch list ------------------------------------------------------------------------------
+
+    @mcp.tool()
+    def get_watchlist(agent_id: str, model_id: str, prompt_version: str, ctx: Context) -> dict:
+        """Every watched symbol (asset class, groups, last close) and the symbols removed from the list."""
+        idn = ident(agent_id, model_id, prompt_version)
+
+        def run():
+            res = mcp_ops.watchlist(get_db())
+            for r in res["watched"] + res["removed"]:
+                r["link"] = url(ctx, L.symbol(r["symbol"]))
+            res["links"] = {"dashboard": url(ctx, L.dashboard())}
+            return _clean(res), {"watched": len(res["watched"])}
+
+        return audited("get_watchlist", idn, {}, run)
+
+    @mcp.tool()
+    async def add_to_watchlist(agent_id: str, model_id: str, prompt_version: str, symbol: str, ctx: Context,
+                               confirm_token: str | None = None) -> dict:
+        """Add a ticker to the watch list (needs the user's confirmation). Without confirm_token: checks the
+        ticker at the price source and previews the change. With the token from that preview: adds it and
+        loads its daily price history, so predictions and the outlook cover it."""
+        idn = ident(agent_id, model_id, prompt_version)
+        sym = symbol.strip().upper()
+
+        def apply(now):
+            res = mcp_ops.apply_add(get_db(), get_fetcher(), get_settings(), sym, now)
+            return {**res, "links": {"chart": url(ctx, L.symbol(res["symbol"]))}}
+
+        import anyio   # the price-source lookup and history load run off the event loop
+        return await anyio.to_thread.run_sync(lambda: confirmed(
+            "add_to_watchlist", idn, {"symbol": sym}, confirm_token,
+            lambda now: mcp_ops.preview_add(get_db(), get_fetcher(), sym, now), apply))
+
+    @mcp.tool()
+    def remove_from_watchlist(agent_id: str, model_id: str, prompt_version: str, symbol: str,
+                              confirm_token: str | None = None) -> dict:
+        """Remove a ticker from the watch list (needs the user's confirmation). Without confirm_token: previews
+        the change and its effects (refused while paper accounts have open orders or positions in it). With the
+        token: stops tracking it; its price history is kept and re-adding resumes from there."""
+        idn = ident(agent_id, model_id, prompt_version)
+        sym = symbol.strip().upper()
+        return confirmed("remove_from_watchlist", idn, {"symbol": sym}, confirm_token,
+                         lambda now: mcp_ops.preview_remove(get_db(), sym, now),
+                         lambda now: mcp_ops.apply_remove(get_db(), sym, now))
+
+    # --- accounts --------------------------------------------------------------------------------
+
+    @mcp.tool()
+    def list_accounts(agent_id: str, model_id: str, prompt_version: str, ctx: Context,
+                      kind: str | None = None) -> dict:
+        """All accounts: the user's real accounts (holdings tracking) and every paper account (AI agent,
+        baseline, one per strategy) with equity, return and activity, best paper return first. kind: real|paper."""
+        from .accounts import service
+        from .paper import read
+        idn = ident(agent_id, model_id, prompt_version)
+
+        def run():
+            db = get_db()
+            out: dict = {}
+            if kind in (None, "real"):
+                real = []
+                for a in db.accounts.find({"kind": {"$ne": "paper"}}).sort("_id", 1):
+                    h = service.holdings(db, a["_id"], _now())
+                    real.append({"account_id": a["_id"], "name": a.get("name"), "kind": "real", "cash": h["cash"],
+                                 "equity": h["equity"], "positions": len(h["positions"]),
+                                 "latest_snapshot": h["latest_snapshot"], "open_breaks": h["open_breaks"],
+                                 "link": url(ctx, L.account(a["_id"], "real"))})
+                out["real"] = real
+            if kind in (None, "paper"):
+                out["paper"] = [{**r, "link": url(ctx, L.account(r["account_id"], "paper"))} for r in read.summaries(db)]
+            out["links"] = {"paper": url(ctx, L.paper()), "accounts": url(ctx, L.accounts())}
+            return _clean(out), {"real": len(out.get("real", [])), "paper": len(out.get("paper", []))}
+
+        return audited("list_accounts", idn, {"kind": kind}, run)
+
+    @mcp.tool()
+    def get_account(agent_id: str, model_id: str, prompt_version: str, account_id: str, ctx: Context) -> dict:
+        """One account. Paper: equity, cash, free buying power, reserved cash and positions. Real: holdings
+        valued at the latest close, cash, latest snapshot and open reconciliation breaks."""
+        from .accounts import service
+        from .paper import read
         from .paper.broker import account_book
         idn = ident(agent_id, model_id, prompt_version)
 
         def run():
             db = get_db()
-            acc = paper(db, account_id)
-            _, info = account_book(db, acc, _now())
-            res = _clean({"account_id": account_id, "starting_cash": acc["starting_cash"],
-                          "risk_profile": acc["risk_profile"], "last_session_executed": acc["last_session_executed"],
-                          "stalled": acc.get("stalled"), **info})
+            acc = account(db, account_id)
+            now = _now()
+            if acc.get("kind") == "paper":
+                _, info = account_book(db, acc, now)
+                res = {"account_id": account_id, "kind": "paper", "trades_for": read.kind_label(acc),
+                       "starting_cash": acc["starting_cash"], "risk_profile": acc["risk_profile"],
+                       "last_session_executed": acc["last_session_executed"], "stalled": acc.get("stalled"), **info,
+                       "holdings": service.holdings(db, account_id, now)["positions"]}
+            else:
+                res = {"kind": "real", **service.holdings(db, account_id, now)}
+            res["links"] = account_links(ctx, acc)
+            res = _clean(res)
             return res, {"observation": res}
 
         return audited("get_account", idn, {"account_id": account_id}, run)
 
     @mcp.tool()
-    def list_orders(agent_id: str, model_id: str, prompt_version: str, account_id: str,
-                    status: str | None = None) -> dict:
-        """Orders of a paper account (open, filled, closed, not_filled, cancelled)."""
+    def get_performance(agent_id: str, model_id: str, prompt_version: str, account_id: str, ctx: Context,
+                        baseline_account: str | None = None, points: int = 60) -> dict:
+        """Paper account performance: total return, max drawdown, closed-order win rate and average, the most
+        recent `points` equity points, and the paired comparison with its baseline (the matching baseline
+        unless baseline_account is given) including the influence gate."""
+        from .paper import read, report
         idn = ident(agent_id, model_id, prompt_version)
 
         def run():
             db = get_db()
-            paper(db, account_id)
+            acc = paper(db, account_id)
+            res = read.performance(db, account_id, points=max(1, min(points, 2000)))
+            if baseline_account:
+                paper(db, baseline_account)
+                res["comparison"] = {**report.compare(db, account_id, baseline_account), "pairing": "requested"}
+            else:
+                res["comparison"] = read.comparison(db, acc)
+            res["links"] = account_links(ctx, acc)
+            return _clean(res), {"sessions": res["sessions"]}
+
+        return audited("get_performance", idn, {"account_id": account_id, "baseline_account": baseline_account,
+                                                 "points": points}, run)
+
+    @mcp.tool()
+    def list_orders(agent_id: str, model_id: str, prompt_version: str, account_id: str, ctx: Context,
+                    status: str | None = None) -> dict:
+        """Orders of a paper account (open, filled, closed, not_filled, cancelled), newest first."""
+        idn = ident(agent_id, model_id, prompt_version)
+
+        def run():
+            db = get_db()
+            acc = paper(db, account_id)
             q = {"account_id": account_id, **({"status": status} if status else {})}
             orders = _clean(list(db.orders.find(q).sort("placed_at", -1).limit(200)))
-            return {"orders": orders}, {"order_ids": [x["id"] for x in orders]}
+            return {"orders": orders, "links": account_links(ctx, acc)}, {"order_ids": [x["id"] for x in orders]}
 
         return audited("list_orders", idn, {"account_id": account_id, "status": status}, run)
+
+    @mcp.tool()
+    def list_transactions(agent_id: str, model_id: str, prompt_version: str, account_id: str, ctx: Context,
+                          limit: int = 100, cursor: str | None = None) -> dict:
+        """Transactions of any account, newest first: fills (buy/sell/short/cover with qty, price, fees) and
+        ledger entries (opening balances, dividends, borrow fees, transfers, splits); `cash` is each entry's
+        effect on cash. For older entries pass next_cursor back as cursor."""
+        from .paper import read
+        idn = ident(agent_id, model_id, prompt_version)
+
+        def run():
+            db = get_db()
+            acc = account(db, account_id)
+            res = read.transactions(db, account_id, limit=limit, cursor=cursor)
+            res["links"] = account_links(ctx, acc)
+            return res, {"returned": len(res["transactions"])}
+
+        return audited("list_transactions", idn, {"account_id": account_id, "limit": limit, "cursor": cursor}, run)
+
+    @mcp.tool()
+    def upload_holdings(agent_id: str, model_id: str, prompt_version: str, account_id: str, as_of: str,
+                        cash: float, positions: list[Holding], ctx: Context, account_name: str | None = None,
+                        confirm_token: str | None = None) -> dict:
+        """Upload the user's current holdings of a real brokerage account (e.g. Fidelity) for tracking (needs
+        the user's confirmation). as_of: ISO date (that day's close) or datetime; cash: the cash balance
+        (core position); positions: every holding with qty and avg_cost. The first upload is the opening
+        balance; later ones are reconciled with the ledger and differences are recorded as breaks to explain,
+        never as trades. To create a new account pass account_name. Without confirm_token: preview only."""
+        idn = ident(agent_id, model_id, prompt_version)
+        pos = [p.model_dump() for p in positions]
+        args = {"account_id": account_id, "as_of": as_of, "cash": cash, "positions": pos, "account_name": account_name}
+        kw = dict(as_of=as_of, cash=cash, positions=pos, account_name=account_name)
+
+        def apply(now):
+            res = mcp_ops.apply_holdings(get_db(), account_id, now=now, **kw)
+            return {**res, "links": {"account": url(ctx, L.account(account_id, "real"))}}
+
+        return confirmed("upload_holdings", idn, args, confirm_token,
+                         lambda now: mcp_ops.preview_holdings(get_db(), account_id, now=now, **kw), apply)
+
+    # --- paper orders ----------------------------------------------------------------------------
 
     @mcp.tool()
     def place_paper_order(agent_id: str, model_id: str, prompt_version: str, account_id: str, symbol: str,
@@ -212,24 +447,35 @@ def build_mcp(get_db) -> FastMCP:
 
         return audited("cancel_order", idn, {"account_id": account_id, "order_id": order_id}, run)
 
+    # --- links -----------------------------------------------------------------------------------
+
     @mcp.tool()
-    def get_performance(agent_id: str, model_id: str, prompt_version: str, account_id: str,
-                        baseline_account: str | None = None) -> dict:
-        """Equity curve summary, and (with baseline_account) the paired comparison and influence gate."""
-        from .paper.report import compare
+    def get_links(agent_id: str, model_id: str, prompt_version: str, ctx: Context, symbol: str | None = None,
+                  chart_range: str | None = None, from_year: int | None = None,
+                  compare_years: list[int] | None = None, account_id: str | None = None,
+                  outlook_side: str | None = None) -> dict:
+        """Links to the website to show the user data or a visualization. Always returns the page catalog.
+        symbol: its page, with at most one chart view: chart_range (6M, YTD, 1Y, 3Y, 5Y, All), from_year (that
+        year to present) or compare_years (up to 8 recent calendar years overlaid on a Jan-Dec axis).
+        account_id: that account's page. outlook_side: long|short filter of the outlook page."""
         idn = ident(agent_id, model_id, prompt_version)
 
         def run():
-            db = get_db()
-            paper(db, account_id)
-            curve = list(db.equity_curve.find({"account_id": account_id}).sort("session", 1))
-            res = {"account_id": account_id, "sessions": len(curve),
-                   "equity": [{"session": e["session"], "equity": e["equity"]} for e in curve[-30:]]}
-            if baseline_account:
-                paper(db, baseline_account)
-                res["comparison"] = compare(db, account_id, baseline_account)
-            return _clean(res), {"sessions": len(curve)}
+            site = _site(ctx)
+            out: dict = {"pages": [{**c, "url": L.absolute(site, c["path"])} for c in L.CATALOG]}
+            if symbol:
+                sym = mcp_ops.normalize_symbol(symbol)
+                out["symbol"] = L.absolute(site, L.symbol(sym, range=chart_range, from_year=from_year,
+                                                          compare=compare_years))
+            if account_id:
+                acc = account(get_db(), account_id)
+                out["account"] = L.absolute(site, L.account(acc["_id"], acc.get("kind", "real")))
+            if outlook_side:
+                out["outlook"] = L.absolute(site, L.outlook(outlook_side))
+            return out, {k: v for k, v in out.items() if k != "pages"}
 
-        return audited("get_performance", idn, {"account_id": account_id, "baseline_account": baseline_account}, run)
+        return audited("get_links", idn, {"symbol": symbol, "chart_range": chart_range, "from_year": from_year,
+                                          "compare_years": compare_years, "account_id": account_id,
+                                          "outlook_side": outlook_side}, run)
 
     return mcp

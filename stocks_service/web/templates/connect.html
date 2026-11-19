@@ -3,9 +3,10 @@
 {% block title %}Connect an agent · Stocks{% endblock %}
 {% block content %}
 {% set agent_id = agent_accounts[0]._id if agent_accounts else "paper-agent" %}
-{% call ui.page_header("Connect an AI agent") %}An AI agent can read the six-month outlook and trade the
-<strong>paper</strong> accounts through this site's MCP (Model Context Protocol) server. Real accounts are refused,
-and every call is logged with the agent's identity.{% endcall %}
+{% call ui.page_header("Connect an AI agent") %}Through this site's MCP (Model Context Protocol) server an AI agent can read
+detailed predictions for any watched ticker, browse every paper account's performance and transactions, trade the
+<strong>paper</strong> accounts, upload your real (e.g. Fidelity) holdings for tracking, change the watch list, and link
+you to any page or chart. Orders are only ever placed on paper accounts, and every call is logged with the agent's identity.{% endcall %}
 
 <div class="stats">
   {{ ui.stat("Endpoint", "/mcp", hint=endpoint) }}
@@ -131,8 +132,16 @@ asyncio.run(main()){% endset %}
     <code>idempotency_key</code> (at least 8 characters; reusing it returns the same order) and a <code>rationale</code>.
     Orders are DAY limit orders at the row's entry limit, with its stop and target; they are refused after
     <code>placeable_until</code>, above the account's risk limits, or when the symbol already has an open order or position.</li>
-  <li><strong>Review results</strong> with <code>list_orders</code> and <code>get_performance</code>; pass
-    <code>baseline_account</code> to get the paired comparison with the baseline policy and the influence gate.</li>
+  <li><strong>Ask before changing anything of yours.</strong> <code>upload_holdings</code>, <code>add_to_watchlist</code> and
+    <code>remove_from_watchlist</code> first return a preview and a single-use <code>confirm_token</code> (valid 15 minutes, bound
+    to those exact arguments) and change nothing. The agent shows you the preview; only after you agree does it call again
+    with the token.</li>
+  <li><strong>Link to what it shows.</strong> Results carry <code>links</code> to the matching page; <code>get_links</code> builds
+    others, such as a chart with calendar years overlaid (<code>compare_years</code>) or one range (<code>chart_range</code>,
+    <code>from_year</code>).</li>
+  <li><strong>Review results</strong> with <code>list_accounts</code>, <code>get_performance</code> (return, drawdown, win rate,
+    equity curve and the paired comparison with the baseline, including the influence gate), <code>list_orders</code> and
+    <code>list_transactions</code>.</li>
 </ol>
 {% endcall %}
 
