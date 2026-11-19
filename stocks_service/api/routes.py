@@ -486,6 +486,20 @@ def list_executions(account_id: str = AccountPath, db: Database = Depends(get_db
             for x in db.executions.find({"account_id": account_id}).sort("ts", -1)]
 
 
+@router.get("/accounts/{account_id}/transactions")
+def list_transactions(account_id: str = AccountPath, limit: int = Query(100, ge=1, le=500),
+                      cursor: str | None = Query(None, max_length=120), db: Database = Depends(get_db)):
+    """Fills and ledger entries (opening balances, dividends, borrow fees, transfers, splits), newest
+    first; pass ``next_cursor`` back as ``cursor`` for the next page."""
+    from ..paper.read import transactions
+    if db.accounts.find_one({"_id": account_id}, {"_id": 1}) is None:
+        raise HTTPException(404, f"account {account_id} not found")
+    try:
+        return transactions(db, account_id, limit=limit, cursor=cursor)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
 @router.get("/accounts/{account_id}/breaks")
 def list_breaks(account_id: str = AccountPath, status_: Literal["open", "resolved"] | None = Query(None, alias="status"),
                 db: Database = Depends(get_db)):

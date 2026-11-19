@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block title %}{{ acc._id }} · Paper · Stocks{% endblock %}
+{% macro money(x) %}{{ '{:,.2f}'.format(x) if x is not none else '—' }}{% endmacro %}
+{% macro signed(x) %}{{ '{:+,.2f}'.format(x) if x is not none else '—' }}{% endmacro %}
+{% block content %}
+{% call ui.page_header(acc.name, meta=acc._id, back=("/paper", "Paper accounts")) %}Paper account trading for <strong>{{ s.trades_for }}</strong>
+· policy <code>{{ acc.policy }}</code> · risk <code>{{ acc.risk_profile }}</code> · costs <code>{{ acc.cost_profile }}</code>{% endcall %}
+
+{% if s.stalled %}{% call ui.alert("negative", "Processing is stalled.") %} {{ s.stalled }}{% endcall %}{% endif %}
+
+<div class="stats">
+  {{ ui.stat("Equity", money(perf.equity), hint="start " ~ '{:,.0f}'.format(acc.starting_cash),
+             tone='pos' if perf.total_return > 0 else 'neg' if perf.total_return < 0 else None) }}
+  {{ ui.stat("Return", '%+.2f%%'|format(perf.total_return*100), tone='pos' if perf.total_return > 0 else 'neg' if perf.total_return < 0 else None) }}
+  {{ ui.stat("Max drawdown", '%.1f%%'|format(perf.max_drawdown*100), hint=perf.longest_drawdown_sessions ~ " sessions longest") }}
+  {{ ui.stat("Closed orders", perf.closed_orders,
+             hint=('win rate ' ~ '%.0f%%'|format(perf.win_rate*100) ~ ' · avg ' ~ '%+.2f%%'|format(perf.avg_net_return_per_order*100)) if perf.closed_orders else None) }}
+  {{ ui.stat("Processed through", s.processed_through, hint=perf.sessions ~ " sessions") }}
+</div>
+
+<h2>Equity</h2>
+{% call ui.card() %}
+  {% if perf.curve|length >= 2 %}
+  <div class="price-chart" data-chart-src="equity-history" data-chart-label="Equity" data-chart-modes="range">
+    <div class="price-chart__controls" hidden></div>
+    <div class="price-chart__plot"></div>
+    <p class="price-chart__caption small muted">{{ perf.first_session }} to {{ perf.last_session }}: {{ money(perf.curve[0].equity) }} → {{ money(perf.equity) }}</p>
+  </div>
+  <script type="application/json" id="equity-history">{{ history|tojson }}</script>
+  {% else %}
+  <p class="muted mb-0">The equity chart starts once the account has processed two sessions ({{ perf.sessions }} so far).</p>
+  {% endif %}
+{% endcall %}
+
+{% if comparison %}
+<h2>Compared with the baseline</h2>
+{% call ui.card() %}
+  {% set c = comparison %}
+  {% if c.unavailable is defined %}No comparison: {{ c.unavailable }}.
+  {% elif not c.comparable %}Not comparable with <a href="/paper/{{ c.baseline_account }}">{{ c.baseline_account }}</a>: {{ c.gate.reason }}.
+  {% else %}
+  Against <a href="/paper/{{ c.baseline_account }}">{{ c.baseline_account }}</a> over {{ c.sessions }} shared session(s)
+  {% if c.total_return is defined %}· return {{ '%+.2f%%'|format(c.total_return.agent*100) }} vs {{ '%+.2f%%'|format(c.total_return.baseline*100) }}
+  · max drawdown {{ '%.1f%%'|format(c.max_drawdown.agent*100) }} vs {{ '%.1f%%'|format(c.max_drawdown.baseline*100) }}{% endif %}
+  <p class="small muted mb-0">{{ c.pairing }}.{% if acc.policy == 'agent' %} Influence gate: {{ ui.badge(c.gate.status if c.gate.status is defined else 'shadow-only', 'positive' if c.gate.promotable else 'warning') }}{% endif %}</p>
+  {% endif %}
+{% endcall %}
+{% endif %}
+
+<h2>Positions</h2>
+{% if holdings.error %}{% call ui.alert("negative") %}{{ holdings.error }}{% endcall %}{% endif %}
+{% call ui.table(["Symbol", ("Qty", "num"), ("Avg cost", "num"), ("Mark", "num"), ("Market value", "num"), ("Unrealized", "num")], pin_first=True) %}
+  {% for p in holdings.positions %}
+  <tr><td><a href="/symbol/{{ p.symbol }}">{{ p.symbol }}</a></td><td class="num {{ 'short' if p.qty < 0 }}">{{ '{:,.4g}'.format(p.qty) }}</td>
+    <td class="num">{{ money(p.avg_cost) }}</td><td class="num">{{ money(p.mark) }}</td><td class="num">{{ money(p.market_value) }}</td>
+    <td class="num {{ 'pos' if p.unrealized and p.unrealized > 0 else 'neg' if p.unrealized and p.unrealized < 0 }}">{{ signed(p.unrealized) }}</td></tr>
+  {% else %}{{ ui.empty_row(6, "No open positions.") }}{% endfor %}
+{% endcall %}
+
+<h2>Orders</h2>
+{% call ui.table(["Placed", "Symbol", "Side", ("Qty", "num"), ("Limit", "num"), ("Stop", "num"), ("Target", "num"), "Status", "Result",
+                  ("Fill", "num"), ("Exit", "num"), "Decided by"], pin_first=True) %}
+  {% for o in orders %}
+    <tr><td class="small">{{ o.placed_at.strftime('%Y-%m-%d %H:%M') }}</td><td><a href="/symbol/{{ o.symbol }}">{{ o.symbol }}</a></td>
+      <td class="{{ o.side }}">{{ o.side }}</td><td class="num">{{ o.qty }}</td><td class="num">{{ '%.2f'|format(o.limit) }}</td>
+      <td class="num">{{ '%.2f'|format(o.stop) }}</td><td class="num">{{ '%.2f'|format(o.target) if o.target is not none else '—' }}</td>
+      <td>{{ ui.badge(o.status) }}</td><td class="small">{{ o.result or '' }}</td>
+      <td class="num">{{ '%.2f'|format(o.fill_price) if o.fill_price is defined and o.fill_price is not none else '' }}</td>
+      <td class="num">{{ '%.2f'|format(o.exit_price) if o.exit_price is defined and o.exit_price is not none else '' }}</td>
+      <td class="small muted" title="{{ o.decided_by.rationale or '' }}">{{ o.decided_by.policy or o.decided_by.agent_id or o.decided_by.via or '' }}</td></tr>
+  {% else %}{{ ui.empty_row(12, "No orders yet.") }}{% endfor %}
+{% endcall %}
+
+{% if limit and order_count > orders|length %}<p class="small muted">Showing the newest {{ orders|length }} of {{ order_count }} orders.
+<a href="?history=all">Show the full history</a>.</p>{% endif %}
+
+<h2>Transactions</h2>
+{% call ui.table(["Time (UTC)", "Type", "Symbol", ("Qty", "num"), ("Price", "num"), ("Fees", "num"), ("Cash", "num")], compact=True) %}
+  {% for t in tx.transactions %}
+    <tr><td class="small">{{ t.ts[:16]|replace('T', ' ') }}</td><td>{{ t.type|replace('_', ' ') }}</td>
+      <td>{% if t.symbol %}<a href="/symbol/{{ t.symbol }}">{{ t.symbol }}</a>{% endif %}</td>
+      <td class="num">{% if t.qty is not none %}{{ '{:+,.4g}'.format(t.qty) if t.type == 'split' else '{:,.4g}'.format(t.qty) }}{% endif %}{% if t.ratio is defined %} <span class="muted small">({{ '%g'|format(t.ratio) }}:1)</span>{% endif %}</td><td class="num">{{ money(t.price) if t.price is not none else '' }}</td>
+      <td class="num">{{ money(t.fees) if t.fees is not none else '' }}</td>
+      <td class="num {{ 'pos' if t.cash and t.cash > 0 else 'neg' if t.cash and t.cash < 0 }}">{{ signed(t.cash) if t.cash is not none else '' }}</td></tr>
+  {% else %}{{ ui.empty_row(7, "No transactions yet.") }}{% endfor %}
+{% endcall %}
+{% if tx.next_cursor %}<p class="small muted">Showing the newest {{ tx.transactions|length }} transactions.
+<a href="?history=all">Show the full history</a>.</p>{% endif %}
+<p class="small muted prose">Fills are simulated with the research rules (entries only at the limit, exits by the shared simulator);
+fees include spread, slippage and commission. Cash is each entry's effect on the account's cash.</p>
+{% endblock %}
+{% block scripts %}{% if perf.curve|length >= 2 %}<script src="{{ asset('chart.js') }}" defer></script>{% endif %}{% endblock %}

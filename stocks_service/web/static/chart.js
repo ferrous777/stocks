@@ -8,6 +8,11 @@
 //   Range         - one line of closes over a preset (6M, YTD, 1Y, 3Y, 5Y, All) or "from <year> to present".
 //   Compare years - each selected calendar year on a shared Jan-Dec axis, as % change from the previous
 //                   year's last close (the first year on file starts from its first close). One y-axis.
+//
+// The view lives in the URL so it can be linked to: ?range=5Y, ?from=2020 (2020 to present) or
+// ?compare=2020,2021,2022 (compare mode with those years; only the most recent eight are offered).
+// Options on the container: data-chart-label (series name, default "Close") and data-chart-modes
+// ("range" hides the Compare years mode, e.g. for an equity curve).
 (function () {
   "use strict";
   var SVGNS = "http://www.w3.org/2000/svg";
@@ -56,14 +61,46 @@
     this.compareYears = this.years.slice(-MAX_YEARS);
     var last = this.compareYears.length;
     this.selectedYears = this.compareYears.slice(Math.max(0, last - 3));   // default: the last three years
+    this.label = root.dataset.chartLabel || "Close";
+    this.modes = (root.dataset.chartModes || "range years").split(" ");
     this.mode = "range";
     this.range = "1Y";
     this.fromYear = null;
+    this.readUrl();
     this.build();
     this.render();
     var self = this;
     if (window.ResizeObserver) new ResizeObserver(function () { self.render(); }).observe(this.plot);
   }
+
+  var RANGES = ["6M", "YTD", "1Y", "3Y", "5Y", "All"], DEFAULT_RANGE = "1Y";
+
+  // Initial view from the query string; anything unknown is ignored (the default view is shown).
+  PriceChart.prototype.readUrl = function () {
+    var q;
+    try { q = new URLSearchParams(window.location.search); } catch (e) { return; }
+    var self = this;
+    if (q.get("compare") && this.modes.indexOf("years") >= 0) {
+      var want = q.get("compare").split(",").map(Number).filter(function (y) { return self.compareYears.indexOf(y) >= 0; });
+      if (want.length) { this.mode = "years"; this.selectedYears = want; return; }
+    }
+    var from = Number(q.get("from"));
+    if (from && this.years.indexOf(from) >= 0) { this.fromYear = from; this.range = null; return; }
+    if (RANGES.indexOf(q.get("range")) >= 0) this.range = q.get("range");
+  };
+
+  // Keep the address bar in step with the view, so copying the URL links to exactly this chart.
+  PriceChart.prototype.writeUrl = function () {
+    try {
+      var q = new URLSearchParams(window.location.search);
+      ["range", "from", "compare"].forEach(function (k) { q.delete(k); });
+      if (this.mode === "years") q.set("compare", this.selectedYears.slice().sort().join(","));
+      else if (this.fromYear) q.set("from", this.fromYear);
+      else if (this.range && this.range !== DEFAULT_RANGE) q.set("range", this.range);
+      var qs = q.toString();
+      window.history.replaceState(null, "", window.location.pathname + (qs ? "?" + qs : "") + window.location.hash);
+    } catch (e) { /* history unavailable (e.g. sandboxed preview): the chart still works */ }
+  };
 
   PriceChart.prototype.build = function () {
     var self = this, root = this.root;
@@ -73,19 +110,19 @@
     // Mode switch
     this.modeButtons = {};
     var modes = h("div", { class: "segmented", role: "group", "aria-label": "Chart mode" });
-    [["range", "Range"], ["years", "Compare years"]].forEach(function (m) {
+    [["range", "Range"], ["years", "Compare years"]].filter(function (m) { return self.modes.indexOf(m[0]) >= 0; }).forEach(function (m) {
       var b = h("button", { type: "button", class: "segmented__item" }, m[1]);
       b.addEventListener("click", function () { self.mode = m[0]; self.render(); });
       self.modeButtons[m[0]] = b;
       modes.appendChild(b);
     });
-    controls.appendChild(modes);
+    if (this.modes.length > 1) controls.appendChild(modes);
 
     // Range presets + "from year"
     this.rangeBox = h("div", { class: "cluster" });
     var presets = h("div", { class: "segmented", role: "group", "aria-label": "Range" });
     this.rangeButtons = {};
-    ["6M", "YTD", "1Y", "3Y", "5Y", "All"].forEach(function (r) {
+    RANGES.forEach(function (r) {
       var b = h("button", { type: "button", class: "segmented__item" }, r);
       b.addEventListener("click", function () { self.range = r; self.fromYear = null; self.yearSelect.value = ""; self.render(); });
       self.rangeButtons[r] = b;
@@ -98,11 +135,11 @@
     this.years.slice().reverse().forEach(function (y) { self.yearSelect.appendChild(h("option", { value: y }, y + "–present")); });
     this.yearSelect.addEventListener("change", function () {
       self.fromYear = self.yearSelect.value ? +self.yearSelect.value : null;
-      self.range = self.fromYear ? null : "1Y";
+      self.range = self.fromYear ? null : DEFAULT_RANGE;
       self.render();
     });
     label.appendChild(this.yearSelect);
-    this.rangeBox.appendChild(label);
+    if (this.years.length > 1) this.rangeBox.appendChild(label);   // "from <year>" needs more than one year
     controls.appendChild(this.rangeBox);
 
     // Year toggles (they double as the legend in compare mode)
@@ -143,7 +180,7 @@
       }
       var sel = pts.filter(function (p) { return p.d >= start; });
       var base = sel.length ? sel[0].c : null;
-      return { kind: "price", series: [{ key: "close", label: "Close", color: "var(--color-accent)",
+      return { kind: "price", series: [{ key: "close", label: this.label, color: "var(--color-accent)",
         values: sel.map(function (p) { return { x: +p.d, y: p.c, d: p.d, c: p.c, chg: p.c / base - 1 }; }) }] };
     }
     var self = this, prevClose = {};
@@ -166,6 +203,8 @@
     this.rangeBox.hidden = this.mode !== "range";
     this.yearBox.hidden = this.mode !== "years";
     this.compareYears.forEach(function (y) { self.yearButtons[y].setAttribute("aria-pressed", String(self.selectedYears.indexOf(y) >= 0)); });
+    if (this.yearSelect) this.yearSelect.value = this.fromYear ? String(this.fromYear) : "";
+    this.writeUrl();
 
     var spec = this.series(), all = [];
     spec.series.forEach(function (s) { all = all.concat(s.values); });
@@ -207,7 +246,9 @@
       for (var i = 0; i <= n; i++) {
         var d = new Date(x0 + span * i / n), years = span / 31536e6;
         var t = el("text", { x: sx(+d), y: H - 8, "text-anchor": i === 0 ? "start" : i === n ? "end" : "middle" }, xl);
-        t.textContent = years > 3 ? String(d.getUTCFullYear()) : MONTHS[d.getUTCMonth()] + " " + String(d.getUTCFullYear()).slice(2);
+        t.textContent = years > 3 ? String(d.getUTCFullYear())
+          : span < 120 * 864e5 ? MONTHS[d.getUTCMonth()] + " " + d.getUTCDate()     // short spans: day labels
+          : MONTHS[d.getUTCMonth()] + " " + String(d.getUTCFullYear()).slice(2);
       }
     }
     // lines
@@ -253,7 +294,7 @@
       if (spec.kind === "price") {
         var v = rows[0].v;
         self.tip.appendChild(h("div", { class: "chart-tooltip__title" }, fmtDate(v.d)));
-        self.tip.appendChild(h("div", {}, "Close " + fmtPrice(v.c)));
+        self.tip.appendChild(h("div", {}, self.label + " " + fmtPrice(v.c)));
         self.tip.appendChild(h("div", { class: "muted" }, fmtPct(v.chg) + " since range start"));
       } else {
         var md = rows[0].v.d;

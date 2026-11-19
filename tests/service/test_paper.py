@@ -275,7 +275,7 @@ def test_paper_page_lists_strategy_accounts_in_a_leaderboard(db, world):
         c.post("/login", data={"password": "pw"})
         page = c.get("/paper").text
     assert "All paper accounts" in page
-    assert 'href="#acct-paper-ensemble-v1"' in page and "strategy ensemble@1" in page and 'id="acct-paper-ensemble-v1"' in page
+    assert 'href="/paper/paper-ensemble-v1"' in page and "strategy ensemble@1" in page
 
 
 def test_a_taken_account_id_is_reported_and_does_not_block_other_strategies(db, world):
