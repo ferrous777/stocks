@@ -384,13 +384,28 @@ class SnapshotPosition(BaseModel):
     symbol: str = Field(pattern=SYMBOL_PATTERN)
     qty: float = Field(description="shares; negative for a short position")
     avg_cost: float | None = Field(default=None, gt=0, description="average cost per share (required for the opening snapshot)")
+    institution_price: float | None = Field(default=None, gt=0, description="price the source valued it at (stored, not used for marks)")
+    institution_price_as_of: dt.datetime | None = Field(default=None, description="when that price applied; null if unknown")
+    institution_value: float | None = Field(default=None, description="value the source reported (stored as is)")
 
 
 class SnapshotIn(BaseModel):
-    as_of: dt.datetime = Field(description="when the broker positions were taken, with timezone")
-    cash: float
+    as_of: dt.datetime | None = Field(default=None, description="the institution's timestamp for these holdings, with "
+                                      "timezone; null when the source does not say (retrieved_at is used instead)")
+    retrieved_at: dt.datetime | None = Field(default=None, description="when the data was pulled from the source; "
+                                             "default: upload time")
+    source: str | None = Field(default=None, max_length=60, description='where the data came from, e.g. "plaid"')
+    cash: float | None = Field(default=None, description="core cash position; null or omitted = unknown (never zero)")
+    cash_as_of: dt.datetime | None = Field(default=None, description="the institution's timestamp for cash, if known")
+    available_to_withdraw: float | None = Field(default=None, description="cash available to withdraw as reported "
+                                                "(e.g. Plaid balances.available); stored separately, not used as cash")
     positions: list[SnapshotPosition] = Field(default_factory=list)
     opening: bool = Field(default=False, description="treat as the opening balance (only for an account with no history)")
+
+    def service_kwargs(self) -> dict:
+        return {"as_of": self.as_of, "cash": self.cash, "opening": self.opening, "retrieved_at": self.retrieved_at,
+                "source": self.source, "cash_as_of": self.cash_as_of, "available_to_withdraw": self.available_to_withdraw,
+                "positions": [p.model_dump(exclude_none=True) for p in self.positions]}
 
 
 class ExecutionIn(BaseModel):
@@ -455,8 +470,7 @@ def upload_snapshot(body: SnapshotIn, account_id: str = AccountPath, db: Databas
     reconciled against the ledger and differences come back as breaks (never as trades). The response
     includes the account's outlook when one exists."""
     from ..accounts import service
-    res = _acct_call(service.upload_snapshot, db, account_id, as_of=body.as_of, cash=body.cash,
-                     positions=[p.model_dump() for p in body.positions], opening=body.opening, now=_now())
+    res = _acct_call(service.upload_snapshot, db, account_id, now=_now(), **body.service_kwargs())
     out = _snap_out(res)
     try:
         out["outlook"] = service.account_outlook(db, account_id, _now())

@@ -8,6 +8,17 @@
   at or before a snapshot's ``as_of`` re-reconciles that snapshot, resolving breaks it explains.
 * A break is resolved manually by a transfer or adjustment, which writes the matching ledger
   event, so holdings always equal opening balances + executions + ledger events (+ splits).
+* **Cash may be unknown.** A snapshot's ``cash`` (the core cash position) may be None — e.g. a
+  Plaid feed exposes "available to withdraw" and total value, but no core cash. Unknown is never
+  zero: it is not compared, and the account's cash only becomes known from the first snapshot that
+  reports it (an opening balance, or a ``cash_baseline`` ledger event anchoring the ledger's cash at
+  that snapshot). Valuations that need cash say they are incomplete instead of guessing.
+* **Feed delays.** A difference fully explained by fills recorded in the ``FEED_DELAY`` before the
+  snapshot (trades the source has not reflected yet) is a ``pending`` break, not an ``open`` one;
+  it resolves itself when a later snapshot matches.
+* Each snapshot keeps the institution's timestamp (``institution_as_of``, None when unknown)
+  separately from when it was retrieved; reconciliation uses the institution's time when known,
+  else the retrieval time (``time_basis`` says which).
 Every write that changes an account runs in one transaction.
 """
 
@@ -109,31 +120,83 @@ def _has_history(db: Database, account_id: str, session=None) -> bool:
 
 # --- reconciliation ------------------------------------------------------------------------
 
+FEED_DELAY = dt.timedelta(days=5)   # settlement (T+1) plus a weekend and a slow feed
+UNRESOLVED = ("open", "pending")
+CASH_KINDS = ("opening_balance", "cash_baseline")
+
+
+def cash_known_since(db: Database, account_id: str, session=None) -> dt.datetime | None:
+    """When the account's cash became known: its first cash opening balance or cash baseline."""
+    ev = db.ledger_events.find_one({"account_id": account_id, "symbol": None, "kind": {"$in": list(CASH_KINDS)}},
+                                   sort=[("ts", 1)], session=session)
+    return _from_db(ev["ts"]) if ev else None
+
+
+def _snapshot_cash(snap: dict) -> float | None:
+    """The snapshot's core cash, or None when it was not reported (older snapshots always reported it)."""
+    return snap.get("cash") if snap.get("cash_known", True) else None
+
+
+def _recent_fills(db: Database, account_id: str, as_of: dt.datetime, session) -> tuple[dict[str, float], float]:
+    """Signed share change per symbol and the cash change of fills in (as_of - FEED_DELAY, as_of]."""
+    from .ledger import SIDES
+    qty: dict[str, float] = {}
+    cash = 0.0
+    for x in db.executions.find({"account_id": account_id, "ts": {"$gt": as_of - FEED_DELAY, "$lte": as_of}},
+                                session=session):
+        sign = SIDES[x["side"]]
+        qty[x["symbol"]] = qty.get(x["symbol"], 0.0) + sign * x["qty"]
+        cash += -sign * x["qty"] * x["price"] - x.get("fees", 0.0)
+    return qty, cash
+
+
 def _reconcile_snapshot(db: Database, snap: dict, now: dt.datetime, session, resolved_by: str) -> list[dict]:
-    state = ledger_state(db, snap["account_id"], _from_db(snap["as_of"]), session)
+    as_of = _from_db(snap["as_of"])
+    state = ledger_state(db, snap["account_id"], as_of, session)
     reported = {p["symbol"]: p["qty"] for p in snap["positions"]}
-    diffs = {d.symbol: d for d in reconcile(state, snap["cash"], reported)}
+    since = cash_known_since(db, snap["account_id"], session)
+    cash = _snapshot_cash(snap) if since is not None and since <= as_of else None   # unknown cash is not compared
+    diffs = {d.symbol: d for d in reconcile(state, cash, reported)}
+    recent_qty, recent_cash = _recent_fills(db, snap["account_id"], as_of, session)
     for d in diffs.values():
+        recent = recent_cash if d.symbol == CASH else recent_qty.get(d.symbol, 0.0)
+        tol = 0.005 if d.symbol == CASH else QTY_TOL
+        lagging = abs(recent) > tol and abs((d.expected - recent) - d.reported) <= tol
+        extra = ({"status": "pending", "reason": "recent fills not reflected by the source yet (settlement or feed "
+                  "delay); resolves when a later snapshot includes them", "pending_fills": recent}
+                 if lagging else {"status": "open"})
         db.reconciliation_breaks.update_one(
             {"snapshot_id": snap["_id"], "symbol": d.symbol},
             {"$set": {"account_id": snap["account_id"], "as_of": snap["as_of"], "expected": d.expected,
-                      "reported": d.reported, "diff": d.diff, "status": "open", "updated_at": now},
-             "$unset": {"resolution": ""}, "$setOnInsert": {"created_at": now}},
+                      "reported": d.reported, "diff": d.diff, "updated_at": now, **extra},
+             "$unset": {"resolution": "", **({} if lagging else {"reason": "", "pending_fills": ""})},
+             "$setOnInsert": {"created_at": now}},
             upsert=True, session=session)
     db.reconciliation_breaks.update_many(
-        {"snapshot_id": snap["_id"], "status": "open", "symbol": {"$nin": list(diffs)}},
+        {"snapshot_id": snap["_id"], "status": {"$in": list(UNRESOLVED)}, "symbol": {"$nin": list(diffs)}},
         {"$set": {"status": "resolved", "diff": 0.0, "updated_at": now, "resolution": {"type": resolved_by, "at": now}}},
         session=session)
     return list(db.reconciliation_breaks.find({"snapshot_id": snap["_id"]}, session=session).sort("symbol", 1))
 
 
-def upload_snapshot(db: Database, account_id: str, *, as_of: dt.datetime, cash: float, positions: list[dict],
-                    opening: bool, now: dt.datetime) -> dict:
-    as_of = _utc(as_of)
-    _finite("cash", cash)
+def upload_snapshot(db: Database, account_id: str, *, as_of: dt.datetime | None, cash: float | None,
+                    positions: list[dict], opening: bool, now: dt.datetime, retrieved_at: dt.datetime | None = None,
+                    source: str | None = None, cash_as_of: dt.datetime | None = None,
+                    available_to_withdraw: float | None = None) -> dict:
+    """Store a broker snapshot. ``as_of`` is the institution's timestamp (None when unknown);
+    ``retrieved_at`` when it was pulled from the source (default: now). ``cash`` None = unknown core
+    cash (never zero). ``available_to_withdraw`` is stored as reported, with its meaning; it is not cash."""
+    retrieved = _utc(retrieved_at) if retrieved_at is not None else now
+    inst = _utc(as_of) if as_of is not None else None
+    effective = inst or retrieved
+    if cash is not None:
+        _finite("cash", cash)
+    if available_to_withdraw is not None:
+        _finite("available_to_withdraw", available_to_withdraw)
     for p in positions:
         _finite(f"{p['symbol']} qty", p["qty"])
-        _finite(f"{p['symbol']} avg_cost", p.get("avg_cost"))
+        for k in ("avg_cost", "institution_price", "institution_value"):
+            _finite(f"{p['symbol']} {k}", p.get(k))
     syms = [p["symbol"] for p in positions]
     if len(set(syms)) != len(syms):
         raise AccountError("each symbol may appear once per snapshot (net the lots)")
@@ -149,20 +212,42 @@ def upload_snapshot(db: Database, account_id: str, *, as_of: dt.datetime, cash: 
             missing = [p["symbol"] for p in positions if p.get("avg_cost") is None]
             if missing:
                 raise AccountError(f"the opening snapshot needs avg_cost for every position (missing: {missing})")
-        snap = {"_id": ObjectId(), "account_id": account_id, "as_of": as_of, "uploaded_at": now, "cash": cash,
+        snap = {"_id": ObjectId(), "account_id": account_id, "as_of": effective, "uploaded_at": now,
+                "institution_as_of": inst, "retrieved_at": retrieved, "time_basis": "institution" if inst else "retrieval",
+                "source": source, "cash": cash, "cash_known": cash is not None,
+                "cash_as_of": _utc(cash_as_of) if cash_as_of is not None else None,
+                "available_to_withdraw": None if available_to_withdraw is None else {
+                    "amount": available_to_withdraw, "source": source,
+                    "meaning": "cash available to withdraw as reported by the source; not core cash, settled cash "
+                               "or buying power"},
                 "positions": positions, "opening": is_opening}
         db.portfolio_snapshots.insert_one(snap, session=session)
+        ref = str(snap["_id"])
         if is_opening:
-            ref = str(snap["_id"])
-            events = [{"account_id": account_id, "ts": as_of, "kind": "opening_balance", "symbol": None,
-                       "amount": cash, "ref": f"{ref}:{CASH}"}]
-            events += [{"account_id": account_id, "ts": as_of, "kind": "opening_balance", "symbol": p["symbol"],
+            events = ([{"account_id": account_id, "ts": effective, "kind": "opening_balance", "symbol": None,
+                        "amount": cash, "ref": f"{ref}:{CASH}"}] if cash is not None else [])
+            events += [{"account_id": account_id, "ts": effective, "kind": "opening_balance", "symbol": p["symbol"],
                         "qty": p["qty"], "cost_basis": p["qty"] * p["avg_cost"], "ref": f"{ref}:{p['symbol']}"}
                        for p in positions if abs(p["qty"]) > QTY_TOL]
-            db.ledger_events.insert_many(events, session=session)
+            if events:
+                db.ledger_events.insert_many(events, session=session)
             breaks = []
         else:
+            if cash is not None and cash_known_since(db, account_id, session) is None:
+                # First reported cash: anchor the ledger's cash here (flows recorded earlier are kept).
+                held = ledger_state(db, account_id, effective, session).cash
+                db.ledger_events.insert_one({"account_id": account_id, "ts": effective, "kind": "cash_baseline",
+                                             "symbol": None, "amount": cash - held, "ref": f"{ref}:{CASH}",
+                                             "reason": "first snapshot that reported core cash"}, session=session)
             breaks = _reconcile_snapshot(db, snap, now, session, resolved_by="none")
+            # A later snapshot that matches catches up earlier pending (feed-delayed) differences.
+            still = {b["symbol"] for b in breaks if b["status"] in UNRESOLVED} | ({CASH} if cash is None else set())
+            db.reconciliation_breaks.update_many(
+                {"account_id": account_id, "status": "pending", "symbol": {"$nin": sorted(still)},
+                 "as_of": {"$lte": effective}, "snapshot_id": {"$ne": snap["_id"]}},
+                {"$set": {"status": "resolved", "updated_at": now,
+                          "resolution": {"type": "caught_up", "at": now, "snapshot_id": snap["_id"]}}},
+                session=session)
         out.update(snapshot=snap, breaks=breaks)
 
     with db.client.start_session() as s:
@@ -242,7 +327,7 @@ def resolve_break(db: Database, break_id: str, *, kind: str, note: str, now: dt.
             raise NotFound("break not found")
         _lock_account(db, br["account_id"], session)
         br = db.reconciliation_breaks.find_one({"_id": br["_id"]}, session=session)  # re-read under the lock
-        if br["status"] != "open":
+        if br["status"] not in UNRESOLVED:
             raise AccountError("break is already resolved")
         snap = db.portfolio_snapshots.find_one({"_id": br["snapshot_id"]}, session=session)
         diff = br["diff"]
@@ -312,12 +397,41 @@ def holdings(db: Database, account_id: str, now: dt.datetime) -> dict:
     unmarked = [r["symbol"] for r in rows if r["mark"] is None]
     latest = db.portfolio_snapshots.find_one({"account_id": account_id}, sort=[("as_of", -1)])
     open_breaks = db.reconciliation_breaks.count_documents({"account_id": account_id, "status": "open"})
+    pending_breaks = db.reconciliation_breaks.count_documents({"account_id": account_id, "status": "pending"})
+    # Cash: known from the ledger only once some snapshot reported it, and current only if the latest
+    # snapshot reported it too; otherwise the last report is shown as history, never as today's cash.
+    known_since = cash_known_since(db, account_id)
+    last_cash_snap = db.portfolio_snapshots.find_one(
+        {"account_id": account_id, "$or": [{"cash_known": True}, {"cash_known": {"$exists": False}}]},
+        sort=[("as_of", -1)])
+    last_reported = ({"amount": last_cash_snap["cash"], "as_of": last_cash_snap["as_of"],
+                      "cash_as_of": last_cash_snap.get("cash_as_of"), "source": last_cash_snap.get("source")}
+                     if last_cash_snap else None)
+    if known_since is None:
+        cash, cash_status = None, "unknown"
+    elif latest is not None and _snapshot_cash(latest) is None:
+        cash, cash_status = None, "historical"
+    else:
+        cash, cash_status = st.cash, "reported"
+    positions_value = long_mv + short_mv if not unmarked else None
+    missing = ([f"core cash ({cash_status})"] if cash is None else []) + ([f"prices for {unmarked}"] if unmarked else [])
+    atw = next((s_["available_to_withdraw"] | {"as_of": s_["as_of"]} for s_ in db.portfolio_snapshots.find(
+        {"account_id": account_id, "available_to_withdraw": {"$ne": None}}).sort("as_of", -1).limit(1)), None)
     return {
-        "account_id": account_id, "as_of": now, "cash": st.cash, "positions": rows, "closed": closed,
-        "long_market_value": long_mv, "short_market_value": short_mv,
-        "equity": st.cash + long_mv + short_mv if not unmarked else None,
+        "account_id": account_id, "as_of": now, "cash": cash, "cash_status": cash_status,
+        "last_reported_cash": last_reported, "available_to_withdraw": atw,
+        "positions": rows, "closed": closed,
+        "long_market_value": long_mv, "short_market_value": short_mv, "positions_value": positions_value,
+        "equity": cash + positions_value if cash is not None and positions_value is not None else None,
+        "valuation": {"complete": not missing, "missing": missing},
         "unmarked": unmarked, "realized": sum(h.realized for h in st.holdings.values()),
-        "latest_snapshot": latest["as_of"] if latest else None, "open_breaks": open_breaks,
+        "latest_snapshot": latest["as_of"] if latest else None,
+        "latest_snapshot_info": None if latest is None else {
+            "as_of": latest["as_of"], "time_basis": latest.get("time_basis", "institution"),
+            "institution_as_of": latest.get("institution_as_of", latest["as_of"]),
+            "retrieved_at": latest.get("retrieved_at", latest.get("uploaded_at")), "source": latest.get("source"),
+            "cash_known": latest.get("cash_known", True)},
+        "open_breaks": open_breaks, "pending_breaks": pending_breaks,
     }
 
 

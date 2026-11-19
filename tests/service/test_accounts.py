@@ -257,11 +257,13 @@ def test_resolution_reconciles_later_snapshots_and_can_resolve_a_reopened_break(
     # A late fill before the first snapshot reopens both; resolving again with the same kind works.
     service.add_executions(db, "acct", [{"symbol": "SPY", "side": "buy", "qty": 1, "price": 100.0,
                                          "ts": T(2024, 6, 4, 15)}], now=NOW)
-    reopened = db.reconciliation_breaks.find_one({"status": "open", "symbol": "SPY", "as_of": T(2024, 6, 4, 21)})
-    assert reopened is not None
+    reopened = db.reconciliation_breaks.find_one({"symbol": "SPY", "as_of": T(2024, 6, 4, 21)})
+    # The fill is 6 hours before the snapshot, which lacks it: a feed delay (pending), still resolvable.
+    assert reopened is not None and reopened["status"] == "pending"
     assert reopened["diff"] == -1  # the ledger now holds the share the snapshot did not
     service.resolve_break(db, str(reopened["_id"]), kind="transfer_out", note="moved out", now=NOW)
-    cash_break = db.reconciliation_breaks.find_one({"status": "open", "symbol": CASH, "as_of": T(2024, 6, 4, 21)})
+    cash_break = db.reconciliation_breaks.find_one({"status": {"$in": ["open", "pending"]}, "symbol": CASH,
+                                                    "as_of": T(2024, 6, 4, 21)})
     service.resolve_break(db, str(cash_break["_id"]), kind="transfer_in", note="second deposit", now=NOW)
     assert db.ledger_events.count_documents({"kind": "transfer_in"}) == 2
 
@@ -313,3 +315,85 @@ def test_fills_recorded_under_the_pre_fee_hash_are_still_recognized(db):
     assert service.add_executions(db, "acct", [x], now=NOW)["duplicates"] == 1           # same fill re-uploaded
     assert service.add_executions(db, "acct", [{**x, "fees": 1.0}], now=NOW)["inserted"] == 1  # differs in fees
     assert db.executions.count_documents({"account_id": "acct"}) == 2
+
+
+
+def _acct(db, aid="acct"):
+    from stocks_service.accounts import service
+    _load_db(db)
+    service.create_account(db, account_id=aid, name="A", now=NOW)
+    return service
+
+
+def test_unknown_cash_is_not_zero(db):
+    service = _acct(db)
+    service.create_account(db, account_id="zero", name="Z", now=NOW)
+    pos = [{"symbol": "SPY", "qty": 2, "avg_cost": 500.0}]
+    service.upload_snapshot(db, "acct", as_of=T(2024, 6, 3, 21), cash=None, positions=pos, opening=False, now=NOW)
+    service.upload_snapshot(db, "zero", as_of=T(2024, 6, 3, 21), cash=0.0, positions=pos, opening=False, now=NOW)
+    unknown, zero = service.holdings(db, "acct", NOW), service.holdings(db, "zero", NOW)
+    assert unknown["cash"] is None and unknown["cash_status"] == "unknown" and unknown["equity"] is None
+    assert unknown["valuation"] == {"complete": False, "missing": ["core cash (unknown)"]}
+    assert zero["cash"] == 0.0 and zero["cash_status"] == "reported"
+    assert zero["equity"] == zero["positions_value"] == unknown["positions_value"] and zero["valuation"]["complete"]
+    # Reconciling a later snapshot without cash compares the holdings only: no cash break.
+    later = service.upload_snapshot(db, "acct", as_of=T(2024, 6, 4, 21), cash=None, opening=False, now=NOW,
+                                    positions=[{"symbol": "SPY", "qty": 3}])
+    assert [(b["symbol"], b["status"]) for b in later["breaks"]] == [("SPY", "open")]
+    # The first snapshot that reports cash establishes it (a baseline, not a break).
+    first_cash = service.upload_snapshot(db, "acct", as_of=T(2024, 6, 5, 21), cash=700.0, opening=False, now=NOW,
+                                         positions=[{"symbol": "SPY", "qty": 2}])
+    assert CASH not in {b["symbol"] for b in first_cash["breaks"]}
+    assert db.ledger_events.count_documents({"account_id": "acct", "kind": "cash_baseline"}) == 1
+    h = service.holdings(db, "acct", NOW)
+    assert h["cash"] == 700.0 and h["cash_status"] == "reported" and h["valuation"]["complete"]
+
+
+def test_previous_cash_is_kept_as_history_not_shown_as_current(db):
+    service = _acct(db)
+    service.upload_snapshot(db, "acct", as_of=T(2024, 6, 3, 21), cash=1000.0, opening=False, now=NOW,
+                            positions=[{"symbol": "SPY", "qty": 1, "avg_cost": 500.0}])
+    service.upload_snapshot(db, "acct", as_of=T(2024, 6, 4, 21), cash=None, opening=False, now=NOW,
+                            positions=[{"symbol": "SPY", "qty": 1}])
+    h = service.holdings(db, "acct", NOW)
+    assert h["cash"] is None and h["cash_status"] == "historical" and h["equity"] is None
+    assert h["last_reported_cash"]["amount"] == 1000.0 and h["last_reported_cash"]["as_of"] == T(2024, 6, 3, 21)
+    assert "core cash (historical)" in h["valuation"]["missing"]
+    assert db.reconciliation_breaks.count_documents({}) == 0     # unknown cash is never a difference
+
+
+def test_a_purchase_the_feed_has_not_shown_yet_is_pending_then_caught_up(db):
+    service = _acct(db)
+    service.upload_snapshot(db, "acct", as_of=T(2024, 6, 3, 21), cash=1000.0, opening=False, now=NOW,
+                            positions=[{"symbol": "SPY", "qty": 1, "avg_cost": 500.0}])
+    service.add_executions(db, "acct", [{"symbol": "SPY", "side": "buy", "qty": 1, "price": 520.0,
+                                         "ts": T(2024, 6, 4, 15)}], now=NOW)
+    # The next morning's feed still shows the old position and cash (settlement / feed delay).
+    lag = service.upload_snapshot(db, "acct", as_of=T(2024, 6, 5, 13), cash=1000.0, opening=False, now=NOW,
+                                  positions=[{"symbol": "SPY", "qty": 1}])
+    assert {b["symbol"]: b["status"] for b in lag["breaks"]} == {"SPY": "pending", CASH: "pending"}
+    h = service.holdings(db, "acct", NOW)
+    assert h["open_breaks"] == 0 and h["pending_breaks"] == 2
+    # A later feed that includes the purchase catches the pending differences up.
+    service.upload_snapshot(db, "acct", as_of=T(2024, 6, 6, 21), cash=480.0, opening=False, now=NOW,
+                            positions=[{"symbol": "SPY", "qty": 2}])
+    left = list(db.reconciliation_breaks.find({"account_id": "acct"}))
+    assert {b["status"] for b in left} == {"resolved"} and {b["resolution"]["type"] for b in left} == {"caught_up"}
+    # A difference older than the feed delay is a real (open) break.
+    service.add_executions(db, "acct", [{"symbol": "SPY", "side": "sell", "qty": 1, "price": 530.0,
+                                         "ts": T(2024, 6, 7, 15)}], now=NOW)
+    stale = service.upload_snapshot(db, "acct", as_of=T(2024, 6, 24, 21), cash=480.0, opening=False, now=NOW,
+                                    positions=[{"symbol": "SPY", "qty": 2}])
+    assert {b["symbol"]: b["status"] for b in stale["breaks"]} == {"SPY": "open", CASH: "open"}
+
+
+def test_institution_and_retrieval_times_are_kept_apart(db):
+    service = _acct(db)
+    r = service.upload_snapshot(db, "acct", as_of=None, retrieved_at=T(2024, 6, 3, 23), cash=None, opening=False,
+                                now=NOW, source="plaid", positions=[{"symbol": "SPY", "qty": 1, "avg_cost": 500.0}])
+    snap = r["snapshot"]
+    assert snap["institution_as_of"] is None and snap["time_basis"] == "retrieval" and snap["as_of"] == T(2024, 6, 3, 23)
+    r2 = service.upload_snapshot(db, "acct", as_of=T(2024, 6, 4, 20), retrieved_at=T(2024, 6, 5, 2), cash=None,
+                                 opening=False, now=NOW, positions=[{"symbol": "SPY", "qty": 1}])
+    assert r2["snapshot"]["time_basis"] == "institution" and r2["snapshot"]["as_of"] == T(2024, 6, 4, 20)
+    assert r2["snapshot"]["retrieved_at"] == T(2024, 6, 5, 2)

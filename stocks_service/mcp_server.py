@@ -42,11 +42,17 @@ Most results include "links" to the website page showing the same data. Give the
 when seeing the chart or table would help.
 
 3. UPLOADING HOLDINGS (no confirmation needed)
-  upload_holdings   records a real account's current cash and positions as of a date. It is applied
-                    immediately. The first upload is the opening balance (avg_cost required for every
-                    position; pass account_name to create a new account); later uploads are compared
-                    with the records and any difference is flagged for the user, never treated as a
-                    trade. Report the result, including any differences, to the user.
+  upload_holdings   records a real account's current positions (and cash, if known). It is applied
+                    immediately. Send only what the source says and omit what it does not:
+                    - cash is the CORE cash position. If the source does not identify it, omit cash
+                      (unknown is never zero). Plaid: balances.available is cash available to withdraw
+                      -> send it as available_to_withdraw; balances.current is total value, not cash.
+                    - as_of is the institution's timestamp; omit it if unknown. retrieved_at is when you
+                      pulled the data.
+                    The first upload is the opening balance (avg_cost required for every position; pass
+                    account_name to create a new account). Later uploads are compared with the records:
+                    differences are flagged for the user, never treated as trades; ones explained by
+                    very recent fills are "pending" (feed delay). Report the result to the user.
 
 4. WATCH-LIST CHANGES NEED THE USER'S YES: add_to_watchlist, remove_from_watchlist
   a. Call the tool WITHOUT confirm_token. Nothing changes; you get a preview and a confirm_token.
@@ -78,10 +84,16 @@ PromptVersion = Annotated[str, Field(description='Version of the instructions th
 
 class Holding(BaseModel):
     """One position in an uploaded brokerage snapshot."""
-    symbol: str = Field(description="ticker, e.g. NVDA")
-    qty: float = Field(description="shares held (negative for a short)")
-    avg_cost: float | None = Field(default=None, gt=0,
-                                   description="average cost per share (> 0); required on the first upload")
+    symbol: str = Field(description="ticker, e.g. NVDA (Plaid: security.ticker_symbol)")
+    qty: float = Field(description="shares held, negative for a short (Plaid: holding.quantity)")
+    avg_cost: float | None = Field(default=None, gt=0, description="average cost per share (Plaid: cost_basis / "
+                                   "quantity); required on the first upload, otherwise optional")
+    institution_price: float | None = Field(default=None, gt=0, description="price the source valued the holding at "
+                                            "(Plaid: institution_price); stored for reference, not used for valuation")
+    institution_price_as_of: str | None = Field(default=None, description="when that price applied (Plaid: "
+                                                "institution_price_as_of); omit or null if unknown, never guess")
+    institution_value: float | None = Field(default=None, description="value the source reported (Plaid: "
+                                            "institution_value); stored for reference")
 
 
 class _Auth:
@@ -417,24 +429,39 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
         return audited("list_transactions", idn, {"account_id": account_id, "limit": limit, "cursor": cursor}, run)
 
     @mcp.tool()
-    def upload_holdings(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str, as_of: str,
-                        cash: float, positions: list[Holding], ctx: Context, account_name: str | None = None) -> dict:
-        """Upload the user's current holdings of a real brokerage account (e.g. Fidelity) for tracking. Applied
-        immediately, no confirmation needed. as_of: ISO date (that day's close) or datetime; cash: the cash
-        balance (core position); positions: every holding with qty and avg_cost. The first upload is the opening
-        balance; later ones are reconciled with the ledger and differences are recorded as breaks to explain,
-        never as trades. To create a new account pass account_name. Invalid values are refused before anything
-        is saved."""
+    def upload_holdings(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str,
+                        positions: list[Holding], ctx: Context, as_of: str | None = None, cash: float | None = None,
+                        retrieved_at: str | None = None, source: str | None = None, cash_as_of: str | None = None,
+                        available_to_withdraw: float | None = None, account_name: str | None = None) -> dict:
+        """Upload a real brokerage account's current holdings (e.g. Fidelity, directly or via Plaid). Applied
+        immediately, no confirmation. Send only what the source actually says; unknown fields are omitted, never
+        estimated:
+        - positions: every holding (symbol, qty; avg_cost on the first upload; optional institution_price,
+          institution_price_as_of, institution_value as reported).
+        - as_of: the institution's timestamp for the holdings, if it gives one; omit if unknown.
+        - retrieved_at: when you pulled the data (e.g. the Plaid request time); defaults to now.
+        - source: e.g. "plaid", "fidelity_csv", "screenshot".
+        - cash: the CORE cash position only if the source identifies it; otherwise omit (unknown is never zero).
+          Plaid's balances.available is NOT core cash and balances.current is total account value, not cash.
+        - available_to_withdraw: Plaid balances.available (stored separately with that meaning).
+        - account_name: needed only to create a new account.
+        The first upload is the opening balance. Later uploads are reconciled with the records: differences are
+        flagged as breaks to explain (never trades); a difference explained by fills recorded in the last few
+        days that the source has not reflected yet is "pending" and resolves itself. Valuations that need cash
+        report themselves incomplete while cash is unknown."""
         idn = ident(agent_id, model_id, prompt_version)
-        pos = [p.model_dump() for p in positions]
-        args = {"account_id": account_id, "as_of": as_of, "cash": cash, "positions": pos, "account_name": account_name}
+        pos = [p.model_dump(exclude_none=True) for p in positions]
+        args = {"account_id": account_id, "as_of": as_of, "cash": cash, "positions": pos, "retrieved_at": retrieved_at,
+                "source": source, "cash_as_of": cash_as_of, "available_to_withdraw": available_to_withdraw,
+                "account_name": account_name}
 
         def run():
-            res = mcp_ops.apply_holdings(get_db(), account_id, as_of=as_of, cash=cash, positions=pos,
-                                         account_name=account_name, now=_now())
+            res = mcp_ops.apply_holdings(get_db(), account_id, now=_now(), **{k: v for k, v in args.items()
+                                                                              if k != "account_id"})
             res["links"] = {"account": url(ctx, L.account(account_id, "real"))}
-            return res, {"snapshot_id": res["snapshot_id"], "opening_balance": res["opening_balance"],
-                         "open_breaks": len(res["open_breaks"])}
+            return _clean(res), {"snapshot_id": res["snapshot_id"], "opening_balance": res["opening_balance"],
+                                 "cash_reported": res["cash_reported"], "open_breaks": len(res["open_breaks"]),
+                                 "pending_breaks": len(res["pending_breaks"])}
 
         return audited("upload_holdings", idn, args, run)
 

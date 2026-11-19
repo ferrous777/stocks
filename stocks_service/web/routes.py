@@ -249,8 +249,7 @@ def account_upload(request: Request, account_id: str, kind: str = Form(...), pay
         raw = json.loads(payload)
         if kind == "snapshot":
             body = SnapshotIn.model_validate(raw)
-            res = service.upload_snapshot(db, account_id, as_of=body.as_of, cash=body.cash, opening=body.opening,
-                                          positions=[p.model_dump() for p in body.positions], now=now)
+            res = service.upload_snapshot(db, account_id, now=now, **body.service_kwargs())
             n = len([b for b in res["breaks"] if b["status"] == "open"])
             msg = ("Opening balance recorded." if res["snapshot"]["opening"]
                    else f"Snapshot reconciled: {n} open difference(s).")

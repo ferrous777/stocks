@@ -359,8 +359,8 @@ def test_holdings_with_bad_numbers_are_refused_before_anything_is_created(db, wo
     for pos in ({"symbol": "NVDA", "qty": float("nan"), "avg_cost": 1.0},
                 {"symbol": "NVDA", "qty": 1, "avg_cost": float("inf")}):
         with pytest.raises(mcp_ops.OpError):
-            mcp_ops.preview_holdings(db, "fidelity", as_of="2025-05-30", cash=1.0, positions=[pos],
-                                     account_name="F", now=LATER)
+            mcp_ops.apply_holdings(db, "fidelity", as_of="2025-05-30", cash=1.0, positions=[pos],
+                                   account_name="F", now=LATER)
     assert db.accounts.find_one({"_id": "fidelity"}) is None   # refused before anything was saved
 
 
@@ -383,3 +383,33 @@ def test_unknown_model_identity_is_accepted_and_logged_honestly(db, world, monke
         assert err and '"unknown"' in msg      # blank is refused, with the fallback named
     logged = list(db.agent_decisions.find({"tool": {"$in": ["list_accounts", "get_outlook"]}, "result.error": None}))
     assert len(logged) == 2 and all(d["model_id"] == "unknown" and d["agent_id"] == "chatgpt" for d in logged)
+
+
+def test_plaid_style_upload_with_unknown_cash_and_mixed_timestamps(db, world, monkeypatch):  # noqa: F811
+    """A feed without a core cash figure: cash omitted (unknown, not zero), available-to-withdraw kept apart,
+    institution timestamps stored only when given, retrieval time separate."""
+    monkeypatch.setattr("stocks_service.mcp_server._now", lambda: LATER)
+    plaid = {"account_id": "fidelity", "account_name": "Fidelity via Plaid", "source": "plaid",
+             "retrieved_at": "2025-06-02T22:10:00Z", "available_to_withdraw": 1234.56,
+             "positions": [{"symbol": "NVDA", "qty": 10, "avg_cost": 100.0, "institution_price": 135.1,
+                            "institution_price_as_of": "2025-06-02"},
+                           {"symbol": "SPY", "qty": 2, "avg_cost": 500.0}]}   # no institution timestamp at all
+    with _client(db) as c:
+        tools = {t["name"]: t for t in _rpc(c, "tools/list").json()["result"]["tools"]}
+        schema = tools["upload_holdings"]["inputSchema"]
+        assert "cash" not in schema["required"] and "as_of" not in schema["required"]
+        assert "balances.available" in tools["upload_holdings"]["description"]
+        done, err = _call(c, "upload_holdings", **IDENT, **plaid)
+        assert not err, done
+        assert done["opening_balance"] and done["cash_reported"] is False and done["time_basis"] == "retrieval"
+        assert done["institution_as_of"] is None and done["retrieved_at"].startswith("2025-06-02T22:10")
+        h = done["holdings"]
+        assert h["cash"] is None and h["cash_status"] == "unknown" and h["equity"] is None
+        assert h["valuation"]["complete"] is False and "core cash (unknown)" in h["valuation"]["missing"]
+        assert h["positions_value"] > 0                                  # holdings are still valued
+        assert h["available_to_withdraw"]["amount"] == 1234.56 and "not core cash" in h["available_to_withdraw"]["meaning"]
+    snap = db.portfolio_snapshots.find_one({"account_id": "fidelity"})
+    nvda, spy = snap["positions"]
+    assert nvda["institution_price_as_of"].isoformat().startswith("2025-06-02") and "institution_price_as_of" not in spy
+    assert snap["cash"] is None and snap["institution_as_of"] is None
+    assert not db.ledger_events.find_one({"account_id": "fidelity", "symbol": None})   # no invented cash entry

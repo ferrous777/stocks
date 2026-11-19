@@ -230,92 +230,86 @@ def parse_as_of(as_of: str) -> dt.datetime:
                 d, dt.time(23, 59, 59), UTC)
         t = dt.datetime.fromisoformat(as_of.strip().replace("Z", "+00:00"))
     except ValueError:
-        raise OpError(f"as_of {as_of!r} is not an ISO date or datetime")
+        raise OpError(f"{as_of!r} is not an ISO date or datetime")
     return t if t.tzinfo else t.replace(tzinfo=UTC)
 
 
-def _clean_positions(positions: list[dict]) -> list[dict]:
-    """Validated before any preview token is issued or any account is created."""
+def _opt_time(v: str | None) -> dt.datetime | None:
+    return parse_as_of(v) if v not in (None, "") else None
+
+
+def _num(name: str, v, *, positive: bool = False) -> float | None:
     import math
+    if v is None:
+        return None
+    x = float(v)
+    if not math.isfinite(x) or (positive and x <= 0):
+        raise OpError(f"{name} must be a {'positive' if positive else 'finite'} number")
+    return x
+
+
+def _clean_positions(positions: list[dict]) -> list[dict]:
+    """Validated before anything is saved. Optional institution fields are kept only when given."""
     out = []
     for p in positions:
         sym = normalize_symbol(p["symbol"])
-        qty = float(p["qty"])
-        cost = float(p["avg_cost"]) if p.get("avg_cost") is not None else None
-        if not math.isfinite(qty):
-            raise OpError(f"{sym}: qty must be a finite number")
-        if cost is not None and not (math.isfinite(cost) and cost > 0):
-            raise OpError(f"{sym}: avg_cost must be a positive number")
-        out.append({"symbol": sym, "qty": qty, "avg_cost": cost})
+        row = {"symbol": sym, "qty": _num(f"{sym}: qty", p["qty"]),
+               "avg_cost": _num(f"{sym}: avg_cost", p.get("avg_cost"), positive=True)}
+        price = _num(f"{sym}: institution_price", p.get("institution_price"), positive=True)
+        value = _num(f"{sym}: institution_value", p.get("institution_value"))
+        when = _opt_time(p.get("institution_price_as_of"))
+        row.update({k: v for k, v in (("institution_price", price), ("institution_value", value),
+                                      ("institution_price_as_of", when)) if v is not None})
+        out.append(row)
     return out
 
 
-def preview_holdings(db: Database, account_id: str, *, as_of: str, cash: float, positions: list[dict],
-                     account_name: str | None, now: dt.datetime) -> dict:
-    import math
+def apply_holdings(db: Database, account_id: str, *, positions: list[dict], now: dt.datetime,
+                   as_of: str | None = None, cash: float | None = None, account_name: str | None = None,
+                   retrieved_at: str | None = None, source: str | None = None, cash_as_of: str | None = None,
+                   available_to_withdraw: float | None = None) -> dict:
+    """Validate, then store a real account's holdings (creating the account when ``account_name`` is given).
+    Unknown values stay unknown: cash None is not zero, a missing institution timestamp is not invented."""
     import re
-    from .accounts.ledger import CASH, reconcile
-    from .accounts.service import _has_history, ledger_state
-    t = parse_as_of(as_of)
-    if t > now + dt.timedelta(minutes=5):
-        raise OpError("as_of is in the future")
-    if not math.isfinite(cash):
-        raise OpError("cash must be a finite number")
+    from .accounts import service
+    inst = _opt_time(as_of)
+    retrieved = _opt_time(retrieved_at) or now
+    for name, t in (("as_of", inst), ("retrieved_at", retrieved)):
+        if t is not None and t > now + dt.timedelta(minutes=5):
+            raise OpError(f"{name} is in the future")
+    cash = _num("cash", cash)
+    atw = _num("available_to_withdraw", available_to_withdraw)
     pos = _clean_positions(positions)
-    syms = [p["symbol"] for p in pos]
-    if len(set(syms)) != len(syms):
+    if len({p["symbol"] for p in pos}) != len(pos):
         raise OpError("each symbol may appear once (add up the lots)")
     acc = db.accounts.find_one({"_id": account_id})
-    will, creates = [], False
     if acc is None:
         if not account_name:
             raise OpError(f"account {account_id} does not exist; pass account_name to create it with this upload")
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,40}", account_id):
             raise OpError("account_id: lowercase letters, digits, - or _ (2-41 characters)")
-        creates = True
-        will.append(f"Create the real account {account_id} ({account_name})")
+        if any(p["avg_cost"] is None for p in pos):
+            raise OpError("the first upload is the opening balance and needs avg_cost for every position")
+        service.create_account(db, account_id=account_id, name=account_name, now=now)
     elif acc.get("kind") == "paper":
         raise OpError(f"{account_id} is a paper account; holdings are uploaded to real accounts only")
-    opening = creates or not _has_history(db, account_id)
-    if opening:
-        missing = [p["symbol"] for p in pos if p["avg_cost"] is None]
-        if missing:
-            raise OpError(f"the first upload is the opening balance and needs avg_cost for every position (missing: {missing})")
-        will.append(f"Record the opening balance as of {t.isoformat()}: cash {cash:,.2f} and {len(pos)} position(s)")
-        differences = []
-    else:
-        latest = db.portfolio_snapshots.find_one({"account_id": account_id}, sort=[("as_of", -1)])
-        st = ledger_state(db, account_id, t)
-        differences = [{"symbol": d.symbol, "expected": d.expected, "reported": d.reported,
-                        "diff": d.reported - d.expected}
-                       for d in reconcile(st, cash, {p["symbol"]: p["qty"] for p in pos})]
-        will.append(f"Store the snapshot as of {t.isoformat()} and reconcile it with the ledger")
-        will.append(f"{len(differences)} difference(s) would be recorded as breaks to explain (never as trades)"
-                    if differences else "It matches the ledger exactly (no breaks)")
-        if latest and latest["as_of"] > t:
-            will.append(f"Note: a newer snapshot ({latest['as_of'].isoformat()}) is already on file")
-        differences = [{**d, "symbol": "cash" if d["symbol"] == CASH else d["symbol"]} for d in differences]
-    watched = {s["_id"] for s in db.symbols.find({"enabled": {"$ne": False}}, {"_id": 1})}
-    unwatched = sorted(set(syms) - watched)
-    return {"account_id": account_id, "as_of": t.isoformat(), "opening_balance": opening, "creates_account": creates,
-            "cash": cash, "positions": pos, "will": will, "differences": differences,
+    try:
+        res = service.upload_snapshot(db, account_id, as_of=inst, cash=cash, positions=pos, opening=False, now=now,
+                                      retrieved_at=retrieved, source=source, available_to_withdraw=atw,
+                                      cash_as_of=_opt_time(cash_as_of))
+    except service.AccountError as e:
+        raise OpError(str(e))
+    watched = {s_["_id"] for s_ in db.symbols.find({"enabled": {"$ne": False}}, {"_id": 1})}
+    unwatched = sorted({p["symbol"] for p in pos} - watched)
+    snap = res["snapshot"]
+    br = lambda st: [{"symbol": "cash" if b["symbol"] == "$CASH" else b["symbol"], "expected": b["expected"],  # noqa: E731
+                      "reported": b["reported"], "diff": b["diff"], **({"reason": b["reason"]} if b.get("reason") else {})}
+                     for b in res["breaks"] if b["status"] == st]
+    return {"account_id": account_id, "snapshot_id": str(snap["_id"]), "opening_balance": snap["opening"],
+            "time_basis": snap["time_basis"], "institution_as_of": snap["institution_as_of"],
+            "retrieved_at": snap["retrieved_at"], "cash_reported": snap["cash_known"],
+            "open_breaks": br("open"), "pending_breaks": br("pending"),
             "not_on_watch_list": unwatched,
-            **({"note": "positions not on the watch list have no prices: they are valued only once added "
-                        "(add_to_watchlist)"} if unwatched else {})}
-
-
-def apply_holdings(db: Database, account_id: str, *, as_of: str, cash: float, positions: list[dict],
-                   account_name: str | None, now: dt.datetime) -> dict:
-    from .accounts import service
-    p = preview_holdings(db, account_id, as_of=as_of, cash=cash, positions=positions, account_name=account_name, now=now)
-    if p["creates_account"]:
-        service.create_account(db, account_id=account_id, name=account_name, now=now)
-    res = service.upload_snapshot(db, account_id, as_of=dt.datetime.fromisoformat(p["as_of"]), cash=cash,
-                                  positions=p["positions"], opening=p["opening_balance"], now=now)
-    breaks = [{"symbol": b["symbol"], "expected": b["expected"], "reported": b["reported"], "diff": b["diff"]}
-              for b in res["breaks"] if b["status"] == "open"]
-    return {"account_id": account_id, "snapshot_id": str(res["snapshot"]["_id"]),
-            "opening_balance": res["snapshot"]["opening"], "open_breaks": breaks,
             "holdings": jsonable(service.holdings(db, account_id, now))}
 
 

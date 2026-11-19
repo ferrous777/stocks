@@ -247,7 +247,7 @@ def test_connect_page_documents_the_live_mcp_server(db):
     assert "<code>idempotency_key</code>" in page and "<code>agent_id</code>, <code>model_id</code>, <code>prompt_version</code>" in page
     assert "claude mcp add --transport http stocks " + endpoint in page
     assert "mcp-client-2025-11-20" in page and "mcp_toolset" in page
-    assert "<code>paper-agent</code>" in page and "fidelity" not in page   # real accounts are never offered
+    assert "<code>paper-agent</code>" in page and "<code>fidelity</code>" not in page   # the real account is never offered for trading
     assert "no baseline: " in page                                          # unpaired: says why, invents nothing
     # With a baseline of identical capital and profiles, the agent's row names the same pairing the gate uses.
     from stocks_service.paper import baseline as bl
