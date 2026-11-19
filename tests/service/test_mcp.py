@@ -215,7 +215,7 @@ def test_watchlist_changes_need_a_confirmed_preview(db, world, monkeypatch):  # 
     monkeypatch.setattr("stocks_service.mcp_server._now", lambda: when)
     broker.create_paper_account(db, account_id="agent", name="A", starting_cash=100_000.0, risk_profile="default@1",
                                 now=EVENING)
-    broker.place_order(db, "agent", symbol="SPY", side="long", qty=1, idempotency_key="agent-spy-x",
+    broker.place_order(db, "agent", symbol="NVDA", side="long", qty=1, idempotency_key="agent-nvda-x",
                        decided_by={"agent_id": "t"}, now=EVENING)
     with _client(db) as c:
         c.app.state.fetcher = RecordedFetcher({("ORLY", "1d"): load_yahoo("ORLY_1d_2025-06-03_2025-06-17")})
@@ -235,8 +235,11 @@ def test_watchlist_changes_need_a_confirmed_preview(db, world, monkeypatch):  # 
         wl, _ = _call(c, "get_watchlist", **IDENT)
         assert "ORLY" in [r["symbol"] for r in wl["watched"]]
         # Removal: refused while a paper order needs the symbol's prices; otherwise previewed, then confirmed.
-        msg, err = _call(c, "remove_from_watchlist", **IDENT, symbol="SPY")
+        msg, err = _call(c, "remove_from_watchlist", **IDENT, symbol="NVDA")
         assert err and "agent" in msg
+        for required in ("SPY", "^IRX", "QQQM"):   # the session clock, cash rate and benchmarks stay
+            msg, err = _call(c, "remove_from_watchlist", **IDENT, symbol=required)
+            assert err and "needs it" in msg
         rv, _ = _call(c, "remove_from_watchlist", **IDENT, symbol="INTC")
         assert db.symbols.find_one({"_id": "INTC"})["enabled"] is True
         gone, err = _call(c, "remove_from_watchlist", **IDENT, symbol="INTC", confirm_token=rv["confirm_token"])
@@ -246,7 +249,7 @@ def test_watchlist_changes_need_a_confirmed_preview(db, world, monkeypatch):  # 
         wl, _ = _call(c, "get_watchlist", **IDENT)
         assert "INTC" in [r["symbol"] for r in wl["removed"]]
     tools = [d["tool"] for d in db.agent_decisions.find().sort("ts", 1)]
-    assert tools.count("add_to_watchlist") == 4 and tools.count("remove_from_watchlist") == 3
+    assert tools.count("add_to_watchlist") == 4 and tools.count("remove_from_watchlist") == 6
 
 
 def test_fidelity_holdings_upload_previews_then_reconciles(db, world, monkeypatch):  # noqa: F811
@@ -281,3 +284,41 @@ def test_fidelity_holdings_upload_previews_then_reconciles(db, world, monkeypatc
                                     now=EVENING)
         msg, err = _call(c, "upload_holdings", **IDENT, **{**later, "account_id": "agent"})
         assert err and "paper account" in msg
+
+
+def test_removed_symbols_take_no_paper_orders_and_removal_rechecks_orders(db, world):  # noqa: F811
+    from stocks_service import mcp_ops
+    from stocks_service.accounts.service import AccountError
+    broker.create_paper_account(db, account_id="agent", name="A", starting_cash=100_000.0, risk_profile="default@1",
+                                now=EVENING)
+    mcp_ops.apply_remove(db, "INTC", EVENING)
+    with pytest.raises(AccountError, match="not on the watch list"):
+        broker.place_order(db, "agent", symbol="INTC", side="long", qty=1, idempotency_key="agent-intc-1",
+                           decided_by={}, now=EVENING)
+    # An order that lands after the preview's check still blocks the removal (checked in the same transaction).
+    broker.place_order(db, "agent", symbol="NVDA", side="long", qty=1, idempotency_key="agent-nvda-1",
+                       decided_by={}, now=EVENING)
+    preview = mcp_ops.preview_remove
+
+    def stale_preview(db_, sym, now):
+        db_.orders.update_many({}, {"$set": {"status": "cancelled"}})
+        p = preview(db_, sym, now)
+        db_.orders.update_many({}, {"$set": {"status": "open"}})
+        return p
+    mcp_ops.preview_remove = stale_preview
+    try:
+        with pytest.raises(mcp_ops.OpError, match="now has an open order"):
+            mcp_ops.apply_remove(db, "NVDA", EVENING)
+    finally:
+        mcp_ops.preview_remove = preview
+    assert db.symbols.find_one({"_id": "NVDA"})["enabled"] is True   # rolled back
+
+
+def test_prediction_lists_every_strategy_and_the_intraday_range(db, world, monkeypatch):  # noqa: F811
+    from stocks_service import mcp_ops
+    from stocks_service.strategies import all_specs
+    p = mcp_ops.prediction(db, "QQQM")
+    assert {d["strategy"] for d in p["strategy_decisions"]} == {s.key for s in all_specs()}
+    bars = list(db.bars.find({"symbol": "QQQM", "interval": "1d"}).sort("session", -1).limit(252))
+    assert p["price"]["high_52w"] >= max(b["c"] for b in bars) and p["price"]["low_52w"] <= min(b["c"] for b in bars)
+    assert p["price"]["high_52w"] > max(b["c"] for b in bars)   # a real intraday high above every close

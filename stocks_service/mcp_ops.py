@@ -28,6 +28,9 @@ CONFIRM_TTL = dt.timedelta(minutes=15)
 INSTRUMENT_TYPES = {"EQUITY": AssetClass.equity, "ETF": AssetClass.etf, "MUTUALFUND": AssetClass.mutual_fund,
                     "INDEX": AssetClass.index, "FUTURE": AssetClass.future, "CURRENCY": AssetClass.fx}
 TRADABLE_CLASSES = (AssetClass.equity, AssetClass.etf)   # the outlook covers equities and ETFs
+# Inputs the service itself needs, whatever the watch list: SPY's bars are the session clock for the
+# outlook and paper accounts, ^IRX is the cash rate, SPY/QQQ/QQQM are the research benchmarks.
+REQUIRED_SYMBOLS = ("SPY", "^IRX", "QQQ", "QQQM")
 
 
 class OpError(ValueError):
@@ -168,6 +171,9 @@ def preview_remove(db: Database, symbol: str, now: dt.datetime) -> dict:
     doc = db.symbols.find_one({"_id": sym})
     if doc is None or not doc.get("enabled", True):
         raise OpError(f"{sym} is not on the watch list")
+    if sym in REQUIRED_SYMBOLS:
+        raise OpError(f"{sym} cannot be removed: the service needs it ({', '.join(REQUIRED_SYMBOLS)} are the session "
+                      "clock, cash rate and research benchmarks)")
     paper, real = _holders(db, sym, now)
     if paper:
         raise OpError(f"{sym} cannot be removed while paper accounts have open orders or positions in it "
@@ -180,9 +186,27 @@ def preview_remove(db: Database, symbol: str, now: dt.datetime) -> dict:
 
 
 def apply_remove(db: Database, symbol: str, now: dt.datetime) -> dict:
+    """Disable the symbol and check for paper orders in the same transaction. Paper order placement
+    writes the symbol document inside its own transaction (``broker.place_order``), so the two
+    conflict and serialize: an order either lands first (and blocks the removal) or sees the symbol
+    disabled (and is refused)."""
     p = preview_remove(db, symbol, now)
-    db.symbols.update_one({"_id": p["symbol"]}, {"$set": {"enabled": False, "removed_at": now}})
-    return {"symbol": p["symbol"], "action": "removed", "warnings": p["warnings"]}
+    sym = p["symbol"]
+
+    def txn(session):
+        res = db.symbols.update_one({"_id": sym, "enabled": {"$ne": False}},
+                                    {"$set": {"enabled": False, "removed_at": now}}, session=session)
+        if res.matched_count == 0:
+            raise OpError(f"{sym} is not on the watch list")
+        held = db.orders.find_one({"symbol": sym, "status": {"$in": ["open", "filled"]}}, {"account_id": 1},
+                                  session=session)
+        if held:
+            raise OpError(f"{sym} cannot be removed: paper account {held['account_id']} now has an open order or "
+                          "position in it")
+
+    with db.client.start_session() as s:
+        s.with_transaction(txn)
+    return {"symbol": sym, "action": "removed", "warnings": p["warnings"]}
 
 
 # --- real-account holdings ---------------------------------------------------------------------
@@ -328,11 +352,13 @@ def prediction(db: Database, symbol: str) -> dict:
     c = full.c
     yr = [float(x) for d, x in zip(full.sessions, c) if d.year == asof.year]
     prev_year = [float(x) for d, x in zip(full.sessions, c) if d.year == asof.year - 1]
-    window = [float(x) for x in c[-252:]]
+    import numpy as np
+    hi, lo = np.asarray(full.h[-252:], dtype=float), np.asarray(full.l[-252:], dtype=float)
     out["price"] = {"asof": asof.isoformat(), "last_close": float(c[-1]), "basis": "split-adjusted",
                     "return_1m": _ret(c, 21), "return_3m": _ret(c, 63), "return_6m": _ret(c, 126),
                     "return_1y": _ret(c, 252), "return_ytd": (yr[-1] / prev_year[-1] - 1) if yr and prev_year else None,
-                    "high_52w": max(window), "low_52w": min(window), "sessions_on_file": len(c)}
+                    "high_52w": float(np.nanmax(hi)), "low_52w": float(np.nanmin(lo)),   # intraday range
+                    "sessions_on_file": len(c)}
     out["calendar_years"] = jsonable(yearly_summary(full)[:6])
     o = latest_outlook(db)
     if o is None:
@@ -347,7 +373,7 @@ def prediction(db: Database, symbol: str) -> dict:
     view = load_view(db, sym, asof)
     out["strategy_decisions"] = [
         {"strategy": d.strategy, "direction": d.direction, "strength": d.strength, "reasons": list(d.reasons)}
-        for d in (decide(view, spec) for spec in all_specs() if len(view) >= spec.min_bars)]
+        for d in (decide(view, spec) for spec in all_specs())]   # too little history -> an explicit hold
     from . import estimation
     sides = {}
     for side in ("long", "short"):
