@@ -252,29 +252,28 @@ def test_watchlist_changes_need_a_confirmed_preview(db, world, monkeypatch):  # 
     assert tools.count("add_to_watchlist") == 4 and tools.count("remove_from_watchlist") == 6
 
 
-def test_fidelity_holdings_upload_previews_then_reconciles(db, world, monkeypatch):  # noqa: F811
+def test_fidelity_holdings_upload_applies_directly_and_reconciles(db, world, monkeypatch):  # noqa: F811
     monkeypatch.setattr("stocks_service.mcp_server._now", lambda: LATER)
     first = {"account_id": "fidelity", "as_of": "2025-05-30", "cash": 5_000.0, "account_name": "Fidelity brokerage",
              "positions": [{"symbol": "NVDA", "qty": 10, "avg_cost": 100.0}, {"symbol": "FXAIX", "qty": 3, "avg_cost": 200.0}]}
     with _client(db) as c:
+        tools = {t["name"]: t for t in _rpc(c, "tools/list").json()["result"]["tools"]}
+        assert "confirm_token" not in tools["upload_holdings"]["inputSchema"]["properties"]
         msg, err = _call(c, "upload_holdings", **IDENT, **{**first, "account_name": None})
-        assert err and "account_name" in msg
-        pv, err = _call(c, "upload_holdings", **IDENT, **first)
-        assert not err and pv["preview"]["creates_account"] and pv["preview"]["opening_balance"]
-        assert pv["preview"]["not_on_watch_list"] == ["FXAIX"] and db.accounts.find_one({"_id": "fidelity"}) is None
-        done, err = _call(c, "upload_holdings", **IDENT, **first, confirm_token=pv["confirm_token"])
+        assert err and "account_name" in msg and db.accounts.find_one({"_id": "fidelity"}) is None
+        # One call: the account is created and the opening balance recorded, no confirmation step.
+        done, err = _call(c, "upload_holdings", **IDENT, **first)
         assert not err and done["opening_balance"] and done["open_breaks"] == []
         assert done["links"]["account"] == f"{SITE}/accounts/fidelity"
         assert {p["symbol"]: p["qty"] for p in done["holdings"]["positions"]} == {"FXAIX": 3, "NVDA": 10}
-        # A later snapshot that differs is reconciled: differences become breaks, never trades.
+        # A later snapshot that differs is reconciled right away: differences become breaks, never trades.
         later = {**first, "as_of": "2025-06-02", "account_name": None,
                  "positions": [{"symbol": "NVDA", "qty": 12, "avg_cost": 101.0}, {"symbol": "FXAIX", "qty": 3}]}
-        pv2, _ = _call(c, "upload_holdings", **IDENT, **later)
-        assert not pv2["preview"]["opening_balance"]
-        assert pv2["preview"]["differences"] == [{"symbol": "NVDA", "expected": 10.0, "reported": 12.0, "diff": 2.0}]
-        done2, _ = _call(c, "upload_holdings", **IDENT, **later, confirm_token=pv2["confirm_token"])
-        assert [b["symbol"] for b in done2["open_breaks"]] == ["NVDA"]
+        done2, err = _call(c, "upload_holdings", **IDENT, **later)
+        assert not err and not done2["opening_balance"]
+        assert [(b["symbol"], b["diff"]) for b in done2["open_breaks"]] == [("NVDA", 2.0)]
         assert db.executions.count_documents({"account_id": "fidelity"}) == 0
+        assert db.mcp_confirmations.count_documents({}) == 0
         real, _ = _call(c, "get_account", **IDENT, account_id="fidelity")
         assert real["kind"] == "real" and real["open_breaks"] == 1 and real["cash"] == 5_000.0
         accts, _ = _call(c, "list_accounts", **IDENT, kind="real")
@@ -284,7 +283,8 @@ def test_fidelity_holdings_upload_previews_then_reconciles(db, world, monkeypatc
                                     now=EVENING)
         msg, err = _call(c, "upload_holdings", **IDENT, **{**later, "account_id": "agent"})
         assert err and "paper account" in msg
-
+    logged = [d for d in db.agent_decisions.find({"tool": "upload_holdings"})]
+    assert len(logged) == 4 and logged[1]["result"]["opening_balance"] is True
 
 def test_removed_symbols_take_no_paper_orders_and_removal_rechecks_orders(db, world):  # noqa: F811
     from stocks_service import mcp_ops
@@ -361,7 +361,7 @@ def test_holdings_with_bad_numbers_are_refused_before_anything_is_created(db, wo
         with pytest.raises(mcp_ops.OpError):
             mcp_ops.preview_holdings(db, "fidelity", as_of="2025-05-30", cash=1.0, positions=[pos],
                                      account_name="F", now=LATER)
-    assert db.accounts.find_one({"_id": "fidelity"}) is None and db.mcp_confirmations.count_documents({}) == 0
+    assert db.accounts.find_one({"_id": "fidelity"}) is None   # refused before anything was saved
 
 
 def test_unknown_model_identity_is_accepted_and_logged_honestly(db, world, monkeypatch):  # noqa: F811

@@ -41,14 +41,21 @@ Example: {"agent_id": "chatgpt", "model_id": "unknown", "prompt_version": "v1"}
 Most results include "links" to the website page showing the same data. Give the user these links
 when seeing the chart or table would help.
 
-3. CHANGES THAT NEED THE USER'S YES: upload_holdings, add_to_watchlist, remove_from_watchlist
+3. UPLOADING HOLDINGS (no confirmation needed)
+  upload_holdings   records a real account's current cash and positions as of a date. It is applied
+                    immediately. The first upload is the opening balance (avg_cost required for every
+                    position; pass account_name to create a new account); later uploads are compared
+                    with the records and any difference is flagged for the user, never treated as a
+                    trade. Report the result, including any differences, to the user.
+
+4. WATCH-LIST CHANGES NEED THE USER'S YES: add_to_watchlist, remove_from_watchlist
   a. Call the tool WITHOUT confirm_token. Nothing changes; you get a preview and a confirm_token.
   b. Show the preview to the user and ask whether to go ahead.
   c. Only if the user clearly says yes, call the same tool again with the SAME arguments plus
      confirm_token. Never confirm on the user's behalf. Tokens are single-use and expire after
      15 minutes; if one is refused, start again at step a.
 
-4. PAPER ORDERS (simulated money only; real accounts are never traded)
+5. PAPER ORDERS (simulated money only; real accounts are never traded)
   place_paper_order  needs a unique idempotency_key (8+ characters; reusing it returns the same
                      order) and a short rationale. It buys or shorts at the outlook row's entry
                      limit, with that row's stop and target, for the next trading session only.
@@ -56,7 +63,7 @@ when seeing the chart or table would help.
                      limits, or if the ticker already has an open order or position there.
   cancel_order       cancels an order before its session opens.
 
-5. READING THE OUTLOOK
+6. READING THE OUTLOOK
 Grades: A = signal from a validated strategy; B = calibrated signal, strategy not validated;
 C = this ticker's own history only (a base rate, not a forecast); insufficient = no estimate.
 Only grade A rows (validated: true) come from a validated strategy; present every other row as
@@ -411,24 +418,25 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
 
     @mcp.tool()
     def upload_holdings(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str, as_of: str,
-                        cash: float, positions: list[Holding], ctx: Context, account_name: str | None = None,
-                        confirm_token: str | None = None) -> dict:
-        """Upload the user's current holdings of a real brokerage account (e.g. Fidelity) for tracking (needs
-        the user's confirmation). as_of: ISO date (that day's close) or datetime; cash: the cash balance
-        (core position); positions: every holding with qty and avg_cost. The first upload is the opening
+                        cash: float, positions: list[Holding], ctx: Context, account_name: str | None = None) -> dict:
+        """Upload the user's current holdings of a real brokerage account (e.g. Fidelity) for tracking. Applied
+        immediately, no confirmation needed. as_of: ISO date (that day's close) or datetime; cash: the cash
+        balance (core position); positions: every holding with qty and avg_cost. The first upload is the opening
         balance; later ones are reconciled with the ledger and differences are recorded as breaks to explain,
-        never as trades. To create a new account pass account_name. Without confirm_token: preview only."""
+        never as trades. To create a new account pass account_name. Invalid values are refused before anything
+        is saved."""
         idn = ident(agent_id, model_id, prompt_version)
         pos = [p.model_dump() for p in positions]
         args = {"account_id": account_id, "as_of": as_of, "cash": cash, "positions": pos, "account_name": account_name}
-        kw = dict(as_of=as_of, cash=cash, positions=pos, account_name=account_name)
 
-        def apply(now):
-            res = mcp_ops.apply_holdings(get_db(), account_id, now=now, **kw)
-            return {**res, "links": {"account": url(ctx, L.account(account_id, "real"))}}
+        def run():
+            res = mcp_ops.apply_holdings(get_db(), account_id, as_of=as_of, cash=cash, positions=pos,
+                                         account_name=account_name, now=_now())
+            res["links"] = {"account": url(ctx, L.account(account_id, "real"))}
+            return res, {"snapshot_id": res["snapshot_id"], "opening_balance": res["opening_balance"],
+                         "open_breaks": len(res["open_breaks"])}
 
-        return confirmed("upload_holdings", idn, args, confirm_token,
-                         lambda now: mcp_ops.preview_holdings(get_db(), account_id, now=now, **kw), apply)
+        return audited("upload_holdings", idn, args, run)
 
     # --- paper orders ----------------------------------------------------------------------------
 

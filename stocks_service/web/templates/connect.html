@@ -97,8 +97,9 @@ for block in response.content:
   model_id = your exact model identifier if your runtime provides it, otherwise "unknown"
              (never guess it and never infer it from the app's name)
   prompt_version = "v1"
-Before upload_holdings, add_to_watchlist or remove_from_watchlist takes effect, show me the
-preview and wait for my explicit yes; then repeat the call with the confirm_token.{% endset %}
+upload_holdings applies immediately; tell me the result and any differences it reports.
+Before add_to_watchlist or remove_from_watchlist takes effect, show me the preview and wait
+for my explicit yes; then repeat the call with the confirm_token.{% endset %}
   {{ ui.code_block(chat, "Chat app instructions") }}
 {% endcall %}
 {% call ui.card("Python MCP SDK") %}
@@ -147,7 +148,8 @@ asyncio.run(main()){% endset %}
     <code>idempotency_key</code> (at least 8 characters; reusing it returns the same order) and a <code>rationale</code>.
     Orders are DAY limit orders at the row's entry limit, with its stop and target; they are refused after
     <code>placeable_until</code>, above the account's risk limits, or when the symbol already has an open order or position.</li>
-  <li><strong>Ask before changing anything of yours.</strong> <code>upload_holdings</code>, <code>add_to_watchlist</code> and
+  <li><strong>Upload holdings directly; ask before watch-list changes.</strong> <code>upload_holdings</code> applies
+    immediately and reports any differences from your records. <code>add_to_watchlist</code> and
     <code>remove_from_watchlist</code> first return a preview and a single-use <code>confirm_token</code> (valid 15 minutes, bound
     to those exact arguments) and change nothing. The agent shows you the preview; only after you agree does it call again
     with the token.</li>
