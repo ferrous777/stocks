@@ -1,147 +1,174 @@
 ---
 name: trade-suggestions
-description: Scheduled (daily or hourly) run that connects to the stocks MCP server, reads the latest six-month outlook and the user's accounts, and writes a dated trade-suggestion report. Optionally places paper orders on the agent's paper account. Use for "run trade suggestions", scheduled suggestion tasks, or when asked what to buy/short today.
+description: Daily investment review over the stocks MCP server — scheduled (daily or hourly) or on request. Reads the outlook, real and paper accounts, research and data quality; gives a real broad-allocation preference, any validated real tactical recommendation, and operates the AI-agent PAPER experiment (submits qualified paper orders). Use for "run trade suggestions", "daily investment review", scheduled review tasks, or "what should I buy/short today".
 ---
 
-# Trade suggestions (scheduled)
+# Daily investment review (trade suggestions)
 
-Adapted for this repo from the operational doctrine in
-[agiprolabs/claude-trading-skills](https://github.com/agiprolabs/claude-trading-skills)
-(`prediction-market-live-ops`, `risk-management`, `position-sizing`, `trade-journal`). Those
-skills are mostly about crypto. Only the parts that fit this service are kept: evidence-gated
-stages, freshness gates, a halt switch, server-owned sizing, and an append-only record of each
-decision.
+Workflow version **2.0.0**. User policy baseline **`2026-11-21-paper-v2`**. MCP `prompt_version`:
+**`trade-suggestions-v2`** (bump it with every change to this skill).
 
-Read `AGENTS.md` first. Its rules override everything here. Never fabricate a number. Every figure in
-the report must come from a tool result in this run. If something required is missing, the
-report says so and stops.
+Repo rules in `AGENTS.md` apply to everything here: no fabricated values; unknown stays unknown, never
+zero; missing data fails explicitly.
 
-## Arguments
+## Read first: authority
 
-- *(none)*: **suggest** mode. Read only and write the report. Nothing on the server changes.
-- `paper`: **suggest** mode plus paper orders on `paper-agent` (simulated money only). This builds
-  the agent's track record against `paper-baseline` for the shadow gate in `docs/mcp.md`.
+1. Read [references/operating-contract.md](references/operating-contract.md) in full. It is the user's
+   standing instruction snapshot. Newer explicit user instructions win over it. Older memories and reports
+   are dated evidence; they never restore superseded prohibitions or annual return hurdles.
+2. Read [references/execution-guide.md](references/execution-guide.md) for the tool map, the evidence
+   schema and the persistence layout.
+3. Before finishing, read [references/improvement-loop.md](references/improvement-loop.md).
+4. Read [references/continuity.md](references/continuity.md) only to bootstrap missing pointers or to
+   investigate a known failure. Its observations are dated and are never current facts.
 
-Real accounts are never traded. The MCP server refuses it anyway.
+Keep three decisions independent:
 
-## Cadence
+| Decision | Required authority and evidence |
+|---|---|
+| Real broad allocation | A supported ITOT/IVV/alternative versus cash preference, a suitable allocation, and verified account and funds for any size. It needs no tactical Grade A, no 15% forecast and no short bracket. |
+| Validated real tactical recommendation | Grade A (validated), a fresh complete live plan and appropriate account evidence. The objective is 15% net per trade within six calendar months, never a guarantee. Recommendations only. |
+| AI-agent paper experiment | Only the existing authorized AI-agent PAPER account (`paper-agent`). Grades A/B/C are allowed with an explicit contemporary hypothesis, a defensible complete server plan, costs, a time exit and risk checks. **Actually submit when qualified.** Label unvalidated experiments, and never advise copying them into real accounts. |
 
-The outlook is built once per trading day by the `jobs-tick` cron, after the close
-(`*/15 12-23 * * 1-5` UTC). Orders are placeable until the next session's open
-(`placeable_until`).
-- **Daily** (recommended): weekdays at 3:30 PM PT (about 2.5 h after the close, well before
-  the next open).
-- **Hourly**: allowed but adds nothing. Step 2 ends the run early when the outlook has not
-  changed. Use it only if you also want open paper orders re-checked.
+**Never:** place real orders; buy options or futures; enroll in margin; operate baseline, strategy or
+autonomous accounts (`paper-baseline`, `paper-<strategy>-v<n>`); create a paper account or service; loosen
+an existing stop; force a trade; confirm a watch-list change on the user's behalf. The standing paper
+authorization applies to this user, this workflow and `paper-agent` only. It does not need daily
+reconfirmation.
 
-## Step 0: Preflight
+## Run sequence
 
-1. The MCP server must be connected (`stocks`, endpoint
-   `https://stocks-production-8666a97e.up.railway.app/mcp`, bearer API key). If no stocks MCP
-   tools are available, write a report saying "MCP not connected" with the setup command from
-   the website's `/connect` page and stop.
-2. Identity on **every** call:
-   `agent_id: "claude-code-scheduled"`,
-   `model_id`: your exact model ID if your runtime states it, else `"unknown"`,
-   `prompt_version: "trade-suggestions-v1"`. Bump the version whenever this file changes, so the
-   server's `agent_decisions` log can tell prompt versions apart.
-3. Halt switch: if `reports/trade-suggestions/HALT` exists, run suggest mode only (no paper
-   orders) and quote the file's contents in the report.
+Each step's tool calls, fields and fallbacks are listed in the execution guide. Record actual retrieval
+start and end times (UTC) around every source call. If one connector fails, keep doing the work it
+doesn't block, and record the failure verbatim.
 
-## Step 1: Gather (read-only tools)
+1. **Time and state.** Get the current UTC time, the Pacific date, and the XNYS last completed and next
+   session (local `stocks_service.sessions`). Read the latest pointers in `reports/trade-suggestions/`
+   (portfolio, entry, six-month, paper, usefulness). Read holdings and activity for every account, and
+   every watch list, all pages. Build the instrument union: holdings + saved watch lists + QQQM, GOOGL,
+   META, ITOT, IVV + cash. Mark comparator-only rows and unsupported instruments. Never remove an
+   instrument. Ask the user to add a missing one (watch-list adds need their yes).
+2. **Read Stocks comprehensively.** Read the MCP tool list and server instructions. Then read:
+   - the outlook, both sides, every grade including insufficient (`min_grade="insufficient"`), with no
+     return filter;
+   - `paper-agent`'s account, orders, transactions and performance, plus the matching baseline comparison;
+   - predictions for the strongest long and short, every proposed order and every material rejection.
 
-1. `get_outlook(side=null, min_grade="C", limit=200)`. Record `asof`, `run_id` and
-   `placeable_until`.
-2. `list_accounts()`.
-3. For each real account: `get_account`. Note `valuation.missing`, unknown cash and `open_breaks`.
-4. `get_account("paper-agent")`, `get_performance("paper-agent")` and
-   `list_orders("paper-agent", status="open")`.
+   Check that `last_session_executed` has reached the outlook `asof` and that the account isn't stalled.
+   The native horizon is **126 sessions**; never relabel it as six months.
+3. **Reconcile and sync.** Only if a complete holdings source (e.g. a Plaid extraction) is available in
+   this run:
+   - read the destination real account first;
+   - upload the complete snapshot under `upload_holdings` rules (omit unknown core cash and unknown
+     institution timestamps; Plaid `available` goes to `available_to_withdraw` only);
+   - read it back and keep these apart: accepted snapshot, reported positions, ledger positions and
+     pending breaks.
 
-If any of these fails, the report records the exact error and the run stops. No partial guesses.
+   Never invent a transaction to make a readback match. A missing source is "sync skipped: no source",
+   not an outage.
+4. **Validate data; score due work first.** Check that each price's `asof` is the last completed session,
+   and that coverage is complete with no duplicates. Compare historical closes with the previous evidence
+   file. Quarantine any material revision until a split or dividend explains it. Score frozen forecasts
+   only when they are due, and keep the original versions. A closed-market day creates no new
+   independent outcome. Never reuse yesterday's conclusion by default.
+5. **Research and compare.** For each instrument, cover:
+   - the case for and against;
+   - combined trend/MACD/Bollinger evidence;
+   - valuation and catalysts;
+   - concentration and industry drivers;
+   - research quality and account readiness.
 
-## Step 2: Freshness gates
+   Compare broad allocation, the strongest tactical candidate and cash on matching dates, and state a
+   supported preference even if sizing is unresolved. Read applicable rejected-rule tests and event
+   audits, including pre-event and through-event windows.
+6. **Algorithm work.** Discover the research capabilities in this run (QuanterLab if connected, and the
+   service's research endpoints). First retrieve completed jobs and saved results, and don't relaunch
+   duplicates. Write down the exact hypothesis, rule, data cutoff, cost model, baseline and evaluation
+   window. Test longs and shorts separately, including:
+   - gaps, dividends and borrow costs;
+   - nearby parameters;
+   - out-of-sample periods.
 
-- **Same outlook as last run**: if the newest file in `reports/trade-suggestions/` has the same
-  `run_id`, append one line, `<timestamp> no new outlook (run_id …)`, to `log.md` there and stop.
-  This keeps hourly runs cheap.
-- **Window closed**: if now ≥ `placeable_until`, write the report but mark every suggestion
-  **"window closed, informational only"**, and place no paper orders.
-- **Stale data**: if `asof` is more than one trading session old, say so at the top of the
-  report. It means the tick may be failing; link `/ops`.
+   Queued is not completed. A different model does not test the server bracket. If one candidate fails,
+   assess the next credible alternative.
+7. **Paper decision.** Apply *Paper sizing and submission* below. Submit when qualified. If nothing
+   qualifies, finish the next available discriminating test or data request **in this run**, and record
+   its result or real job ID.
+8. **Forecasts and measured results.** For every saved instrument, keep:
+   - dated next-session research;
+   - both-direction six-calendar-month comparisons against cash and QQQM, keeping unavailable, negative
+     and below-15% rows;
+   - a ranking by supported central net estimate, never by optimistic upside;
+   - a separate table of the native 126-session per-position estimates.
 
-## Step 3: Pick candidates
+   Report `paper-agent`'s actual orders, fills, P&L, costs, equity and drawdown against its paired
+   baseline. Keep strategy accounts and historical tests separate.
+9. **Persist and check.** Write the readable report and machine-readable evidence. Update **only** the
+   pointers whose sections were fully covered, and only after the save is confirmed. Run the checks in
+   the execution guide. Do the improvement loop.
+10. **Deliver.** See *Delivery*.
 
-Grades come from the server, and the report must label every row by its grade:
-- **A** (`validated: true`): a validated strategy signal. Only these may be called *suggestions*.
-- **B**: calibrated but unvalidated. Label it **research**.
-- **C**: this ticker's own base rate. Label it **research, base rate only**.
-- **insufficient**: skip it.
+## Paper sizing and submission
 
-As of 2026-11, no strategy passes the gate, so expect zero A rows. In that case, say plainly at
-the top: "No validated signals today; everything below is research." Do not soften it or
-present research as a recommendation.
+`scripts/paper_limits.py` is an arithmetic helper, not a signal and not a substitute for server
+validation. Read its docstring. Feed it only verified inputs, keep the source of each input in the
+evidence, and run it with
+`venv/bin/python -I .claude/skills/trade-suggestions/scripts/paper_limits.py <input.json>`. It enforces
+the smallest whole-share limit across:
 
-Selection:
-1. Longs: the top 5 `side=long` rows with a `plan`, by `exp_return_6m`. Shorts: the top 5
-   `side=short` rows the same way. Skip any row whose `p10_return_6m` is missing.
-2. Call `get_prediction(symbol)` for each one and use its strategy decisions, umpire votes,
-   P(win) and ATR time-to-target odds in the reasoning.
-3. **Holdings review**: for every symbol held in a real or paper account, report its current
-   long and short rows. Flag a held long whose short row grades higher, or whose `p10` is below
-   the cash return (`cash_return_6m`).
-4. Mark each candidate that already has an open order or position in `paper-agent` (the server
-   would refuse another one).
+- $1,000 initial notional and 1% of current paper equity per position;
+- 0.25% of equity for the planned entry-to-stop loss plus modeled round-trip costs (and full-horizon
+  borrow for shorts);
+- 10% aggregate experiment gross exposure, including open and reserved orders;
+- verified free cash or collateral (short proceeds are not free cash) and every stricter server limit;
+- an enforceable time exit within six calendar months of the fill;
+- at most **two** new positions per completed-session decision, across reruns.
 
-## Step 4: Sizing (owned by the server, not by you)
+It rejects the order when even one share doesn't fit. Long returns use cash deployed including entry
+costs; short returns use initial short notional. The round-trip cost reserve is separate from the
+denominator, and target profit is not expected return. Never round a target return to claim a pass.
+Planned stop loss is not maximum loss.
 
-- Do **not** compute share counts for real accounts. The service's risk profile
-  (`risk_per_trade`, heat, cluster, ADV limits) owns sizing. Show the plan instead: entry
-  limit, stop, target, `risk_pct` and `reward_pct`. Link the account page for the sized ticket.
-- If a real account's cash is unknown (`valuation.missing`), say that equity-based numbers for it
-  are unavailable. Never treat unknown cash as zero.
+A candidate qualifies only with:
+- grade A, B or C (insufficient fails);
+- a current written hypothesis;
+- a complete server plan;
+- a fresh `placeable_until`;
+- the correct target session;
+- liquidity and event checks;
+- known costs;
+- no failed adopted policy.
 
-## Step 5: Paper orders (only with the `paper` argument, no HALT, window open)
+Read numeric policy and cost values from the server (documented defaults count). Unknown stays unknown
+after checking.
 
-For each grade A row (or, if the user explicitly approved research-grade paper trading in
-this repo's memory, the selected B rows):
-1. `idempotency_key = "<asof>-<symbol>-<side>"`. A re-run on the same outlook replays the order
-   and never duplicates it.
-2. Call `place_paper_order(account_id="paper-agent", qty=<large request>, ...)` with a rationale
-   that cites the grade, `exp_return_6m`, p10/p90 and the deciding signals.
-3. If it is rejected with `qty X exceeds the risk limit of N (...)`, retry once with qty N and the
-   same key (nothing was inserted). Record any other rejection verbatim. Do not work around it.
-4. Never cancel orders except one placed this run in error. Report open orders from earlier runs
-   as they are.
+**Submission:**
+1. Re-read the account and its orders.
+2. Use the key `paper-agent:<SYMBOL>:<side>:<outlook run_id>:<target session>`. Never use wall-clock
+   time.
+3. Check for an existing order with that key or symbol.
+4. Call `place_paper_order` with the current schema.
+5. Verify the returned ID and status through `list_orders`. Accepted is not filled.
+6. If the result is ambiguous, inspect orders and transactions before retrying with the **same** key.
+7. A server risk rejection may be retried once at the server's stated *smaller* quantity. Never retry
+   with weaker risk.
 
-## Step 6: Report
+## Delivery
 
-Write `reports/trade-suggestions/<asof>.md` (overwrite on a re-run for the same `asof`). Use
-this structure, filled only with values from this run's tool results:
+At most **120 words**, in three items:
+1. the next real purchase or preference, or the named candidate and the exact missing gate;
+2. the actual paper actions and results, and both directional verdicts;
+3. concrete progress or blocker, plus the full-details link (the report path).
 
-```
-# Trade suggestions — outlook <asof> (run <run_id>)
-Generated <now UTC> · mode <suggest|paper> · placeable until <placeable_until> · prompt trade-suggestions-v1
-<banner: validated-signal status / window closed / stale data / HALT>
+Label every experiment: **"PAPER EXPERIMENT — unvalidated; not a real-money recommendation."** Only a
+genuine market-data outage (no outlook and no prices) gets the operational outage message from the
+contract. Promise a retry only once one is actually scheduled. A missing optional connector, one ticker
+or a paper credential is not an outage.
 
-## Suggestions (grade A)            ← or "None today"
-| Symbol | Side | Grade | Entry | Stop | Target | Exp 6m | p10 / p90 | Why | Link |
+## Improve this skill during use
 
-## Research (grades B/C)
-(same table)
-
-## Your holdings
-per account: symbol, qty, current long/short rows, flag if any
-
-## Paper account (paper-agent)
-equity, return, drawdown, vs baseline (influence gate status), orders placed/rejected this run
-
-## Data issues
-anything missing, unknown cash, open breaks, errors
-```
-
-Then append one line to `reports/trade-suggestions/log.md`:
-`<now UTC> | asof <asof> | run <run_id> | A:<n> B:<n> C:<n> | paper orders placed:<n> rejected:<n>`.
-
-End the run with a 3–5 line summary: the banner, the top items and the report path. If
-anything needs the user (a watch-list add, a holdings upload, a failing tick), say so. Never
-confirm a watch-list change yourself, since no user is present in a scheduled run.
+The user authorizes ongoing maintenance. Follow [references/improvement-loop.md](references/improvement-loop.md):
+fix demonstrated procedural errors, add a regression test, validate, and save through the repo's PR
+workflow. Never silently expand authority, relax caps, turn research into orders, change schedules,
+replace frozen forecasts, adopt a failed strategy, or tune numeric policy after seeing outcomes. Keep
+accounts, raw daily evidence and credentials out of skill files.
