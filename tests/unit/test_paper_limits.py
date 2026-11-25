@@ -98,6 +98,7 @@ def test_caps_cannot_be_loosened_by_input():
     ({"costs": {**COSTS, "slippage_bps": None}}, "costs.slippage_bps"),
     ({"time_exit_session": "2027-02-01"}, "after fill_session"),
     ({"new_positions_this_decision": True}, "whole number"),
+    ({"entry": 0.004, "stop": 0.001, "target": 0.01}, "rounds to"),
 ])
 def test_missing_or_invalid_inputs_fail_explicitly(bad, match):
     with pytest.raises(pl.InputError, match=match):
@@ -112,3 +113,27 @@ def test_cli_round_trip(tmp_path):
     f.write_text(json.dumps(inp(equity=None)))
     bad = subprocess.run([sys.executable, "-I", str(SCRIPT), str(f)], capture_output=True, text=True)
     assert bad.returncode == 2 and "missing inputs" in json.loads(bad.stderr)["error"]
+
+
+def test_non_object_input_fails_explicitly(tmp_path):
+    for bad in (None, 42, [inp()]):
+        with pytest.raises(pl.InputError, match="JSON object"):
+            pl.size(bad)
+    f = tmp_path / "null.json"
+    f.write_text("null")
+    out = subprocess.run([sys.executable, "-I", str(SCRIPT), str(f)], capture_output=True, text=True)
+    assert out.returncode == 2 and "JSON object" in json.loads(out.stderr)["error"]
+
+
+def test_borrow_uses_the_brokers_360_day_basis():
+    r = pl.size(inp(side="short", entry=100.0, stop=105.0, target=80.0))
+    days = (pl.dt.date(2027, 8, 31) - pl.dt.date(2027, 3, 1)).days
+    assert r["borrow_cost_full_horizon"] == pytest.approx(r["qty"] * 100 * 0.03 * days / 360)
+
+
+def test_sizes_on_the_cent_rounded_prices_the_broker_executes():
+    r = pl.size(inp(entry=100.004, stop=94.996, target=120.006))
+    assert r["plan_execution"] == {"entry": 100.0, "stop": 95.0, "target": 120.01}
+    assert r["plan_served"]["entry"] == 100.004 and r["initial_notional"] == 1000.0
+    with pytest.raises(pl.InputError, match="plan ordering"):          # levels that collapse after rounding
+        pl.size(inp(entry=100.001, stop=99.999, target=120.0))

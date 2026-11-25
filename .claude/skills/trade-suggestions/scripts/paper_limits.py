@@ -9,13 +9,15 @@ Usage:  python3 paper_limits.py input.json        (or JSON on stdin)   -> JSON r
 
 Input (all required unless marked optional; money in USD, prices per share):
   side                 "long" | "short"
-  entry, stop, target  the server plan's entry limit, stop and target (unrounded as served)
+  entry, stop, target  the server plan's entry limit, stop and target as served; sized on the cent-rounded
+                       prices the broker executes (both are returned)
   equity               current paper equity (verified, complete)
   free_cash            verified free cash / collateral available for a new reservation (short proceeds are NOT
                        free cash)
   open_gross           gross notional of the account's open positions plus open/reserved orders
   new_positions_this_decision   orders already placed for this completed-session decision (across reruns)
-  costs                {commission_per_share, min_commission, half_spread_bps, slippage_bps,
+  costs                the ACCOUNT's execution cost profile (get_account -> cost profile), not the outlook's
+                       unless verified identical: {commission_per_share, min_commission, half_spread_bps, slippage_bps,
                         borrow_rate_annual (required for shorts; null means shorting is not allowed)}
   fill_session         ISO date the DAY entry order can fill (the next session)
   time_exit_session    ISO date the server's time exit executes for that fill (open of the 127th session after
@@ -42,6 +44,7 @@ MAX_POSITION_PCT = 0.01
 MAX_STOP_RISK_PCT = 0.0025
 MAX_GROSS_PCT = 0.10
 MAX_NEW_POSITIONS = 2
+BORROW_DAY_BASIS = 360     # the broker's borrow day count
 TARGET_NET_RETURN = 0.15   # real tactical objective; reported for comparison only, never a paper gate
 
 REQUIRED = ("side", "entry", "stop", "target", "equity", "free_cash", "open_gross", "new_positions_this_decision",
@@ -79,19 +82,24 @@ def _leg_cost(qty: int, price: float, c: dict) -> float:
 
 
 def _borrow(qty: int, entry: float, c: dict, side: str, days: int) -> float:
-    return qty * entry * c["borrow_rate_annual"] * days / 365 if side == "short" else 0.0
+    # same 360-day basis as the broker (stocks_service.sim.costs.borrow_cost)
+    return qty * entry * c["borrow_rate_annual"] * days / BORROW_DAY_BASIS if side == "short" else 0.0
 
 
 def size(inp: dict) -> dict:
+    if not isinstance(inp, dict):
+        raise InputError(f"input must be a JSON object, got {type(inp).__name__}")
     missing = [k for k in REQUIRED if k not in inp or inp[k] is None]
     if missing:
         raise InputError(f"missing inputs: {', '.join(missing)}")
     side = inp["side"]
     if side not in ("long", "short"):
         raise InputError("side must be long or short")
-    entry = _num(inp["entry"], "entry", positive=True)
-    stop = _num(inp["stop"], "stop", positive=True)
-    target = _num(inp["target"], "target", positive=True)
+    served = {k: _num(inp[k], k, positive=True) for k in ("entry", "stop", "target")}
+    # the broker rounds the plan to cents before creating the ticket (paper/broker.py); size on those prices
+    entry, stop, target = (round(served[k], 2) for k in ("entry", "stop", "target"))
+    if min(entry, stop, target) <= 0:
+        raise InputError("a plan price rounds to $0.00")
     equity = _num(inp["equity"], "equity", positive=True)
     free_cash = _num(inp["free_cash"], "free_cash", nonneg=True)
     open_gross = _num(inp["open_gross"], "open_gross", nonneg=True)
@@ -158,6 +166,7 @@ def size(inp: dict) -> dict:
         reasons.append(f"not even one share fits the {binding} cap")
 
     out = {"qty": qty, "accepted": qty >= 1, "reasons": reasons, "caps": caps, "binding_cap": binding,
+           "plan_served": served, "plan_execution": {"entry": entry, "stop": stop, "target": target},
            "six_month_deadline": six_months.isoformat(), "time_exit_session": exit_.isoformat(),
            "holding_days_max": hold_days,
            "note": "planned stop loss is not maximum loss; gaps and shorts can lose more"}

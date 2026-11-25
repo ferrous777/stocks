@@ -1,3 +1,4 @@
+import dataclasses
 import datetime as dt
 import json
 
@@ -9,7 +10,8 @@ from stocks_service.settings import Settings
 
 import pytest
 
-from .test_paper import EVENING, LATER, world  # noqa: F401  (fixture)
+from .test_paper import EVENING, LATER, PROFILE, world  # noqa: F401  (fixture)
+from stocks_service.research import protocol
 
 H = {"Authorization": "Bearer k", "Accept": "application/json, text/event-stream",
      "Content-Type": "application/json"}
@@ -68,6 +70,11 @@ def test_agent_trades_a_paper_account_and_every_call_is_logged(db, world, monkey
         assert not err and out["asof"] == "2025-03-31" and len(out["rows"]) == 5
         acct, _ = _call(c, "get_account", **IDENT, account_id="agent")
         assert acct["equity"] == 100_000.0
+        # the values the account is actually charged and limited by, so an agent can size within them
+        assert acct["cost_profile"] == "market@1" and acct["risk_profile"] == "default@1"
+        assert acct["cost"] == {**dataclasses.asdict(protocol.BASE_COST), "profile_id": "market"}
+        assert acct["risk_limits"] == dataclasses.asdict(PROFILE)
+        assert out["cost"]["profile_id"] == "market" and out["cost_profile"] == "market@1"
         _, err = _call(c, "list_orders", **IDENT, account_id="real")
         assert err  # order tools refuse real accounts
         o, err = _call(c, "place_paper_order", **IDENT, account_id="agent", symbol="SPY", side="long", qty=3,

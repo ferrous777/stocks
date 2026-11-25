@@ -148,6 +148,22 @@ def _site(ctx) -> str:
     return f"{proto}://{host}"
 
 
+def _profile_values(doc: dict | None, cls) -> dict | None:
+    """The profile's numeric fields, or None when the profile is missing or incomplete (never guessed)."""
+    fields = cls.__dataclass_fields__
+    return {k: doc[k] for k in fields} if doc and all(k in doc for k in fields) else None
+
+
+def cost_values(doc: dict | None) -> dict | None:
+    from .sim.costs import CostProfile
+    return _profile_values(doc, CostProfile)
+
+
+def risk_values(doc: dict | None) -> dict | None:
+    from .accounts.risk import RiskProfile
+    return _profile_values(doc, RiskProfile)
+
+
 def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
     from . import mcp_ops
     from .web import links as L
@@ -241,6 +257,7 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
                     "p90_return_6m", "signals", "reasons")
             res = _clean({"asof": o["asof"], "run_id": o["run_id"], "placeable_until": o.get("placeable_until"),
                           "cash_return_6m": o["cash_return_6m"], "cost_profile": o["cost_profile"],
+                          "cost": o.get("cost"),   # the profile's values the outlook was built with
                           "rows": [{**{k: r.get(k) for k in keep}, "link": url(ctx, L.symbol(r["symbol"]))} for r in rows],
                           "links": {"outlook": url(ctx, L.outlook(side if side in ("long", "short") else None))}})
             return res, {"observation": res}   # exactly what the agent received, incl. the outlook run id
@@ -346,7 +363,8 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
 
     @mcp.tool()
     def get_account(agent_id: AgentId, model_id: ModelId, prompt_version: PromptVersion, account_id: str, ctx: Context) -> dict:
-        """One account. Paper: equity, cash, free buying power, reserved cash and positions. Real: holdings
+        """One account. Paper: equity, cash, free buying power, reserved cash, positions, and the cost and risk
+        profile values the account is charged and limited by. Real: holdings
         valued at the latest close, cash, latest snapshot and open reconciliation breaks."""
         from .accounts import service
         from .paper import read
@@ -359,8 +377,13 @@ def build_mcp(get_db, get_fetcher=None, get_settings=None) -> FastMCP:
             now = _now()
             if acc.get("kind") == "paper":
                 _, info = account_book(db, acc, now)
+                cost = db.cost_profiles.find_one({"_id": acc["cost_profile"]})
+                risk = db.risk_profiles.find_one({"_id": acc["risk_profile"]})
                 res = {"account_id": account_id, "kind": "paper", "trades_for": read.kind_label(acc),
                        "starting_cash": acc["starting_cash"], "risk_profile": acc["risk_profile"],
+                       # the values this account is actually charged and limited by (None = profile missing)
+                       "cost_profile": acc["cost_profile"], "cost": cost_values(cost),
+                       "risk_limits": risk_values(risk),
                        "last_session_executed": acc["last_session_executed"], "stalled": acc.get("stalled"), **info,
                        "holdings": service.holdings(db, account_id, now)["positions"]}
             else:
