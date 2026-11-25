@@ -22,7 +22,7 @@ Repository rules for any coding agent or contributor working in this repo.
 
 1. Before acting on a workflow that has saved notes or memory (pull requests, reviews, deploys), read every note about it, including known failures.
 2. A command that exits 0 is not proof it worked. Read the resulting state back before relying on it or reporting it.
-3. Request Copilot's review when opening a pull request, then confirm it registered: the pull request's timeline must show a `review_requested` event. `gh` succeeds even when GitHub silently drops the request, so an empty `requested_reviewers` list is not proof either way: it also empties once the review is submitted.
+3. Request Copilot's review in the same command that creates the pull request, every time: `gh pr create --reviewer @copilot ...`. Then confirm it registered: the pull request's timeline must show a `review_requested` event. `gh` succeeds even when GitHub silently drops the request, so an empty `requested_reviewers` list is not proof either way: it also empties once the review is submitted.
 
    ```sh
    gh api repos/{owner}/{repo}/issues/<number>/timeline --paginate --jq '.[] | select(.event == "review_requested" or .event == "copilot_work_started" or .event == "reviewed") | .event'
