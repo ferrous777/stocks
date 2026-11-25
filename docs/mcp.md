@@ -19,12 +19,12 @@ Example: `{"agent_id": "chatgpt", "model_id": "unknown", "prompt_version": "v1"}
 | Tool | What it does |
 |---|---|
 | `get_prediction` | Detailed view of one watched ticker: outlook rows for both sides, every strategy's decision, ATR levels with time-to-target odds, recent returns, 52-week range, calendar-year returns, chart links. |
-| `get_outlook` | Latest six-month outlook rows: plan, grade, expected return and percentiles, and `placeable_until`. |
+| `get_outlook` | Latest six-month outlook rows: plan, grade, expected return and percentiles, `placeable_until`, and the cost profile (`cost_profile` key and `cost` values) it was built with. At most 200 rows, no paging. |
 | `get_watchlist` | Watched symbols (and removed ones) with their last close. |
 | `add_to_watchlist` | **Confirmed.** Checks the ticker at Yahoo, adds it and loads its daily history. |
 | `remove_from_watchlist` | **Confirmed.** Stops tracking a ticker and keeps its history. Refused while paper orders or positions need its prices. |
 | `list_accounts` | Real accounts (cash, equity, latest snapshot, open breaks) and every paper account (return, equity, activity), best return first. |
-| `get_account` | Paper: equity, cash, free buying power, reservations, positions. Real: holdings at the latest close, cash, snapshot, breaks. |
+| `get_account` | Paper: equity, cash, free buying power, reservations, positions, and the account's own `cost` and `risk_limits` values (null if the profile is missing). Real: holdings at the latest close, cash, snapshot, breaks. |
 | `get_performance` | Paper: return, max drawdown, closed-order stats, equity points, and the paired comparison with its baseline (with the influence gate). |
 | `list_orders` | Paper orders and their status. |
 | `list_transactions` | Fills and ledger entries of any account, newest first, paged with `cursor`. |

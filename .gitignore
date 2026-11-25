@@ -91,3 +91,9 @@ wheels/
 *.egg
 # Node (Railway IaC SDK)
 node_modules/
+
+# Local trade-suggestion reports (contain account holdings)
+reports/trade-suggestions/
+
+# Vendored external reference material (not part of the codebase)
+reference/claude-trading-skills/
