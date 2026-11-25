@@ -145,7 +145,11 @@ def authenticate(db: Database, session: dict, origin: str, *, credential: Any, n
     except (WebAuthnException, ValueError, TypeError, KeyError, AttributeError) as e:
         raise PasskeyError("The passkey could not be verified.") from e
     _spend_challenge(db, challenge, now)
-    if not db.passkeys.update_one({"_id": credential_id}, {"$set": {
+    # Only advance the counter verified above: a concurrent sign-in that already stored a newer counter must not
+    # be overwritten with an older one (that would weaken clone detection), so the stale one is refused instead.
+    if not db.passkeys.update_one({"_id": credential_id, "sign_count": stored["sign_count"]}, {"$set": {
             "sign_count": v.new_sign_count, "synced": v.credential_backed_up, "last_used_at": now}}).matched_count:
-        raise PasskeyError("That passkey is not registered for this site.")   # removed meanwhile
+        if db.passkeys.find_one({"_id": credential_id}, {"_id": 1}) is None:
+            raise PasskeyError("That passkey is not registered for this site.")   # removed meanwhile
+        raise PasskeyError("Another sign-in with this passkey happened at the same time. Try again.")
     return credential_id

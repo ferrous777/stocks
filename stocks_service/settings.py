@@ -57,7 +57,16 @@ class Settings(BaseSettings):
         if not u.hostname or v != f"{u.scheme}://{u.netloc}" or u.username is not None \
                 or not (u.scheme == "https" or (u.scheme == "http" and u.hostname == "localhost")):
             raise ValueError("STOCKS_PUBLIC_URL must be https://<host> with no path (http only for localhost)")
-        return v.lower()
+        try:
+            port = u.port
+        except ValueError:
+            raise ValueError("STOCKS_PUBLIC_URL has an invalid port") from None
+        # Browsers serialize an origin without its scheme's default port; WebAuthn compares it exactly.
+        default = {"https": 443, "http": 80}[u.scheme]
+        host = u.netloc.rsplit("@", 1)[-1]
+        if port is not None:
+            host = host[: host.rfind(":")]
+        return f"{u.scheme}://{host}{'' if port in (None, default) else f':{port}'}".lower()
 
     def passkey_origin(self) -> str:
         """The origin passkeys are bound to, or "" when passkeys are disabled."""

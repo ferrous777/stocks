@@ -44,9 +44,9 @@ class Authenticator:
                 "response": {"clientDataJSON": b64(self._client_data("webauthn.create", challenge)),
                              "attestationObject": b64(att)}}
 
-    def get(self, challenge, *, verified=True, key=None):
+    def get(self, challenge, *, verified=True, key=None, count=0):
         client = self._client_data("webauthn.get", challenge)
-        auth = self._auth_data(verified=verified)
+        auth = self._auth_data(verified=verified, count=count)
         sig = (key or self.key).sign(auth + hashlib.sha256(client).digest(), ec.ECDSA(hashes.SHA256()))
         return {"id": b64(self.id), "rawId": b64(self.id), "type": "public-key", "clientExtensionResults": {},
                 "response": {"clientDataJSON": b64(client), "authenticatorData": b64(auth), "signature": b64(sig),
@@ -220,7 +220,13 @@ def test_address_comes_from_the_setting_or_railways_domain():
     assert s(public_url="http://localhost:8000").passkey_origin() == "http://localhost:8000"
     assert s(RAILWAY_PUBLIC_DOMAIN="x.up.railway.app").passkey_origin() == "https://x.up.railway.app"
     assert s(public_url="https://a.example", RAILWAY_PUBLIC_DOMAIN="x.up.railway.app").passkey_origin() == "https://a.example"
-    for bad in ("http://a.example", "https://a.example/path", "a.example", "https://u@a.example"):
+    # browsers drop a scheme's default port from the origin; WebAuthn compares it exactly
+    assert s(public_url="https://A.example:443").passkey_origin() == "https://a.example"
+    assert s(public_url="http://localhost:80").passkey_origin() == "http://localhost"
+    assert s(public_url="https://a.example:8443").passkey_origin() == "https://a.example:8443"
+    assert s(public_url="http://localhost:443").passkey_origin() == "http://localhost:443"
+    for bad in ("http://a.example", "https://a.example/path", "a.example", "https://u@a.example",
+                "https://a.example:99999"):
         with pytest.raises(ValidationError, match="STOCKS_PUBLIC_URL"):
             s(public_url=bad)
 
@@ -259,3 +265,26 @@ def test_every_page_and_endpoint_requires_authentication(db):
                 assert r.status_code == 401 or (r.status_code, r.headers.get("location")) == (303, "/login"), (method, path, r.status_code)
                 checked += 1
         assert checked > 30
+
+
+def test_a_concurrent_sign_in_never_rolls_the_counter_back(site, db, monkeypatch):
+    """Two sign-ins verified against the same stored counter: the one that commits second must not overwrite the
+    newer counter the first stored (clone detection); it is refused and the newer counter stays."""
+    c, a = site
+    session = {}
+    challenge = json.loads(passkeys.authentication_options(session, ORIGIN))["challenge"]
+    real = passkeys.verify_authentication_response
+
+    def other_sign_in_commits_first(**kw):
+        out = real(**kw)
+        db.passkeys.update_one({"_id": b64(a.id)}, {"$set": {"sign_count": 2}})   # counter 2 committed meanwhile
+        return out
+
+    monkeypatch.setattr(passkeys, "verify_authentication_response", other_sign_in_commits_first)
+    with pytest.raises(passkeys.PasskeyError, match="same time"):
+        passkeys.authenticate(db, session, ORIGIN, credential=a.get(challenge, count=1), now=dt.datetime.now(dt.timezone.utc))
+    assert db.passkeys.find_one({"_id": b64(a.id)})["sign_count"] == 2
+    monkeypatch.setattr(passkeys, "verify_authentication_response", real)
+    o = _options(c)
+    assert c.post("/login/passkey", json={"credential": a.get(o["challenge"], count=3)}).status_code == 200
+    assert db.passkeys.find_one({"_id": b64(a.id)})["sign_count"] == 3
