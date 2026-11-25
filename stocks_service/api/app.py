@@ -20,6 +20,24 @@ from ..web.routes import router as web_router
 from .routes import router
 
 
+class NoIndex:
+    """ASGI middleware: ask search engines not to index or cache anything on this private site."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def _send(msg):
+            if msg["type"] == "http.response.start":
+                msg = {**msg, "headers": [*msg.get("headers", []), (b"x-robots-tag", b"noindex, nofollow, noarchive")]}
+            await send(msg)
+
+        await self.app(scope, receive, _send)
+
+
 def create_app(settings: Settings | None = None, *, db: Database | None = None,
                fetcher: ChartFetcher | None = None) -> FastAPI:
     settings = settings or get_settings()
@@ -53,7 +71,8 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
     from ..mcp_server import McpPath, _Auth, build_mcp
     mcp = build_mcp(lambda: app.state.db, lambda: app.state.fetcher, lambda: app.state.settings)
 
-    app = FastAPI(title="Stocks Service", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Stocks Service", version=__version__, lifespan=lifespan,
+                  docs_url=None, redoc_url=None, openapi_url=None)  # served behind the website login instead
     app.state.settings = settings
     app.state.api_keys = keys
     app.state.db = db
@@ -86,5 +105,6 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None,
     app.add_middleware(McpPath)
     from ..ops import RequestTimer   # request timing per route and hour (the Ops page)
     app.add_middleware(RequestTimer, get_db=lambda: app.state.db)
+    app.add_middleware(NoIndex)
     app.state.mcp = mcp
     return app

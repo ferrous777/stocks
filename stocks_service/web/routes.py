@@ -1,5 +1,5 @@
-"""Server-rendered website (Jinja2), protected by a secret sign-in link and/or a password, and a signed
-session cookie (90 days)."""
+"""Server-rendered website (Jinja2), protected by passkeys, a secret sign-in link and/or a password, and a
+signed session cookie (90 days)."""
 
 from __future__ import annotations
 
@@ -8,15 +8,16 @@ import hashlib
 import hmac
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 from pymongo.database import Database
 
 from ..api.deps import get_db
 from ..models import SYMBOL_PATTERN
-from . import data
+from . import data, passkeys
 
 STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -36,6 +37,11 @@ class LoginRequired(Exception):
     pass
 
 
+def _utcnow():
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc)
+
+
 def website_enabled(request: Request) -> bool:
     s = request.app.state.settings
     return bool(s.admin_password or s.login_token)
@@ -46,17 +52,47 @@ def require_login(request: Request) -> None:
         raise HTTPException(503, "Website disabled: set STOCKS_LOGIN_TOKEN (or STOCKS_ADMIN_PASSWORD) and STOCKS_SESSION_SECRET.")
     if not request.session.get("user"):
         raise LoginRequired()
+    # A session signed in with a passkey ends when that passkey is removed (e.g. a lost device).
+    credential_id = request.session.get("passkey")
+    if credential_id and not passkeys.exists(request.app.state.db, credential_id):
+        request.session.clear()
+        raise LoginRequired()
 
 
 def _render(request: Request, name: str, **ctx):
     return templates.TemplateResponse(request, name, {"page": name.removesuffix(".html"), **ctx})
 
 
+def _login_page(request: Request, error: str | None = None):
+    s = request.app.state.settings
+    return _render(request, "login.html", error=error, password_enabled=bool(s.admin_password),
+                   passkey_enabled=bool(s.passkey_origin()) and passkeys.has_passkeys(request.app.state.db))
+
+
+def _sign_in(request: Request, passkey: str | None = None) -> None:
+    request.session.clear()
+    request.session["user"] = "admin"
+    if passkey:
+        request.session["passkey"] = passkey
+
+
+def _passkey_origin(request: Request) -> str:
+    origin = request.app.state.settings.passkey_origin()
+    if not website_enabled(request) or not origin:
+        raise HTTPException(503, "Passkeys are disabled: set STOCKS_PUBLIC_URL and a website login.")
+    return origin
+
+
+@router.get("/robots.txt", response_class=PlainTextResponse)
+def robots():
+    return "User-agent: *\nDisallow: /\n"
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
     if not website_enabled(request):
         raise HTTPException(503, "Website disabled: set STOCKS_LOGIN_TOKEN (or STOCKS_ADMIN_PASSWORD) and STOCKS_SESSION_SECRET.")
-    return _render(request, "login.html", error=None, password_enabled=bool(request.app.state.settings.admin_password))
+    return _login_page(request)
 
 
 @router.post("/login/link", response_class=HTMLResponse)
@@ -68,9 +104,8 @@ def login_link(request: Request, token: str = Form(...)):
     """
     secret = request.app.state.settings.login_token
     if not secret or not hmac.compare_digest(token.encode("utf-8"), secret.encode("utf-8")):
-        return _render(request, "login.html", error="That sign-in link is not valid.",
-                       password_enabled=bool(request.app.state.settings.admin_password))
-    request.session["user"] = "admin"
+        return _login_page(request, "That sign-in link is not valid.")
+    _sign_in(request)
     return RedirectResponse("/", status_code=303)
 
 
@@ -80,9 +115,67 @@ def login(request: Request, password: str = Form(...)):
         raise HTTPException(404, "Password sign-in is not enabled; use your sign-in link.")
     # compare_digest only accepts ASCII str; compare UTF-8 bytes so any password works.
     if not hmac.compare_digest(password.encode("utf-8"), request.app.state.settings.admin_password.encode("utf-8")):
-        return _render(request, "login.html", error="Incorrect password.", password_enabled=True)
-    request.session["user"] = "admin"
+        return _login_page(request, "Incorrect password.")
+    _sign_in(request)
     return RedirectResponse("/", status_code=303)
+
+
+@router.post("/login/passkey/options")
+def login_passkey_options(request: Request):
+    return Response(passkeys.authentication_options(request.session, _passkey_origin(request)),
+                    media_type="application/json")
+
+
+@router.post("/login/passkey")
+def login_passkey(request: Request, credential: dict = Body(..., embed=True), db: Database = Depends(get_db)):
+    origin = _passkey_origin(request)
+    try:
+        credential_id = passkeys.authenticate(db, request.session, origin, credential=credential, now=_utcnow())
+    except passkeys.PasskeyError as e:
+        return JSONResponse({"detail": str(e)}, status_code=401)   # a response, so the spent challenge is cleared
+    _sign_in(request, credential_id)
+    return {"ok": True}
+
+
+@router.get("/security", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+def security_page(request: Request, added: bool = False, removed: bool = False, db: Database = Depends(get_db)):
+    return _render(request, "security.html", passkeys=passkeys.list_passkeys(db),
+                   origin=request.app.state.settings.passkey_origin(), current=request.session.get("passkey"),
+                   message="Passkey added." if added else "Passkey removed." if removed else None)
+
+
+@router.post("/security/passkeys/options", dependencies=[Depends(require_login)])
+def add_passkey_options(request: Request, db: Database = Depends(get_db)):
+    return Response(passkeys.registration_options(db, request.session, _passkey_origin(request)),
+                    media_type="application/json")
+
+
+@router.post("/security/passkeys", dependencies=[Depends(require_login)])
+def add_passkey(request: Request, credential: dict = Body(...), name: str = Body(...),
+                db: Database = Depends(get_db)):
+    origin = _passkey_origin(request)
+    try:
+        passkeys.register(db, request.session, origin, credential=credential, name=name, now=_utcnow())
+    except passkeys.PasskeyError as e:
+        return JSONResponse({"detail": str(e)}, status_code=400)
+    return {"ok": True}
+
+
+@router.post("/security/passkeys/{credential_id}/delete", dependencies=[Depends(require_login)])
+def remove_passkey(credential_id: str, db: Database = Depends(get_db)):
+    if not passkeys.delete(db, credential_id):
+        raise HTTPException(404, "Unknown passkey")
+    return RedirectResponse("/security?removed=1", status_code=303)
+
+
+@router.get("/openapi.json", dependencies=[Depends(require_login)])
+def openapi(request: Request):
+    return JSONResponse(request.app.openapi())
+
+
+@router.get("/docs", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+def api_docs(request: Request):
+    return get_swagger_ui_html(openapi_url="/openapi.json", title=request.app.title)
 
 
 @router.post("/logout")

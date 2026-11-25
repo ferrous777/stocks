@@ -16,7 +16,7 @@ legacy PythonAnywhere app until cutover; nothing here touches PythonAnywhere.
 
 | Service | Source | Notes |
 |---|---|---|
-| `stocks` | GitHub `main`, Dockerfile | Website (`/`, password login), API (`/api/v1`, docs at `/docs`) and MCP endpoint (`/mcp`, later phase) on one public domain: `https://stocks-production-8666a97e.up.railway.app`. Health check `/health`. |
+| `stocks` | GitHub `main`, Dockerfile | Website (`/`, passkey login), API (`/api/v1`, docs at `/docs` after signing in) and MCP endpoint (`/mcp`, later phase) on one public domain: `https://stocks-production-8666a97e.up.railway.app`. Health check `/health`. |
 | `mongo` | image `mongo:8.0`, volume `mongo-data` at `/data/db` (5 GB) | Single-node replica set `rs0` (transactions). Private only (no public TCP proxy). |
 | `jobs-tick` | phase 4+ | cron `*/15 12-23 * * 1-5` (UTC) → `python -m stocks_service.jobs tick` |
 
@@ -45,7 +45,8 @@ Verified on Railway (2026-11-17): restart → force reconfig → `PRIMARY`; `/he
 | `stocks` | `STOCKS_MONGO_URL` | `mongodb://${{mongo.MONGO_INITDB_ROOT_USERNAME}}:${{mongo.MONGO_INITDB_ROOT_PASSWORD}}@${{mongo.RAILWAY_PRIVATE_DOMAIN}}:27017/?directConnection=true&authSource=admin` |
 | `stocks` | `STOCKS_MONGO_DB` | `stocks` |
 | `stocks` | `STOCKS_API_KEYS` | generated; read it with `railway variable list --service stocks --kv` |
-| `stocks` | `STOCKS_ADMIN_PASSWORD` | website login password (generated); read it with `railway variable list --service stocks --kv` |
+| `stocks` | `STOCKS_LOGIN_TOKEN` | secret sign-in link `/login#<token>`: adds the first passkey, and is the way back in without one |
+| `stocks` | `STOCKS_PUBLIC_URL` | optional; the site's address passkeys are bound to. Defaults to `https://$RAILWAY_PUBLIC_DOMAIN`. Changing the address means adding passkeys again |
 | `stocks` | `STOCKS_SESSION_SECRET` | signs the website session cookie (generated, >= 32 chars) |
 
 The app refuses to start without `STOCKS_API_KEYS`, and `/health` returns 503 unless MongoDB reports a replica set.

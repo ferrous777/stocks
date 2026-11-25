@@ -129,6 +129,9 @@ INDEXES: dict[str, list[IndexModel]] = {
     "mcp_confirmations": [   # single-use confirmation tokens for MCP changes
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],
+    "passkey_used_challenges": [   # passkey challenges already verified once (replay protection)
+        IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
+    ],
     "job_locks": [
         IndexModel([("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0),
     ],

@@ -5,7 +5,14 @@
 <div style="max-width:400px;margin:var(--space-7) auto">
 {% call ui.card() %}
   <h1>Sign in</h1>
+  {% if passkey_enabled %}
+  <p class="muted">You stay signed in on this device for 90 days.</p>
+  <button type="button" class="btn btn--primary" id="passkey-signin">Sign in with a passkey</button>
+  <p id="passkey-error" class="small" style="color:var(--color-negative)" role="alert" hidden></p>
+  <p class="muted small">Lost your passkey? Open your sign-in link instead.</p>
+  {% else %}
   <p class="muted">Open your sign-in link (the bookmark) to sign in. You stay signed in on this device for 90 days.</p>
+  {% endif %}
   <form id="link-form" method="post" action="/login/link" hidden><input type="hidden" name="token"></form>
   {% if password_enabled %}
   <form method="post" action="/login" class="form-row" style="margin-top:var(--space-3)">
@@ -27,4 +34,5 @@
     f.submit();
   })();
 </script>
+{% if passkey_enabled %}<script src="{{ asset('passkey.js') }}"></script>{% endif %}
 {% endblock %}
