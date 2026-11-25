@@ -66,7 +66,7 @@ The legacy data stays untouched on PythonAnywhere (results JSON, SQLite, the cac
 
 ## 4. Switch
 
-1. Use the Railway site (bookmark `/login#<token>`) in place of the PythonAnywhere URL.
+1. Use the Railway site (bookmark `/`, signing in with a passkey from its Security page) in place of the PythonAnywhere URL.
 2. **On PythonAnywhere:** *pause* the scheduled task; do not delete it. Leave the web app and its files in place.
 3. Note the date. This starts the two-week rollback window.
 

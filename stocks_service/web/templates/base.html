@@ -28,6 +28,7 @@
   <div class="app-header__actions">
     <button type="button" class="btn btn--ghost btn--sm" id="theme-toggle" title="Switch between system, light and dark theme">Theme: system</button>
     {% if request.session.get("user") %}
+    <a class="btn btn--ghost btn--sm" href="/security"{% if page == "security" %} aria-current="page"{% endif %}>Security</a>
     <form method="post" action="/logout">{{ ui.button("Log out", size="sm") }}</form>
     {% endif %}
   </div>

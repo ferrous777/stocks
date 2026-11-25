@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block title %}Security · Stocks{% endblock %}
+{% block content %}
+{% call ui.page_header("Security") %}Passkeys sign you in with Face ID, Touch ID or your device PIN.{% endcall %}
+{% if message %}{% call ui.alert("positive") %}{{ message }}{% endcall %}{% endif %}
+{% if not origin %}
+{% call ui.alert("warning", "Passkeys are not configured.") %} Set <code>STOCKS_PUBLIC_URL</code> to this site's address
+(for example <code>https://example.com</code>) to enable them.{% endcall %}
+{% else %}
+{% call ui.card("Add a passkey") %}
+<p class="small muted mt-0">A passkey saved in iCloud Keychain works on all your Apple devices, so you normally add one once.
+Passkeys belong to <code>{{ origin }}</code> and must be added again if the address changes.</p>
+<form id="passkey-add" class="form-row">
+  <input class="input" name="name" maxlength="60" required placeholder="Name, e.g. iCloud Keychain" aria-label="Passkey name">
+  {{ ui.button("Add passkey", "primary") }}
+</form>
+<p id="passkey-error" class="small" style="color:var(--color-negative)" role="alert" hidden></p>
+{% endcall %}
+{% endif %}
+<h2>Passkeys</h2>
+{% if passkeys %}
+{% call ui.table(["Name", "Synced", "Added (UTC)", "Last used (UTC)", ""]) %}
+  {% for p in passkeys %}
+  <tr><td>{{ p.name }}{% if p._id == current %} {{ ui.badge("this session", "info") }}{% endif %}</td>
+    <td>{{ "yes" if p.synced else "no" }}</td><td>{{ p.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+    <td>{{ p.last_used_at.strftime("%Y-%m-%d %H:%M") if p.last_used_at else "never" }}</td>
+    <td><form method="post" action="/security/passkeys/{{ p._id }}/delete"
+      onsubmit="return confirm('Remove this passkey? Sessions it signed in end immediately.')">{{ ui.button("Remove", size="sm") }}</form></td></tr>
+  {% endfor %}
+{% endcall %}
+<p class="muted small prose">Removing a passkey ends every session it signed in. Also delete it from the device's password manager.</p>
+{% else %}
+<p class="muted">No passkeys yet.</p>
+{% endif %}
+<p class="muted small prose">Your sign-in link or password still works, as a way back in if you lose your devices. AI agents do not use
+passkeys: they reach <code>/mcp</code> with their own API key (see <a href="/connect">Connect</a>).</p>
+{% endblock %}
+{% block scripts %}<script src="{{ asset('passkey.js') }}"></script>{% endblock %}
